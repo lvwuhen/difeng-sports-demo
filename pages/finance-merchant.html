@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客商主数据 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('finance-merchant', '客商主数据');
+
+/* ========== 工具 ========== */
+const PAGE_SIZE = 6;
+const TODAY = '2026-11-05';
+let pg = { list: 1 };
+let activeModal = null;
+let pendingMerchant = null;
+let conflictList = [];
+let finSeq = 400;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function genFinCode(){
+  finSeq++;
+  return 'NCC-KH-' + String(finSeq).padStart(4, '0');
+}
+function maskTaxNo(v){
+  if(!v) return '<span class="text-muted">—</span>';
+  const s = String(v);
+  if(s.includes('*')) return s;
+  return s.slice(0, 6) + '**********' + s.slice(-2);
+}
+
+const TYPE_TAG = { '个人':'tag-blue', '企业':'tag-purple', '团体':'tag-cyan' };
+const SYNC_TAG = { '已同步':'tag-green', '同步失败':'tag-red', '同步中':'tag-orange' };
+
+/* ========== 数据 ========== */
+let MERCHANTS = MOCK_EXT.merchants.map(m => ({ ...m }));
+
+MERCHANTS.push(
+  { id:'MC005', name:'厦门市网球协会', finCode:'NCC-KH-0203', type:'团体', taxNo:'', mappings:2, status:'已同步', lastSync:'2026-10-29' },
+  { id:'MC006', name:'鸿星体育批发', finCode:'', type:'企业', taxNo:'91350211**********77', mappings:0, status:'同步失败', lastSync:'2026-10-31' },
+  { id:'MC007', name:'厦门地丰体育文化有限公司', finCode:'NCC-KH-0002', type:'企业', taxNo:'91350206**********XK', mappings:1, status:'已同步', lastSync:'2026-11-01' },
+  { id:'MC008', name:'美团（渠道结算）', finCode:'NCC-KH-0301', type:'企业', taxNo:'91110108**********8Y', mappings:1, status:'已同步', lastSync:'2026-10-30' },
+  { id:'MC009', name:'林雅婷', finCode:'NCC-KH-0103', type:'个人', taxNo:'', mappings:2, status:'已同步', lastSync:'2026-10-30' },
+  { id:'MC010', name:'王志强', finCode:'', type:'个人', taxNo:'', mappings:1, status:'同步失败', lastSync:'2026-10-28' },
+  { id:'MC011', name:'厦门建工集团有限公司', finCode:'NCC-KH-0089', type:'企业', taxNo:'91350203**********CD', mappings:0, status:'已同步', lastSync:'2026-10-30' }
+);
+
+/* 业务客户 ↔ 财务客商映射关系 */
+const MERCHANT_MAPPINGS = {
+  MC001: [
+    { bizCode:'CU-SK-0001', bizName:'散客（场地预订）', venue:'全部场馆' },
+    { bizCode:'CU-SK-0002', bizName:'散客（物品租赁）', venue:'全部场馆' },
+    { bizCode:'CU-SK-0003', bizName:'散客（商品销售）', venue:'全部场馆' },
+    { bizCode:'CU-SK-0004', bizName:'散客（线上渠道）', venue:'线上渠道' }
+  ],
+  MC002: [{ bizCode:'CU001', bizName:'陈晓明', venue:'总部' }],
+  MC003: [{ bizCode:'CU003', bizName:'厦门建工集团有限公司', venue:'总部' }],
+  MC004: [],
+  MC005: [
+    { bizCode:'CU-ORG-0101', bizName:'厦门市网球协会（赛事）', venue:'网球中心' },
+    { bizCode:'CU-ORG-0102', bizName:'厦门市网球协会（培训）', venue:'网球中心' }
+  ],
+  MC006: [],
+  MC007: [{ bizCode:'CU-ORG-0201', bizName:'地丰体育文化（自有主体）', venue:'全部场馆' }],
+  MC008: [{ bizCode:'CU-CH-0301', bizName:'美团渠道订单客户', venue:'线上渠道' }],
+  MC009: [
+    { bizCode:'CU002', bizName:'林雅婷', venue:'总部' },
+    { bizCode:'CU-MB-0101', bizName:'林雅婷（会员码）', venue:'总部' }
+  ],
+  MC010: [{ bizCode:'CU005', bizName:'王志强', venue:'总部' }],
+  MC011: []
+};
+
+function getMappings(m){
+  return MERCHANT_MAPPINGS[m.id] || [];
+}
+function mappingCount(m){
+  const arr = MERCHANT_MAPPINGS[m.id];
+  return arr ? arr.length : (Number(m.mappings) || 0);
+}
+
+/* ========== 筛选与分页 ========== */
+function filteredMerchants(){
+  const kw = (document.getElementById('mc-kw')?.value || '').trim();
+  const tp = document.getElementById('mc-type')?.value || '';
+  const st = document.getElementById('mc-status')?.value || '';
+  return MERCHANTS.filter(m => {
+    if(tp && m.type !== tp) return false;
+    if(st && m.status !== st) return false;
+    if(kw && !(m.name.includes(kw) || (m.finCode || '').includes(kw) || (m.taxNo || '').includes(kw))) return false;
+    return true;
+  });
+}
+function resetAndRender(){ pg.list = 1; renderTable(); }
+function gotoPage(p){ pg.list = p; renderTable(); }
+function buildPager(total){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg.list > pages) pg.list = pages;
+  if(pg.list < 1) pg.list = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg.list ? 'active' : ''}" onclick="gotoPage(${i})">${i}</button>`;
+  }
+  const el = document.getElementById('mc-pager');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg.list}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg.list <= 1 ? 'disabled' : ''} onclick="gotoPage(${pg.list - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg.list >= pages ? 'disabled' : ''} onclick="gotoPage(${pg.list + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 渲染 ========== */
+function renderStats(){
+  const synced = MERCHANTS.filter(m => m.status === '已同步').length;
+  const failed = MERCHANTS.filter(m => m.status === '同步失败').length;
+  const mappingTotal = MERCHANTS.reduce((s, m) => s + mappingCount(m), 0);
+  const el = document.getElementById('mc-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">已同步客商数 <span class="stat-icon green"><i data-lucide="check-circle-2"></i></span></div>
+      <div class="stat-value">${synced}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 家</span></div>
+      <div class="stat-trend up"><i data-lucide="refresh-cw" style="width:14px"></i>已推送至用友NCC</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">同步失败数 <span class="stat-icon red"><i data-lucide="x-circle"></i></span></div>
+      <div class="stat-value">${failed}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 家</span></div>
+      <div class="stat-trend down"><i data-lucide="alert-triangle" style="width:14px"></i>需重新同步</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">业务客商映射数 <span class="stat-icon blue"><i data-lucide="git-merge"></i></span></div>
+      <div class="stat-value">${mappingTotal}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend up"><i data-lucide="link" style="width:14px"></i>体育客户编码 ↔ 财务客商编码</div>
+    </div>`;
+  refreshIcons();
+}
+
+function renderTable(){
+  const list = filteredMerchants();
+  const start = (pg.list - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(m => {
+    const acts = [];
+    if(m.status === '同步失败') acts.push(`<button class="btn btn-primary btn-sm" onclick="resync('${m.id}')">重新同步</button>`);
+    else if(m.status !== '已同步') acts.push(`<button class="btn btn-primary btn-sm" onclick="syncMerchant('${m.id}')">同步至NCC</button>`);
+    acts.push(`<button class="btn btn-default btn-sm" onclick="openMappings('${m.id}')">查看映射关系</button>`);
+    return `<tr>
+      <td><div class="font-medium">${m.name}</div><div class="text-muted" style="font-size:12px">${m.id}</div></td>
+      <td class="mono" style="font-size:13px">${m.finCode || '<span class="text-muted">未生成</span>'}</td>
+      <td><span class="tag ${TYPE_TAG[m.type] || 'tag-gray'}">${m.type}</span></td>
+      <td class="mono" style="font-size:12px">${maskTaxNo(m.taxNo)}</td>
+      <td class="text-center">${mappingCount(m)}</td>
+      <td><span class="tag ${SYNC_TAG[m.status] || 'tag-gray'}">${m.status}</span></td>
+      <td style="font-size:13px">${m.lastSync || '—'}</td>
+      <td class="actions" style="flex-wrap:wrap">${acts.join('')}</td>
+    </tr>`;
+  }).join('');
+  const tb = document.getElementById('mc-rows');
+  if(tb){
+    tb.innerHTML = rows || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="building-2"></i></div><div class="empty-text">暂无符合条件的客商</div></div></td></tr>`;
+  }
+  buildPager(list.length);
+  refreshIcons();
+}
+
+function renderAll(){
+  renderStats();
+  renderTable();
+}
+
+/* ========== 同步操作 ========== */
+function syncMerchant(id, silent){
+  const m = MERCHANTS.find(x => x.id === id);
+  if(!m) return;
+  m.status = '已同步';
+  if(!m.finCode) m.finCode = genFinCode();
+  m.lastSync = TODAY;
+  renderAll();
+  if(!silent) toast(`客商「${m.name}」已同步至用友NCC`, 'success');
+}
+
+function resync(id){
+  const m = MERCHANTS.find(x => x.id === id);
+  if(!m) return;
+  syncMerchant(id, true);
+  toast(`客商「${m.name}」重新同步成功，财务编码 ${m.finCode}`, 'success');
+}
+
+function syncAllPending(){
+  const targets = MERCHANTS.filter(m => m.status !== '已同步');
+  if(!targets.length){ toast('当前没有待同步的客商', 'info'); return; }
+  targets.forEach(m => syncMerchant(m.id, true));
+  toast(`已完成 ${targets.length} 家客商同步至用友NCC`, 'success');
+}
+
+/* ========== 查看映射关系 ========== */
+function openMappings(id){
+  const m = MERCHANTS.find(x => x.id === id);
+  if(!m) return;
+  closeActiveModal();
+  const rows = getMappings(m);
+  const bodyRows = rows.length ? rows.map(r => `
+    <tr>
+      <td class="mono">${r.bizCode}</td>
+      <td>${r.bizName}</td>
+      <td>${r.venue || '—'}</td>
+      <td class="mono">${m.finCode || '未生成'}</td>
+      <td>${m.name}</td>
+      <td><span class="tag ${r.bizCode.startsWith('CU-SK') ? 'tag-orange' : 'tag-green'}">${r.bizCode.startsWith('CU-SK') ? '固定归入' : '正常映射'}</span></td>
+    </tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:30px 10px"><div class="empty-text">该客商暂无业务客户映射关系</div></div></td></tr>`;
+  activeModal = openModal(`
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div class="modal-title">客商映射关系 · ${m.name}</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="kv-grid mb-16">
+          <div class="kv-item"><span class="k">财务客商编码</span><span class="v mono">${m.finCode || '未生成'}</span></div>
+          <div class="kv-item"><span class="k">客商类型</span><span class="v">${m.type}</span></div>
+          <div class="kv-item"><span class="k">纳税人识别号</span><span class="v mono">${maskTaxNo(m.taxNo)}</span></div>
+          <div class="kv-item"><span class="k">同步状态</span><span class="v">${m.status} · ${m.lastSync || '—'}</span></div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>体育客户编码</th><th>业务客户名称</th><th>归属场馆</th><th>财务客商编码</th><th>财务客商名称</th><th>映射类型</th></tr>
+            </thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+        </div>
+        <div class="text-muted" style="font-size:12px;margin-top:12px">共 ${rows.length} 条业务映射。散客为固定客商，所有未具名客户的场地预订、物品租赁、商品销售统一归入「散客」。</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    </div>`);
+}
+
+/* ========== 新增客商 ========== */
+function openNewMerchant(){
+  closeActiveModal();
+  const customerOptions = MOCK.customers.map(c => `<option value="${c.id}">${c.id} · ${c.name}（${c.type}）</option>`).join('');
+  activeModal = openModal(`
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">新增客商</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">客商名称<span class="required">*</span></label>
+            <input class="form-input" id="nm-name" placeholder="个人填姓名，企业/团体填全称" />
+          </div>
+          <div class="form-item">
+            <label class="form-label">客商类型<span class="required">*</span></label>
+            <select class="form-select" id="nm-type" onchange="toggleTaxField()">
+              <option value="">请选择类型</option>
+              <option value="个人">个人</option>
+              <option value="企业">企业</option>
+              <option value="团体">团体</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">纳税人识别号<span id="nm-tax-required" class="required">*</span></label>
+            <input class="form-input" id="nm-tax" placeholder="企业客商必填，个人/团体可留空" />
+          </div>
+          <div class="form-item">
+            <label class="form-label">关联业务客户（选填）</label>
+            <select class="form-select" id="nm-customer">
+              <option value="">不关联</option>
+              ${customerOptions}
+            </select>
+          </div>
+        </div>
+        <div class="form-hint">新增客商将自动推送至用友NCC生成财务客商编码；如名称与已有客商重复，系统会提示选择关联现有客商或继续新建。</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="submitNewMerchant()">确定新增</button>
+      </div>
+    </div>`);
+}
+
+function toggleTaxField(){
+  const type = document.getElementById('nm-type')?.value || '';
+  const req = document.getElementById('nm-tax-required');
+  if(req) req.style.visibility = type === '企业' ? 'visible' : 'hidden';
+}
+
+function submitNewMerchant(){
+  const name = (document.getElementById('nm-name')?.value || '').trim();
+  const type = document.getElementById('nm-type')?.value || '';
+  const taxNo = (document.getElementById('nm-tax')?.value || '').trim();
+  const customerId = document.getElementById('nm-customer')?.value || '';
+  if(!name){ toast('请填写客商名称', 'error'); return; }
+  if(!type){ toast('请选择客商类型', 'error'); return; }
+  if(type === '企业' && !taxNo){ toast('企业客商必须填写纳税人识别号', 'error'); return; }
+  const customer = MOCK.customers.find(c => c.id === customerId) || null;
+  pendingMerchant = { name, type, taxNo, customer };
+  conflictList = MERCHANTS.filter(m => m.name === name);
+  closeActiveModal();
+  if(conflictList.length){ openConflict(); return; }
+  createMerchant(pendingMerchant);
+}
+
+function openConflict(){
+  closeActiveModal();
+  const options = conflictList.map((m, i) => `
+    <label class="list-row" style="cursor:pointer;padding:12px 0">
+      <input type="radio" name="conflict-choice" value="${m.id}" ${i === 0 ? 'checked' : ''} style="margin-top:2px" />
+      <div class="flex-1">
+        <div class="font-medium">${m.name}</div>
+        <div class="text-muted" style="font-size:12px">财务编码：${m.finCode || '未生成'} · ${m.type} · ${m.status} · 最近同步 ${m.lastSync || '—'}</div>
+      </div>
+      <span class="tag ${TYPE_TAG[m.type] || 'tag-gray'}">${m.type}</span>
+    </label>`).join('');
+  activeModal = openModal(`
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">发现同名客商</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px">
+          <i data-lucide="alert-triangle" style="color:var(--warning);width:22px;height:22px;flex-shrink:0"></i>
+          <div class="text-muted" style="font-size:13px">系统检测到 ${conflictList.length} 个同名客商，请选择关联已有客商（新增一条映射关系），或继续新建独立客商。</div>
+        </div>
+        <div class="card" style="box-shadow:none">
+          <div class="card-body" style="padding:8px 16px">
+            ${options}
+            <label class="list-row" style="cursor:pointer;padding:12px 0">
+              <input type="radio" name="conflict-choice" value="__new__" style="margin-top:2px" />
+              <div class="flex-1">
+                <div class="font-medium">继续新建新客商</div>
+                <div class="text-muted" style="font-size:12px">将创建独立的财务客商并自动推送 NCC，可能与历史客商重复。</div>
+              </div>
+              <span class="tag tag-orange">新建</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="resolveConflict()">确定</button>
+      </div>
+    </div>`);
+}
+
+function resolveConflict(){
+  const choice = document.querySelector('input[name="conflict-choice"]:checked')?.value || '';
+  if(!choice){ toast('请选择处理方式', 'error'); return; }
+  closeActiveModal();
+  if(choice === '__new__'){ createMerchant(pendingMerchant); return; }
+  const target = MERCHANTS.find(m => m.id === choice);
+  if(!target){ toast('未找到目标客商', 'error'); return; }
+  const ps = pendingMerchant;
+  const exists = getMappings(target).some(x => ps.customer && x.bizCode === ps.customer.id);
+  if(ps.customer && !exists){
+    MERCHANT_MAPPINGS[target.id] = MERCHANT_MAPPINGS[target.id] || [];
+    MERCHANT_MAPPINGS[target.id].push({ bizCode: ps.customer.id, bizName: ps.customer.name, venue: ps.customer.venue || '总部' });
+  }
+  renderAll();
+  toast(`已将「${ps.name}」关联至现有客商 ${target.finCode || target.id}，映射关系已更新`, 'success');
+}
+
+function createMerchant(p){
+  const newId = 'MC' + String(100 + MERCHANTS.length + 1).padStart(3, '0');
+  const merchant = {
+    id: newId,
+    name: p.name,
+    finCode: genFinCode(),
+    type: p.type,
+    taxNo: p.taxNo || '',
+    mappings: p.customer ? 1 : 0,
+    status: '已同步',
+    lastSync: TODAY
+  };
+  MERCHANTS.push(merchant);
+  MERCHANT_MAPPINGS[newId] = p.customer ? [{ bizCode: p.customer.id, bizName: p.customer.name, venue: p.customer.venue || '总部' }] : [];
+  pendingMerchant = null;
+  pg.list = 1;
+  renderAll();
+  toast(`新增客商「${p.name}」已创建并自动推送至NCC，编码 ${merchant.finCode}`, 'success');
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">客商主数据</div>
+        <div class="page-desc">业务客户与财务客商双向映射，新增客户自动推送用友NCC，保证业财客商口径一致</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="toast('客商主数据已导出为 Excel','success')"><i data-lucide="download"></i>导出</button>
+        <button class="btn btn-default" onclick="syncAllPending()"><i data-lucide="refresh-cw"></i>同步全部待同步</button>
+        <button class="btn btn-primary" onclick="openNewMerchant()"><i data-lucide="plus"></i>新增客商</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="mc-stats"></div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="toolbar" style="margin-bottom:0">
+        <input class="form-input" id="mc-kw" placeholder="搜索客商名称 / 财务编码 / 税号" oninput="resetAndRender()" style="min-width:260px" />
+        <select class="form-select" id="mc-type" onchange="resetAndRender()">
+          <option value="">全部类型</option>
+          <option value="个人">个人</option>
+          <option value="企业">企业</option>
+          <option value="团体">团体</option>
+        </select>
+        <select class="form-select" id="mc-status" onchange="resetAndRender()">
+          <option value="">全部同步状态</option>
+          <option value="已同步">已同步</option>
+          <option value="同步失败">同步失败</option>
+          <option value="同步中">同步中</option>
+        </select>
+      </div>
+      <div class="table-wrap mt-16">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>客商名称</th>
+              <th>财务客商编码</th>
+              <th>类型</th>
+              <th>纳税人识别号</th>
+              <th class="text-center">映射业务客户数</th>
+              <th>同步状态</th>
+              <th>最近同步时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="mc-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="mc-pager"></div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-header">
+      <div class="card-title">客商主数据规则</div>
+      <span class="tag tag-gray">业务规则</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="user-plus"></i></span>
+        <div>
+          <div class="font-medium">新增客户自动推送</div>
+          <div class="text-muted" style="font-size:13px">客户档案新增后，系统自动创建或关联财务客商并推送用友NCC，回写财务客商编码，失败项进入同步失败队列支持重新同步。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="users"></i></span>
+        <div>
+          <div class="font-medium">散客为固定客商</div>
+          <div class="text-muted" style="font-size:13px">物品租赁、商品销售、场地预订中的未具名客户统一归入固定客商「散客」，不重复创建，业务单据保留散客标识。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon purple" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="wallet-cards"></i></span>
+        <div>
+          <div class="font-medium">预充值客商归集</div>
+          <div class="text-muted" style="font-size:13px">个人预充值按「姓名 + 会员码」归集至个人客商；企业预充值按「企业名称 + 纳税人识别号」归集至企业客商，避免同名个人与企业混淆。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon red" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="git-compare"></i></span>
+        <div>
+          <div class="font-medium">同名客商冲突处理</div>
+          <div class="text-muted" style="font-size:13px">新增客商与已有客商同名时，系统列出同名客商供选择：可关联现有客商并新增映射关系，也可继续创建独立客商，避免财务重复建档。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderAll();
+</script>
+</body>
+</html>

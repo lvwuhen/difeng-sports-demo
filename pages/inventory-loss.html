@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>报损/预警/流水 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+<style>/* 页面级补充样式：优先复用 styles.css */</style>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('inventory-loss', '报损/预警/流水');
+
+/* ========== 工具与基础数据 ========== */
+const PAGE_SIZE = 5;
+const TODAY = '2026-11-05';
+let seq = 0;
+let activeModal = null;
+let pg = { losses: 1, alerts: 1, flows: 1 };
+
+function todayStr(){ return TODAY; }
+function nowStr(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${TODAY} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function genNo(prefix){
+  seq++;
+  return prefix + TODAY.replace(/-/g, '') + String(seq).padStart(3, '0');
+}
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+
+function flowCat(type){
+  if(type.includes('调拨')) return '调拨';
+  if(type.includes('报损')) return '报损';
+  if(type.includes('盘点')) return '盘点';
+  if(type.includes('入库')) return '入库';
+  if(type.includes('出库')) return '出库';
+  return '调整';
+}
+
+const LOSS_STATUS_TAG = { '待确认': 'tag-orange', '已确认': 'tag-green', '已驳回': 'tag-red' };
+const CAT_TAG = { '入库': 'tag-blue', '出库': 'tag-gray', '调拨': 'tag-purple', '盘点': 'tag-cyan', '报损': 'tag-red', '调整': 'tag-orange' };
+
+/* 库存明细：直接引用 MOCK_EXT.stockList，报损确认会真实扣减库存 */
+const STOCK = MOCK_EXT.stockList;
+
+/* 报损单：直接引用 MOCK_EXT.losses，补充演示单据 */
+const LOSSES = MOCK_EXT.losses;
+LOSSES.push(
+  { id:'LS20261104003', goods:'斯伯丁篮球7号', warehouse:'篮球公园仓', qty:1, amount:145, reason:'表皮破损', owner:'陈库管', method:'报修', status:'待确认', date:'2026-11-04' },
+  { id:'LS20261102004', goods:'脉动运动饮料', warehouse:'总部主仓库', qty:5, amount:21, reason:'包装破损', owner:'刘库管', method:'直接报废', status:'待确认', date:'2026-11-02' },
+  { id:'LS20261025005', goods:'运动毛巾', warehouse:'网球中心仓', qty:3, amount:54, reason:'污损', owner:'周库管', method:'直接报废', status:'已确认', date:'2026-10-25' },
+  { id:'LS20261018006', goods:'农夫山泉550ml', warehouse:'总部主仓库', qty:6, amount:10.8, reason:'瓶身破损', owner:'刘库管', method:'直接报废', status:'已确认', date:'2026-10-18' },
+  { id:'LS20261012007', goods:'红双喜DHS羽毛球', warehouse:'总部主仓库', qty:2, amount:124, reason:'羽毛变形', owner:'刘库管', method:'降级处理', status:'已确认', date:'2026-10-12' },
+  { id:'LS20260928008', goods:'能量棒', warehouse:'总部主仓库', qty:10, amount:75, reason:'临期报废', owner:'刘库管', method:'直接报废', status:'已驳回', date:'2026-09-28' }
+);
+LOSSES.sort((a, b) => b.date.localeCompare(a.date));
+
+/* 库存预警：直接引用 MOCK_EXT.stockAlerts，补充演示数据 */
+const ALERTS = MOCK_EXT.stockAlerts;
+ALERTS.push(
+  { id:'AL005', type:'最低库存', goods:'运动毛巾', warehouse:'网球中心仓', current:88, threshold:100, level:'提醒', time:'2026-10-30 08:00' },
+  { id:'AL006', type:'临期库存', goods:'红双喜DHS羽毛球', warehouse:'总部主仓库', current:45, threshold:'2027-01-20', level:'提醒', time:'2026-10-30 08:00' },
+  { id:'AL007', type:'最低库存', goods:'农夫山泉550ml', warehouse:'总部主仓库', current:320, threshold:350, level:'提醒', time:'2026-10-30 08:00' }
+);
+
+/* 库存流水：直接引用 MOCK_EXT.stockFlows，报损确认会真实写入流水 */
+const FLOWS = MOCK_EXT.stockFlows;
+FLOWS.push(
+  { id:'SF006', type:'销售出库', goods:'农夫山泉550ml', qty:10, before:330, after:320, doc:'ORD20261030005', warehouse:'总部主仓库', operator:'张前台', time:'2026-10-30 18:20' },
+  { id:'SF007', type:'调拨入库', goods:'运动毛巾', qty:20, before:68, after:88, doc:'TR20261025002', warehouse:'网球中心仓', operator:'刘库管', time:'2026-10-25 10:00' },
+  { id:'SF008', type:'其他调整', goods:'能量棒', qty:5, before:0, after:5, doc:'ADJ20261010001', warehouse:'总部主仓库', operator:'刘库管', time:'2026-10-10 09:00' },
+  { id:'SF009', type:'销售出库', goods:'红双喜DHS羽毛球', qty:3, before:48, after:45, doc:'ORD20261029002', warehouse:'总部主仓库', operator:'张前台', time:'2026-10-29 16:00' },
+  { id:'SF010', type:'报损出库', goods:'斯伯丁篮球7号', qty:1, before:13, after:12, doc:'LS20261020002', warehouse:'篮球公园仓', operator:'陈库管', time:'2026-10-20 17:00' }
+);
+FLOWS.forEach(f => { f.cat = flowCat(f.type); });
+FLOWS.sort((a, b) => b.time.localeCompare(a.time));
+
+/* ========== 分页 ========== */
+const RENDERERS = {};
+function gotoPage(key, p){
+  pg[key] = p;
+  if(RENDERERS[key]) RENDERERS[key]();
+}
+function buildPager(key, total, elId){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg[key] > pages) pg[key] = pages;
+  if(pg[key] < 1) pg[key] = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg[key] ? 'active' : ''}" onclick="gotoPage('${key}',${i})">${i}</button>`;
+  }
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg[key]}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg[key] <= 1 ? 'disabled' : ''} onclick="gotoPage('${key}',${pg[key] - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg[key] >= pages ? 'disabled' : ''} onclick="gotoPage('${key}',${pg[key] + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 报损管理 ========== */
+function renderLosses(){
+  const st = document.getElementById('ls-status')?.value || '';
+  const wh = document.getElementById('ls-wh')?.value || '';
+  const kw = (document.getElementById('ls-kw')?.value || '').trim();
+  const list = LOSSES.filter(l => {
+    if(st && l.status !== st) return false;
+    if(wh && l.warehouse !== wh) return false;
+    if(kw && !(l.id.includes(kw) || l.goods.includes(kw) || l.reason.includes(kw))) return false;
+    return true;
+  });
+  const start = (pg.losses - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(l => `
+    <tr>
+      <td class="mono" style="font-size:13px">${l.id}</td>
+      <td class="font-medium">${l.goods}</td>
+      <td>${l.warehouse}</td>
+      <td class="text-right">${l.qty}</td>
+      <td class="text-right">¥${money(l.amount)}</td>
+      <td>${l.reason}</td>
+      <td class="text-muted">${l.owner}</td>
+      <td>${l.method}</td>
+      <td><span class="tag ${LOSS_STATUS_TAG[l.status] || 'tag-gray'}">${l.status}</span></td>
+      <td style="font-size:13px">${l.date}</td>
+      <td class="actions" style="flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="viewLoss('${l.id}')">详情</button>
+        ${l.status === '待确认' ? `<button class="btn btn-danger btn-sm" onclick="confirmLoss('${l.id}')">确认报损</button>` : ''}
+      </td>
+    </tr>`).join('');
+  document.getElementById('ls-rows').innerHTML = rows || `<tr><td colspan="11"><div class="empty"><div class="empty-icon"><i data-lucide="trash-2"></i></div><div class="empty-text">暂无符合条件的报损单</div></div></td></tr>`;
+  buildPager('losses', list.length, 'ls-pager');
+  refreshIcons();
+}
+
+function openLossForm(){
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header"><div class="modal-title">新建报损单</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">报损商品<span class="required">*</span></label>
+          <select class="form-select" id="lf-goods" onchange="syncLossForm()">
+            <option value="">请选择商品</option>
+            ${[...new Set(STOCK.map(s => s.name))].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">仓库<span class="required">*</span></label>
+          <select class="form-select" id="lf-wh" onchange="syncLossForm()">
+            <option value="">请选择仓库</option>
+            ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">报损数量<span class="required">*</span></label>
+          <input type="number" class="form-input" id="lf-qty" min="1" value="1" oninput="syncLossForm()">
+          <div class="form-hint" id="lf-avail">请选择商品与仓库后查看可用库存</div>
+        </div>
+        <div class="form-item"><label class="form-label">报损金额（元）</label>
+          <input class="form-input" id="lf-amount" value="0.00" readonly>
+          <div class="form-hint">按当前成本价自动计算</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">报损原因<span class="required">*</span></label>
+          <select class="form-select" id="lf-reason">
+            <option value="">请选择原因</option>
+            <option>临期报废</option><option>破损</option><option>污损</option><option>丢失</option><option>其他</option>
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">处理方式</label>
+          <select class="form-select" id="lf-method">
+            <option>直接报废</option><option>降级处理</option><option>报修</option><option>捐赠</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">责任人<span class="required">*</span></label>
+        <input class="form-input" id="lf-owner" value="刘库管">
+      </div>
+      <div class="form-hint" style="margin-top:12px">新建报损单为「待确认」状态，确认后才扣减库存并生成报损出库流水。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-danger" onclick="submitLoss()"><i data-lucide="check"></i> 提交报损单</button>
+    </div></div>`);
+  refreshIcons();
+  syncLossForm();
+}
+
+function syncLossForm(){
+  const goods = document.getElementById('lf-goods')?.value || '';
+  const wh = document.getElementById('lf-wh')?.value || '';
+  const hint = document.getElementById('lf-avail');
+  const amountEl = document.getElementById('lf-amount');
+  if(!hint || !amountEl) return;
+  const row = STOCK.find(s => s.name === goods && s.warehouse === wh);
+  if(goods && wh && row){
+    hint.textContent = `可用库存：${row.qty} 件 · 成本价 ¥${row.cost}`;
+    hint.style.color = row.qty > 0 ? 'var(--text-4)' : 'var(--error)';
+    const qty = parseFloat(document.getElementById('lf-qty').value) || 0;
+    amountEl.value = (qty * row.cost).toFixed(2);
+  } else {
+    hint.textContent = goods && wh ? '该仓库无此商品库存' : '请选择商品与仓库后查看可用库存';
+    hint.style.color = 'var(--text-4)';
+    amountEl.value = '0.00';
+  }
+}
+
+function submitLoss(){
+  const goods = document.getElementById('lf-goods').value;
+  const wh = document.getElementById('lf-wh').value;
+  const qty = parseInt(document.getElementById('lf-qty').value, 10);
+  const reason = document.getElementById('lf-reason').value;
+  const owner = document.getElementById('lf-owner').value.trim();
+  const method = document.getElementById('lf-method').value;
+  if(!goods){ toast('请选择报损商品', 'error'); return; }
+  if(!wh){ toast('请选择仓库', 'error'); return; }
+  if(!(qty > 0)){ toast('请输入有效的报损数量', 'error'); return; }
+  if(!reason){ toast('请选择报损原因', 'error'); return; }
+  if(!owner){ toast('请填写责任人', 'error'); return; }
+  const row = STOCK.find(s => s.name === goods && s.warehouse === wh);
+  if(!row){ toast('该仓库无此商品库存', 'error'); return; }
+  if(qty > row.qty){ toast(`报损数量超过可用库存（${row.qty} 件）`, 'error'); return; }
+  const loss = {
+    id: genNo('LS'),
+    goods, warehouse: wh, qty,
+    amount: qty * row.cost,
+    reason, owner, method,
+    status: '待确认',
+    date: TODAY
+  };
+  LOSSES.unshift(loss);
+  pg.losses = 1;
+  closeActiveModal();
+  renderLosses();
+  toast('报损单已提交，等待确认', 'success');
+}
+
+function confirmLoss(id){
+  const l = LOSSES.find(x => x.id === id);
+  if(!l || l.status !== '待确认') return;
+  const row = STOCK.find(s => s.name === l.goods && s.warehouse === l.warehouse);
+  if(!row){ toast('未找到对应的库存记录', 'error'); return; }
+  if(row.qty < l.qty){ toast(`库存不足，当前可用 ${row.qty} 件`, 'error'); return; }
+  confirmDialog(`确认报损 ${l.id}？将从「${l.warehouse}」扣减「${l.goods}」${l.qty} 件库存，并生成报损出库流水。`, () => {
+    const before = row.qty;
+    row.qty = Math.max(0, row.qty - l.qty);
+    l.status = '已确认';
+    FLOWS.unshift({
+      id: genNo('SF'),
+      cat: '报损',
+      type: '报损出库',
+      goods: l.goods,
+      qty: l.qty,
+      before,
+      after: row.qty,
+      doc: l.id,
+      warehouse: l.warehouse,
+      operator: '刘库管',
+      time: nowStr()
+    });
+    pg.flows = 1;
+    renderLosses();
+    renderFlows();
+    renderAlertStats();
+    toast('报损已确认，库存已扣减并生成报损出库流水', 'success');
+  });
+}
+
+function viewLoss(id){
+  const l = LOSSES.find(x => x.id === id);
+  if(!l) return;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header"><div class="modal-title">报损单详情 <span class="mono text-muted" style="font-size:13px">${l.id}</span></div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">报损单号</div><div class="v mono">${l.id}</div></div>
+        <div class="kv-item"><div class="k">状态</div><div class="v"><span class="tag ${LOSS_STATUS_TAG[l.status]}">${l.status}</span></div></div>
+        <div class="kv-item"><div class="k">商品</div><div class="v">${l.goods}</div></div>
+        <div class="kv-item"><div class="k">仓库</div><div class="v">${l.warehouse}</div></div>
+        <div class="kv-item"><div class="k">数量</div><div class="v">${l.qty} 件</div></div>
+        <div class="kv-item"><div class="k">金额</div><div class="v">¥${money(l.amount)}</div></div>
+        <div class="kv-item"><div class="k">报损原因</div><div class="v">${l.reason}</div></div>
+        <div class="kv-item"><div class="k">处理方式</div><div class="v">${l.method}</div></div>
+        <div class="kv-item"><div class="k">责任人</div><div class="v">${l.owner}</div></div>
+        <div class="kv-item"><div class="k">日期</div><div class="v">${l.date}</div></div>
+      </div>
+      <div class="timeline">
+        <div class="timeline-item success"><div class="timeline-time">${l.date}</div><div class="timeline-title">创建报损单</div><div class="timeline-desc">责任人 ${l.owner}，处理方式：${l.method}</div></div>
+        ${l.status === '已确认' ? `<div class="timeline-item success"><div class="timeline-time">${l.date}</div><div class="timeline-title">报损已确认</div><div class="timeline-desc">库存已扣减 ${l.qty} 件，已生成报损出库流水</div></div>` : ''}
+        ${l.status === '待确认' ? `<div class="timeline-item warning"><div class="timeline-time">${l.date}</div><div class="timeline-title">等待确认</div><div class="timeline-desc">确认后扣减库存并生成流水</div></div>` : ''}
+        ${l.status === '已驳回' ? `<div class="timeline-item error"><div class="timeline-time">${l.date}</div><div class="timeline-title">报损已驳回</div><div class="timeline-desc">库存未发生变化</div></div>` : ''}
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div></div>`);
+  refreshIcons();
+}
+
+/* ========== 库存预警 ========== */
+function renderAlertStats(){
+  const minCount = ALERTS.filter(a => a.type === '最低库存').length;
+  const expCount = ALERTS.filter(a => a.type === '临期库存').length;
+  const serious = ALERTS.filter(a => a.level === '严重').length;
+  const goodsCount = new Set(ALERTS.map(a => a.goods)).size;
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('al-min', minCount);
+  set('al-exp', expCount);
+  set('al-serious', serious);
+  set('al-goods', goodsCount);
+}
+
+function renderAlerts(){
+  const type = document.getElementById('al-type')?.value || '';
+  const level = document.getElementById('al-level')?.value || '';
+  const kw = (document.getElementById('al-kw')?.value || '').trim();
+  const list = ALERTS.filter(a => {
+    if(type && a.type !== type) return false;
+    if(level && a.level !== level) return false;
+    if(kw && !(a.goods.includes(kw) || a.warehouse.includes(kw))) return false;
+    return true;
+  });
+  const start = (pg.alerts - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(a => {
+    const cur = a.type === '临期库存' ? `${a.current} 件` : a.current;
+    const th = a.type === '临期库存' ? `${a.threshold} 到期` : a.threshold;
+    return `<tr>
+      <td><span class="tag ${a.type === '最低库存' ? 'tag-orange' : 'tag-purple'}">${a.type}</span></td>
+      <td class="font-medium">${a.goods}</td>
+      <td>${a.warehouse}</td>
+      <td class="text-right">${cur}</td>
+      <td class="text-right text-muted">${th}</td>
+      <td><span class="tag ${a.level === '严重' ? 'tag-red' : 'tag-orange'}">${a.level}</span></td>
+      <td class="text-muted" style="font-size:13px">${a.time}</td>
+      <td class="actions">
+        <button class="btn btn-primary btn-sm" onclick="goReplenish('${a.id}')"><i data-lucide="shopping-cart" style="width:14px"></i> 去补货</button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('al-rows').innerHTML = rows || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="bell-off"></i></div><div class="empty-text">暂无符合条件的预警</div></div></td></tr>`;
+  buildPager('alerts', list.length, 'al-pager');
+  refreshIcons();
+}
+
+function goReplenish(id){
+  const a = ALERTS.find(x => x.id === id);
+  if(!a) return;
+  toast(`已跳转采购管理，请为「${a.goods}」创建补货采购单`, 'success');
+}
+
+/* ========== 库存流水 ========== */
+function renderFlows(){
+  const cat = document.getElementById('fl-cat')?.value || '';
+  const wh = document.getElementById('fl-wh')?.value || '';
+  const kw = (document.getElementById('fl-kw')?.value || '').trim();
+  const list = FLOWS.filter(f => {
+    if(cat && f.cat !== cat) return false;
+    if(wh && f.warehouse !== wh) return false;
+    if(kw && !(f.id.includes(kw) || f.goods.includes(kw) || f.doc.includes(kw))) return false;
+    return true;
+  });
+  const start = (pg.flows - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(f => {
+    const diff = f.after - f.before;
+    return `<tr>
+      <td class="mono" style="font-size:13px">${f.id}</td>
+      <td><span class="tag ${CAT_TAG[f.cat] || 'tag-gray'}">${f.cat}</span> <span class="text-muted" style="font-size:12px">${f.type}</span></td>
+      <td class="font-medium">${f.goods}</td>
+      <td>${f.warehouse}</td>
+      <td class="text-right ${diff > 0 ? 'text-success' : diff < 0 ? 'text-error' : 'text-muted'}">${diff > 0 ? '+' : ''}${diff}</td>
+      <td class="text-right text-muted">${f.before}</td>
+      <td class="text-right">${f.after}</td>
+      <td class="mono" style="font-size:12px">${f.doc}</td>
+      <td class="text-muted">${f.operator}</td>
+      <td style="font-size:13px">${f.time}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('fl-rows').innerHTML = rows || `<tr><td colspan="10"><div class="empty"><div class="empty-icon"><i data-lucide="history"></i></div><div class="empty-text">暂无符合条件的库存流水</div></div></td></tr>`;
+  buildPager('flows', list.length, 'fl-pager');
+  refreshIcons();
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.style.display = p.dataset.panel === name ? 'block' : 'none');
+}
+
+/* ========== 页面结构 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">报损 / 预警 / 流水</div>
+  <div class="page-desc">报损单确认扣减库存、最低库存与临期预警、六类库存变动流水查询</div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="loss" onclick="switchTab('loss')"><i data-lucide="alert-triangle" style="width:16px;vertical-align:middle"></i> 报损管理</div>
+      <div class="tab" data-tab="alert" onclick="switchTab('alert')"><i data-lucide="bell-ring" style="width:16px;vertical-align:middle"></i> 库存预警</div>
+      <div class="tab" data-tab="flow" onclick="switchTab('flow')"><i data-lucide="history" style="width:16px;vertical-align:middle"></i> 库存流水</div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="loss">
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:flex-start;background:var(--error-bg);border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--text-2)">
+        <i data-lucide="info" style="width:18px;height:18px;color:var(--error);flex-shrink:0;margin-top:1px"></i>
+        <div>报损单提交后为「待确认」，确认报损时才会真实扣减库存，并自动生成「报损出库」库存流水。</div>
+      </div>
+      <div class="toolbar">
+        <select class="form-select" id="ls-status">
+          <option value="">全部状态</option>
+          <option>待确认</option><option>已确认</option><option>已驳回</option>
+        </select>
+        <select class="form-select" id="ls-wh">
+          <option value="">全部仓库</option>
+          ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+        </select>
+        <input class="form-input" id="ls-kw" placeholder="报损单号/商品/原因" style="width:220px">
+        <button class="btn btn-primary" onclick="pg.losses=1;renderLosses()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('ls-status').value='';document.getElementById('ls-wh').value='';document.getElementById('ls-kw').value='';pg.losses=1;renderLosses()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出报损单</button>
+        <button class="btn btn-danger" onclick="openLossForm()"><i data-lucide="plus"></i> 新建报损</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>报损单号</th><th>商品</th><th>仓库</th><th class="text-right">数量</th><th class="text-right">金额</th>
+            <th>原因</th><th>责任人</th><th>处理方式</th><th>状态</th><th>日期</th><th>操作</th>
+          </tr></thead>
+          <tbody id="ls-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="ls-pager"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="alert" style="display:none">
+    <div class="card-body">
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat-card"><div class="stat-label">最低库存预警 <span class="stat-icon orange"><i data-lucide="package-x"></i></span></div><div class="stat-value" id="al-min" style="font-size:24px;color:var(--warning)">0</div><div class="stat-trend" style="color:var(--text-3)">低于设定阈值</div></div>
+        <div class="stat-card"><div class="stat-label">临期库存预警 <span class="stat-icon purple"><i data-lucide="calendar-clock"></i></span></div><div class="stat-value" id="al-exp" style="font-size:24px;color:var(--purple)">0</div><div class="stat-trend" style="color:var(--text-3)">临近保质期</div></div>
+        <div class="stat-card"><div class="stat-label">严重预警 <span class="stat-icon red"><i data-lucide="alert-triangle"></i></span></div><div class="stat-value" id="al-serious" style="font-size:24px;color:var(--error)">0</div><div class="stat-trend down">需优先处理</div></div>
+        <div class="stat-card"><div class="stat-label">涉及商品 <span class="stat-icon cyan"><i data-lucide="boxes"></i></span></div><div class="stat-value" id="al-goods" style="font-size:24px">0</div><div class="stat-trend" style="color:var(--text-3)">去重统计</div></div>
+      </div>
+      <div class="toolbar">
+        <select class="form-select" id="al-type">
+          <option value="">全部类型</option>
+          <option>最低库存</option><option>临期库存</option>
+        </select>
+        <select class="form-select" id="al-level">
+          <option value="">全部级别</option>
+          <option>严重</option><option>提醒</option>
+        </select>
+        <input class="form-input" id="al-kw" placeholder="商品/仓库" style="width:200px">
+        <button class="btn btn-primary" onclick="pg.alerts=1;renderAlerts()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('al-type').value='';document.getElementById('al-level').value='';document.getElementById('al-kw').value='';pg.alerts=1;renderAlerts()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出预警</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>类型</th><th>商品</th><th>仓库</th><th class="text-right">当前值</th><th class="text-right">阈值</th>
+            <th>级别</th><th>时间</th><th>操作</th>
+          </tr></thead>
+          <tbody id="al-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="al-pager"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="flow" style="display:none">
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:flex-start;background:var(--primary-bg);border:1px solid #bae0ff;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--text-2)">
+        <i data-lucide="history" style="width:18px;height:18px;color:var(--primary);flex-shrink:0;margin-top:1px"></i>
+        <div>库存流水由入库、出库、调拨、盘点、报损、调整六类业务自动生成，不可修改、不可删除，仅支持查询与导出。</div>
+      </div>
+      <div class="toolbar">
+        <select class="form-select" id="fl-cat">
+          <option value="">全部变动类型</option>
+          <option>入库</option><option>出库</option><option>调拨</option><option>盘点</option><option>报损</option><option>调整</option>
+        </select>
+        <select class="form-select" id="fl-wh">
+          <option value="">全部仓库</option>
+          ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+        </select>
+        <input class="form-input" id="fl-kw" placeholder="流水号/商品/关联单据" style="width:240px">
+        <button class="btn btn-primary" onclick="pg.flows=1;renderFlows()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('fl-cat').value='';document.getElementById('fl-wh').value='';document.getElementById('fl-kw').value='';pg.flows=1;renderFlows()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出流水</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>流水号</th><th>变动类型</th><th>商品</th><th>仓库</th><th class="text-right">变动数量</th>
+            <th class="text-right">变动前</th><th class="text-right">变动后</th><th>关联单据</th><th>操作人</th><th>时间</th>
+          </tr></thead>
+          <tbody id="fl-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="fl-pager"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-20">
+  <div class="card-header">
+    <div class="card-title"><i data-lucide="calculator" style="width:18px;vertical-align:middle;margin-right:6px"></i>成本核算说明</div>
+  </div>
+  <div class="card-body">
+    <div class="kv-grid">
+      <div class="kv-item"><div class="k">成本结转方法</div><div class="v">本期不核算成本结转方法</div></div>
+      <div class="kv-item"><div class="k">价格记录范围</div><div class="v">仅记录商品采购价与销售价</div></div>
+      <div class="kv-item"><div class="k">库存金额口径</div><div class="v">按当前成本价估算，仅供经营参考</div></div>
+      <div class="kv-item"><div class="k">财务成本依据</div><div class="v">不作为财务成本结转依据</div></div>
+    </div>
+    <div class="form-hint mt-12">不启用先进先出、移动加权平均等成本结转方法；后续如启用，将另行配置并追溯。</div>
+  </div>
+</div>
+`;
+
+RENDERERS.losses = renderLosses;
+RENDERERS.alerts = renderAlerts;
+RENDERERS.flows = renderFlows;
+window.switchTab = switchTab;
+window.gotoPage = gotoPage;
+window.confirmLoss = confirmLoss;
+window.viewLoss = viewLoss;
+window.openLossForm = openLossForm;
+window.syncLossForm = syncLossForm;
+window.submitLoss = submitLoss;
+window.goReplenish = goReplenish;
+
+renderLosses();
+renderAlertStats();
+renderAlerts();
+renderFlows();
+refreshIcons();
+</script>
+</body>
+</html>

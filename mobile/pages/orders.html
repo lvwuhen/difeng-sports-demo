@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 我的订单</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="dark">
+<div class="app">
+  <div class="scroll">
+    <div class="navbar">
+      <button class="nav-back" onclick="M.go('home.html')">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+      </button>
+      <div class="nav-title">我的订单</div>
+      <a class="nav-act" href="venues.html">订场</a>
+    </div>
+
+    <div class="tabsline" id="tabs"></div>
+    <div class="section tight" style="margin-top:12px" id="list"></div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var tabs = [
+    { id:'all', label:'全部' },
+    { id:'pending', label:'待支付' },
+    { id:'paid', label:'待使用' },
+    { id:'used', label:'已完成' },
+    { id:'refunding', label:'退款中' }
+  ];
+  var current = new URLSearchParams(location.search).get('tab') || 'all';
+  if (!tabs.some(function(t){ return t.id === current; })) current = 'all';
+
+  function match(o){
+    if (current === 'all') return true;
+    if (current === 'used') return o.status === 'used' || o.status === 'done';
+    return o.status === current;
+  }
+
+  function countOf(id){
+    return M.state.orders.filter(function(o){
+      if (id === 'all') return true;
+      if (id === 'used') return o.status === 'used' || o.status === 'done';
+      return o.status === id;
+    }).length;
+  }
+
+  function renderTabs(){
+    M.$('#tabs').innerHTML = tabs.map(function(t){
+      return '<span class="tabline' + (t.id === current ? ' active' : '') + '" data-id="' + t.id + '">' +
+        t.label + (countOf(t.id) ? ' ' + countOf(t.id) : '') + '</span>';
+    }).join('');
+    M.$$('#tabs .tabline').forEach(function(el){
+      el.addEventListener('click', function(){
+        current = el.getAttribute('data-id');
+        renderTabs(); renderList();
+      });
+    });
+  }
+
+  function coverOf(o){
+    if (o.type === 'event') return '<div class="order-cover purple">' + M.icon('trophy', 22) + '</div>';
+    if (o.type === 'card') return '<div class="order-cover orange">' + M.icon('ticket', 22) + '</div>';
+    return '<div class="order-cover">' + M.icon('sport', 22) + '</div>';
+  }
+
+  function actionsOf(o){
+    if (o.status === 'pending'){
+      return '<button class="btn btn-line btn-sm" data-act="cancel" data-id="' + o.id + '">取消订单</button>' +
+             '<button class="btn btn-primary btn-sm" data-act="pay" data-id="' + o.id + '">去支付</button>';
+    }
+    if (o.status === 'paid'){
+      return '<a class="btn btn-line btn-sm" href="order-detail.html?id=' + o.id + '">订单详情</a>' +
+             '<button class="btn btn-primary btn-sm" data-act="refund" data-id="' + o.id + '">申请退款</button>';
+    }
+    if (o.status === 'used' || o.status === 'done'){
+      return '<a class="btn btn-line btn-sm" href="order-detail.html?id=' + o.id + '">订单详情</a>' +
+             '<a class="btn btn-primary btn-sm" href="venues.html">再次预约</a>';
+    }
+    return '<a class="btn btn-line btn-sm" href="order-detail.html?id=' + o.id + '">查看详情</a>';
+  }
+
+  function renderList(){
+    var list = M.state.orders.filter(match);
+    M.$('#list').innerHTML = list.length ? list.map(function(o){
+      var sm = M.statusMeta(o.status);
+      var meta = o.type === 'event'
+        ? (o.group || '赛事报名') + ' · ' + (o.time || M.dateCN(o.date))
+        : (o.type === 'card' ? '次卡产品' : M.dateCN(o.date) + ' ' + o.time);
+      return '<div class="order-card">' +
+        '<div class="order-head">' +
+          '<span class="order-no mono">' + o.id + '</span>' +
+          '<span class="tag ' + sm.tone + '">' + sm.label + '</span>' +
+        '</div>' +
+        '<a class="order-body" href="order-detail.html?id=' + o.id + '">' +
+          coverOf(o) +
+          '<div class="flex1"><div class="order-title">' + o.title + '</div>' +
+            '<div class="order-meta">' + M.icon('clock', 13) + meta + '</div>' +
+            '<div class="order-meta">' + M.icon('pin', 13) + (o.venue || '-') + '</div>' +
+          '</div>' +
+          '<div class="chev">' + M.icon('right', 16) + '</div>' +
+        '</a>' +
+        '<div class="order-foot">' +
+          '<div class="order-total">' + (o.status === 'pending' ? '待支付' : '实付') + ' <strong>¥' + M.rmb(o.amount) + '</strong></div>' +
+          '<div class="order-acts">' + actionsOf(o) + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') : '<div class="empty"><div class="e-ico">' + M.icon('receipt', 28) + '</div><p>该状态下暂无订单<br>去场馆挑选一个合适的时段吧</p>' +
+      '<a class="btn btn-primary btn-md mt12" href="venues.html" style="display:inline-flex">去订场</a></div>';
+
+    M.$$('#list [data-act]').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.preventDefault(); e.stopPropagation();
+        var id = btn.getAttribute('data-id');
+        var act = btn.getAttribute('data-act');
+        var o = M.getOrder(id);
+        if (!o) return;
+        if (act === 'cancel'){
+          M.modal({
+            title:'取消订单', text:'取消后将释放所占时段，本订单尚未支付，可直接取消。',
+            confirmText:'确认取消', onConfirm:function(){
+              M.updateOrder(id, { status:'canceled' });
+              M.toast('订单已取消');
+              renderTabs(); renderList();
+            }
+          });
+        }
+        if (act === 'pay'){
+          M.pay({ amount:o.amount, method:'wechat', onSuccess:function(){
+            M.updateOrder(id, { status:'paid', payMethod:'微信支付', payment:'wechat', verifyCode: genCode() });
+            M.toast('支付成功，已生成核销码', 'success');
+            renderTabs(); renderList();
+          }});
+        }
+        if (act === 'refund'){
+          M.modal({
+            title:'申请退款', text:'本单为整单退款，提交后原路退回，不收取手续费。退款期间该时段将释放。',
+            confirmText:'提交申请', onConfirm:function(){
+              M.updateOrder(id, { status:'refunding' });
+              if (o.payment === 'balance'){
+                M.state.member.balance += o.amount;
+                M.state.flows.unshift({ date:M.today() + ' ' + hm(), label:'退款入账 · ' + o.court, type:'refund', amount:o.amount, method:'储值余额' });
+                M.save();
+              }
+              M.toast('退款申请已提交');
+              renderTabs(); renderList();
+            }
+          });
+        }
+      });
+    });
+  }
+
+  function genCode(){
+    var a = String(Math.floor(Math.random() * 9000) + 1000);
+    var b = String(Math.floor(Math.random() * 9000) + 1000);
+    return a + b;
+  }
+  function hm(){
+    var d = new Date();
+    return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+
+  renderTabs(); renderList();
+  M.init({ tab:'orders' });
+})();
+</script>
+</body>
+</html>

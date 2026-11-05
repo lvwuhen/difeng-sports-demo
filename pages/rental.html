@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>物品租赁 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('rental', '物品租赁');
+
+/* ========== 租赁物品（含计费规则） ========== */
+let RENTAL_ITEMS = [
+  {id:'R001', code:'ZL001', name:'网球拍出租', category:'器材', billing:'按小时', price:20, deposit:200, available:15, total:20, status:'可租',
+    firstDuration:1, firstPrice:20, stepDuration:1, stepPrice:15, cap:120},
+  {id:'R002', code:'ZL002', name:'羽毛球拍出租', category:'器材', billing:'按小时', price:15, deposit:150, available:8, total:12, status:'可租',
+    firstDuration:1, firstPrice:15, stepDuration:1, stepPrice:12, cap:90},
+  {id:'R003', code:'ZL003', name:'篮球出租', category:'球类', billing:'按次', price:10, deposit:100, available:5, total:8, status:'可租',
+    firstDuration:1, firstPrice:10, stepDuration:1, stepPrice:10, cap:30},
+  {id:'R004', code:'ZL004', name:'护膝套装', category:'护具', billing:'按天', price:25, deposit:80, available:10, total:10, status:'可租',
+    firstDuration:1, firstPrice:25, stepDuration:1, stepPrice:20, cap:100},
+  {id:'R005', code:'ZL005', name:'羽毛球（按筒）', category:'球类', billing:'按次', price:15, deposit:0, available:30, total:50, status:'可租',
+    firstDuration:1, firstPrice:15, stepDuration:1, stepPrice:15, cap:0},
+  {id:'R006', code:'ZL006', name:'瑜伽垫', category:'器材', billing:'按小时', price:8, deposit:50, available:12, total:15, status:'可租',
+    firstDuration:1, firstPrice:8, stepDuration:1, stepPrice:6, cap:50},
+];
+
+// 租赁订单
+let RENTAL_ORDERS = [
+  {id:'ZL20261101001', item:'网球拍出租', qty:2, duration:2, rent:60, deposit:400, total:460, customer:'陈晓明', phone:'138****1234', channel:'小程序', status:'租赁中', startTime:'2026-11-01 14:00', operator:'系统'},
+  {id:'ZL20261101002', item:'篮球出租', qty:1, duration:1, rent:10, deposit:100, total:110, customer:'散客', phone:'-', channel:'后台代客', status:'已归还', startTime:'2026-11-01 10:00', operator:'张敏'},
+  {id:'ZL20261101003', item:'护膝套装', qty:1, duration:1, rent:25, deposit:80, total:105, customer:'林雅婷', phone:'139****5678', channel:'小程序', status:'租赁中', startTime:'2026-11-01 15:30', operator:'系统'},
+];
+
+/* ========== 计费计算 ========== */
+function calcRent(item, duration){
+  // duration 单位：按小时=小时，按次=次，按天=天
+  if(item.billing==='按次'){
+    return item.firstPrice; // 按次固定
+  }
+  // 按小时/按天：首段 + 续段
+  let cost = item.firstPrice;
+  let remain = duration - item.firstDuration;
+  while(remain > 0){
+    const step = Math.min(remain, item.stepDuration);
+    cost += item.stepPrice * (step / item.stepDuration);
+    remain -= step;
+  }
+  if(item.cap > 0) cost = Math.min(cost, item.cap);
+  return Math.round(cost*100)/100;
+}
+
+/* ========== 渲染物品列表 ========== */
+function renderItems(){
+  const kw = document.getElementById('r-search')?.value?.trim() || '';
+  const cat = document.getElementById('r-cat')?.value || '';
+  const rows = RENTAL_ITEMS.filter(i=>{
+    return (!kw || i.name.includes(kw) || i.code.includes(kw)) && (!cat || i.category===cat);
+  }).map(i=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${i.code}</td>
+      <td><div class="font-medium">${i.name}</div></td>
+      <td><span class="tag tag-gray">${i.category}</span></td>
+      <td><span class="tag tag-blue">${i.billing}</span></td>
+      <td class="text-right">¥${i.price}</td>
+      <td class="text-right">${i.deposit>0?'¥'+i.deposit:'<span class="text-muted">免押</span>'}</td>
+      <td class="text-right"><span class="${i.available<=3?'text-red':''}">${i.available}</span> / ${i.total}</td>
+      <td><span class="tag ${i.status==='可租'?'tag-green':'tag-gray'}">${i.status}</span></td>
+      <td class="text-right">
+        <button class="btn btn-ghost btn-sm" onclick="viewRule('${i.id}')">规则</button>
+        <button class="btn btn-primary btn-sm" onclick="openRentModal('${i.id}')">租赁</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('item-rows').innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted">暂无租赁物品</td></tr>`;
+}
+
+/* ========== 查看计费规则 ========== */
+window.viewRule = function(id){
+  const i = RENTAL_ITEMS.find(x=>x.id===id);
+  if(!i) return;
+  const html = `<div class="modal" style="max-width:520px">
+    <div class="modal-header"><div class="modal-title">计费规则 - ${i.name}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="card" style="background:var(--primary-bg);border-color:var(--primary);margin-bottom:16px">
+        <div class="card-body" style="padding:16px">
+          <div class="kv-grid">
+            <div class="kv-item"><div class="k">计费方式</div><div class="v">${i.billing}</div></div>
+            <div class="kv-item"><div class="k">基础租金</div><div class="v">¥${i.price}</div></div>
+            <div class="kv-item"><div class="k">押金</div><div class="v">${i.deposit>0?'¥'+i.deposit:'免押'}</div></div>
+            <div class="kv-item"><div class="k">封顶金额</div><div class="v">${i.cap>0?'¥'+i.cap:'不封顶'}</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">首段时长</label><div class="form-input" style="background:var(--border-light)">${i.firstDuration} ${i.billing==='按小时'?'小时':i.billing==='按天'?'天':'次'}</div></div>
+        <div class="form-item"><label class="form-label">首段价格</label><div class="form-input" style="background:var(--border-light)">¥${i.firstPrice}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">续段时长</label><div class="form-input" style="background:var(--border-light)">${i.stepDuration} ${i.billing==='按小时'?'小时':i.billing==='按天'?'天':'次'}</div></div>
+        <div class="form-item"><label class="form-label">续段价格</label><div class="form-input" style="background:var(--border-light)">¥${i.stepPrice}</div></div>
+      </div>
+      <div class="text-muted" style="font-size:13px;margin-top:8px">
+        说明：首段 ${i.firstDuration}${i.billing==='按小时'?'小时':i.billing==='按天'?'天':'次'} 收取 ¥${i.firstPrice}，超出部分按每 ${i.stepDuration}${i.billing==='按小时'?'小时':i.billing==='按天'?'天':'次'} ¥${i.stepPrice} 累加${i.cap>0?`，单次封顶 ¥${i.cap}`:''}。
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>
+  </div>`;
+  openModal(html);
+};
+
+/* ========== 租赁下单 ========== */
+let currentItem = null;
+window.openRentModal = function(id){
+  const i = RENTAL_ITEMS.find(x=>x.id===id);
+  if(!i) return;
+  if(i.status!=='可租'){ toast('该物品暂不可租','error'); return; }
+  if(i.available<=0){ toast('可租数量不足','error'); return; }
+  currentItem = i;
+  const unit = i.billing==='按小时'?'小时':i.billing==='按天'?'天':'次';
+  const html = `<div class="modal" style="max-width:560px">
+    <div class="modal-header"><div class="modal-title">租赁下单 - ${i.name}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">计费方式</div><div class="v">${i.billing}</div></div>
+        <div class="kv-item"><div class="k">可租数量</div><div class="v">${i.available} / ${i.total}</div></div>
+        <div class="kv-item"><div class="k">租金（首段）</div><div class="v">¥${i.firstPrice} / ${i.firstDuration}${unit}</div></div>
+        <div class="kv-item"><div class="k">押金</div><div class="v">${i.deposit>0?'¥'+i.deposit:'免押'}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">租赁数量<span class="required">*</span></label>
+          <input type="number" class="form-input" id="r-qty" value="1" min="1" max="${i.available}" oninput="calcRentTotal()">
+        </div>
+        <div class="form-item"><label class="form-label">租赁时长（${unit}）<span class="required">*</span></label>
+          <input type="number" class="form-input" id="r-dur" value="${i.firstDuration}" min="1" oninput="calcRentTotal()">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">渠道</label>
+          <select class="form-select" id="r-channel"><option>后台代客</option><option>小程序在线租赁</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">客户姓名</label>
+          <input class="form-input" id="r-cust" placeholder="散客可留空">
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">联系电话</label>
+        <input class="form-input" id="r-phone" placeholder="选填">
+      </div>
+      <div class="card" style="background:var(--success-bg);border-color:var(--success);margin-top:16px">
+        <div class="card-body" style="padding:16px">
+          <div class="kv-grid">
+            <div class="kv-item"><div class="k">租金</div><div class="v" id="r-rent">¥0</div></div>
+            <div class="kv-item"><div class="k">押金</div><div class="v" id="r-deposit">¥0</div></div>
+            <div class="kv-item"><div class="k">合计应收</div><div class="v font-bold text-primary" style="font-size:18px" id="r-total">¥0</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="submitRent()">确认下单</button>
+    </div></div>`;
+  openModal(html);
+  calcRentTotal();
+};
+
+window.calcRentTotal = function(){
+  if(!currentItem) return;
+  const qty = parseInt(document.getElementById('r-qty').value)||1;
+  const dur = parseInt(document.getElementById('r-dur').value)||1;
+  const rent = calcRent(currentItem, dur) * qty;
+  const deposit = currentItem.deposit * qty;
+  document.getElementById('r-rent').textContent = '¥'+rent.toFixed(2);
+  document.getElementById('r-deposit').textContent = '¥'+deposit.toFixed(2);
+  document.getElementById('r-total').textContent = '¥'+(rent+deposit).toFixed(2);
+};
+
+window.submitRent = function(){
+  const qty = parseInt(document.getElementById('r-qty').value)||1;
+  const dur = parseInt(document.getElementById('r-dur').value)||1;
+  const channel = document.getElementById('r-channel').value;
+  const cust = document.getElementById('r-cust').value.trim() || '散客';
+  const phone = document.getElementById('r-phone').value.trim() || '-';
+  if(qty > currentItem.available){ toast(`可租数量仅 ${currentItem.available}`,'error'); return; }
+  const rent = calcRent(currentItem, dur) * qty;
+  const deposit = currentItem.deposit * qty;
+  // 扣减可租数量
+  currentItem.available -= qty;
+  // 生成订单
+  const order = {
+    id:'ZL'+Date.now().toString().slice(-10),
+    item: currentItem.name, qty, duration: dur, rent, deposit, total: rent+deposit,
+    customer: cust, phone, channel, status:'租赁中',
+    startTime: new Date().toLocaleString('zh-CN'), operator: channel==='小程序'?'系统':'张敏'
+  };
+  RENTAL_ORDERS.unshift(order);
+  document.querySelector('.modal-overlay').remove();
+  renderItems();
+  renderOrders();
+  toast(`租赁下单成功，单号 ${order.id}`,'success');
+};
+
+/* ========== 渲染租赁订单 ========== */
+function renderOrders(){
+  const rows = RENTAL_ORDERS.map(o=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${o.id}</td>
+      <td>${o.item}</td>
+      <td class="text-right">${o.qty}</td>
+      <td class="text-right">${o.duration}</td>
+      <td class="text-right">¥${o.rent.toFixed(2)}</td>
+      <td class="text-right">¥${o.deposit.toFixed(2)}</td>
+      <td class="text-right font-bold">¥${o.total.toFixed(2)}</td>
+      <td>${o.customer}</td>
+      <td><span class="tag ${o.channel==='小程序'?'tag-cyan':'tag-purple'}">${o.channel}</span></td>
+      <td><span class="tag ${o.status==='租赁中'?'tag-orange':'tag-green'}">${o.status}</span></td>
+      <td class="text-muted">${o.startTime}</td>
+    </tr>`).join('');
+  document.getElementById('order-rows').innerHTML = rows || `<tr><td colspan="11" class="text-center text-muted">暂无租赁订单</td></tr>`;
+}
+
+/* ========== 页面结构 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">物品租赁</div>
+  <div class="page-desc">场馆器材/球类/护具租赁管理，支持按小时/按次/按天计费，首段+续段+封顶规则，渠道含小程序与后台代客</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card"><div class="stat-label">租赁物品种类</div><div class="stat-value" style="font-size:24px">${RENTAL_ITEMS.length}</div></div>
+  <div class="stat-card"><div class="stat-label">可租总数</div><div class="stat-value" style="font-size:24px;color:var(--success)">${RENTAL_ITEMS.reduce((s,i)=>s+i.available,0)}</div></div>
+  <div class="stat-card"><div class="stat-label">租赁中订单</div><div class="stat-value" style="font-size:24px;color:var(--warning)">${RENTAL_ORDERS.filter(o=>o.status==='租赁中').length}</div></div>
+  <div class="stat-card"><div class="stat-label">本月租金收入</div><div class="stat-value" style="font-size:24px;color:var(--primary)">¥${RENTAL_ORDERS.reduce((s,o)=>s+o.rent,0).toFixed(2)}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title"><i data-lucide="package-check" style="width:18px;vertical-align:middle"></i> 租赁物品档案</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-default" onclick="toast('导出租赁物品','info')"><i data-lucide="download"></i> 导出</button>
+      <button class="btn btn-primary" onclick="toast('新增租赁物品（演示）','info')"><i data-lucide="plus"></i> 新增物品</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="toolbar">
+      <input class="form-input" id="r-search" placeholder="搜索物品名称/编码" style="flex:1" oninput="renderItems()">
+      <select class="form-select" id="r-cat" onchange="renderItems()">
+        <option value="">全部分类</option><option>器材</option><option>球类</option><option>护具</option>
+      </select>
+      <select class="form-select"><option>全部计费方式</option><option>按小时</option><option>按次</option><option>按天</option></select>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>编码</th><th>名称</th><th>分类</th><th>计费方式</th>
+          <th class="text-right">租金</th><th class="text-right">押金</th>
+          <th class="text-right">可租/总数</th><th>状态</th><th class="text-center">操作</th>
+        </tr></thead>
+        <tbody id="item-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-20">
+  <div class="card-header">
+    <div class="card-title"><i data-lucide="receipt" style="width:18px;vertical-align:middle"></i> 租赁订单</div>
+  </div>
+  <div class="card-body">
+    <div class="toolbar">
+      <input class="form-input" placeholder="搜索订单号/客户" style="flex:1">
+      <select class="form-select"><option>全部渠道</option><option>小程序</option><option>后台代客</option></select>
+      <select class="form-select"><option>全部状态</option><option>租赁中</option><option>已归还</option></select>
+      <button class="btn btn-default" onclick="toast('导出租赁订单','info')"><i data-lucide="download"></i> 导出</button>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>订单号</th><th>物品</th><th class="text-right">数量</th><th class="text-right">时长</th>
+          <th class="text-right">租金</th><th class="text-right">押金</th><th class="text-right">合计</th>
+          <th>客户</th><th>渠道</th><th>状态</th><th>开始时间</th>
+        </tr></thead>
+        <tbody id="order-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+`;
+
+renderItems();
+renderOrders();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

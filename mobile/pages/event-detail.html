@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 赛事详情</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="light">
+<div class="app" style="padding-top:0">
+  <div class="navbar transparent">
+    <button class="nav-back" onclick="M.go('events.html')">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+    </button>
+    <div class="nav-title">赛事详情</div>
+    <button class="nav-act" id="shareBtn" style="font-size:12px">分享</button>
+  </div>
+
+  <div class="scroll">
+    <div id="hero" class="event-hero" style="padding-top:104px">
+      <div class="eh-inner">
+        <span class="eh-type" id="heroType"></span>
+        <h1 class="eh-title" id="heroName"></h1>
+        <div class="eh-meta" id="heroMeta"></div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:-12px;position:relative;z-index:2">
+      <div class="card">
+        <div class="kv-row"><span class="k">主办单位</span><span class="v" id="organizer"></span></div>
+        <div class="kv-row"><span class="k">比赛时间</span><span class="v" id="period"></span></div>
+        <div class="kv-row"><span class="k">比赛场馆</span><span class="v" id="place"></span></div>
+        <div class="kv-row"><span class="k">赛事状态</span><span class="v" id="statusTag"></span></div>
+      </div>
+    </div>
+
+    <div class="section" id="groupSection">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>报名组别</div>
+        <span class="sub">线上报名 · 线上支付</span>
+      </div>
+      <div class="card" id="groupList"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>赛事介绍</div>
+      </div>
+      <div class="card"><p class="sub" id="intro" style="font-size:13px;line-height:1.8;color:var(--m-text-2)"></p></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>报名须知</div>
+      </div>
+      <div class="card" id="noticeList"></div>
+    </div>
+    <div class="scroll-pad lg"></div>
+  </div>
+
+  <div class="sticky-bar">
+    <div class="sum">
+      <div class="sum-label" id="priceLabel">报名费</div>
+      <div class="sum-total">¥<span id="priceNum">0</span><small id="unit">/人</small></div>
+    </div>
+    <div id="ctaWrap"></div>
+  </div>
+  <div class="homebar light"></div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var eid = new URLSearchParams(location.search).get('id') || 'EV003';
+  var ev = M.event(eid) || M.EVENTS[0];
+  var selected = ev.groups.length ? 0 : -1;
+  var signed = M.state.orders.filter(function(o){
+    return o.type === 'event' && o.title === ev.name && (o.status === 'paid' || o.status === 'used');
+  })[0];
+
+  M.$('#heroType').textContent = ev.type + ' · ' + ev.mode;
+  M.$('#heroName').textContent = ev.name;
+  M.$('#heroMeta').innerHTML =
+    '<span style="display:flex;align-items:center;gap:4px">' + M.icon('calendar', 14) + M.dateCN(ev.startDate) + ' - ' + M.dateCN(ev.endDate) + '</span>' +
+    '<span style="display:flex;align-items:center;gap:4px">' + M.icon('pin', 14) + ev.venue + '</span>';
+  M.$('#organizer').textContent = ev.organizer;
+  M.$('#period').textContent = M.dateCN(ev.startDate) + ' - ' + M.dateCN(ev.endDate);
+  M.$('#place').textContent = ev.address;
+  var tone = ev.status === '报名中' ? 'tag-green' : (ev.status === '即将开始' ? 'tag-orange' : 'tag-gray');
+  M.$('#statusTag').innerHTML = '<span class="tag ' + tone + '">' + ev.status + '</span>';
+  M.$('#intro').textContent = ev.intro;
+  M.$('#noticeList').innerHTML = ev.notice.map(function(t, i){
+    return '<div class="list-row" style="align-items:flex-start"><span style="width:18px;height:18px;border-radius:50%;background:var(--m-primary-bg);color:var(--m-primary);font-size:10px;display:grid;place-items:center;flex-shrink:0;margin-top:1px">' + (i + 1) + '</span><span class="sub" style="color:var(--m-text-2);flex:1">' + t + '</span></div>';
+  }).join('');
+
+  M.$('#shareBtn').addEventListener('click', function(){ M.toast('已生成赛事分享卡片（演示）'); });
+
+  function renderGroups(){
+    var gs = ev.groups;
+    if (!gs.length){
+      M.$('#groupSection').style.display = 'none';
+      M.$('#ctaWrap').innerHTML = '<button class="btn btn-primary" disabled style="min-width:132px">不开放报名</button>';
+      M.$('#priceLabel').textContent = '参赛费用';
+      M.$('#priceNum').textContent = '0';
+      return;
+    }
+    M.$('#groupList').innerHTML = gs.map(function(g, i){
+      var full = g.joined >= g.quota;
+      return '<div class="group-item" data-g="' + i + '" style="cursor:pointer">' +
+        '<div class="group-radio' + (i === selected ? ' on' : '') + '"></div>' +
+        '<div class="flex1"><div class="g-name">' + g.name + ' <span class="tag ' + (full ? 'tag-gray' : 'tag-blue') + '" style="margin-left:4px">' + (full ? '已满' : '剩余 ' + (g.quota - g.joined) + ' 个名额') + '</span></div>' +
+          '<div class="tiny" style="margin-top:2px">' + g.desc + '</div></div>' +
+        '<div style="text-align:right"><div class="amount" style="font-size:16px">¥' + g.price + '</div>' +
+          '<div class="tiny">/' + g.unit + '</div></div>' +
+      '</div>';
+    }).join('');
+    M.$$('#groupList .group-item').forEach(function(el){
+      el.addEventListener('click', function(){
+        var i = +el.getAttribute('data-g');
+        if (gs[i].joined >= gs[i].quota){ M.toast('该组别名额已满'); return; }
+        selected = i;
+        renderGroups(); updateBar();
+      });
+    });
+  }
+
+  function updateBar(){
+    var g = ev.groups[selected];
+    M.$('#priceNum').textContent = g ? g.price : 0;
+    M.$('#unit').textContent = g ? '/' + g.unit : '';
+    M.$('#priceLabel').textContent = signed ? '已报名组别：' + (signed.group || '') : '报名费';
+
+    if (signed){
+      M.$('#ctaWrap').innerHTML = '<a class="btn btn-primary" style="min-width:132px" href="order-detail.html?id=' + signed.id + '">查看报名凭证</a>';
+      return;
+    }
+    if (ev.status !== '报名中'){
+      M.$('#ctaWrap').innerHTML = '<button class="btn btn-primary" disabled style="min-width:132px">' + (ev.status === '已结束' ? '赛事已结束' : '报名未开放') + '</button>';
+      return;
+    }
+    M.$('#ctaWrap').innerHTML = '<button class="btn btn-primary" style="min-width:132px" id="signBtn">立即报名</button>';
+    M.$('#signBtn').addEventListener('click', openForm);
+  }
+
+  function openForm(){
+    var g = ev.groups[selected];
+    if (!g) return;
+    if (g.joined >= g.quota){ M.toast('该组别名额已满'); return; }
+    var app = M.$('.app');
+    var el = document.createElement('div');
+    el.className = 'overlay';
+    el.innerHTML =
+      '<div class="sheet" style="max-height:88%">' +
+        '<div class="sheet-grab"></div>' +
+        '<div class="sheet-title">填写报名信息</div>' +
+        '<div class="sheet-sub">' + g.name + ' · ¥' + g.price + '/' + g.unit + ' · 剩余 ' + (g.quota - g.joined) + ' 个名额</div>' +
+        '<div class="sheet-body">' +
+          '<div class="card" style="box-shadow:none;border:1px solid var(--m-line);padding:4px 14px">' +
+            '<div class="form-item"><span class="f-label">姓名<span class="req">*</span></span><input class="form-input" id="fName" placeholder="请输入参赛人姓名" value="' + M.state.member.name + '"></div>' +
+            '<div class="form-item"><span class="f-label">手机号<span class="req">*</span></span><input class="form-input" id="fPhone" placeholder="用于赛事通知" value="13800001234" maxlength="11"></div>' +
+            '<div class="form-item"><span class="f-label">年龄</span><input class="form-input" id="fAge" placeholder="选填" inputmode="numeric"></div>' +
+            (g.unit === '队'
+              ? '<div class="form-item"><span class="f-label">队伍名称<span class="req">*</span></span><input class="form-input" id="fTeam" placeholder="请输入队伍名称"></div>' +
+                '<div class="form-item" style="display:block;border-bottom:0"><div style="font-size:13px;color:var(--m-text-2);margin-bottom:4px">参赛成员</div><textarea class="form-textarea" id="fMembers" placeholder="请填写成员姓名与联系方式，每行一人"></textarea></div>'
+              : '<div class="form-item" style="display:block;border-bottom:0"><div style="font-size:13px;color:var(--m-text-2);margin-bottom:4px">备注</div><textarea class="form-textarea" id="fRemark" placeholder="选填，如搭档姓名"></textarea></div>') +
+          '</div>' +
+          '<div class="row gap8" id="agreeRow" style="margin-top:14px;cursor:pointer">' +
+            '<span class="checkbox" id="agreeBox"></span>' +
+            '<span class="sub">我已阅读并同意《赛事报名须知》，并确认信息真实有效</span>' +
+          '</div>' +
+          '<div class="notice-box" style="margin-top:12px"><span style="flex-shrink:0">提示</span><span>报名费支付成功后生成电子凭证；赛前可在线申请整单退款，名额同步释放。</span></div>' +
+        '</div>' +
+        '<div class="sheet-foot"><button class="btn btn-primary btn-block" id="formSubmit">提交并支付 ¥' + g.price + '</button></div>' +
+      '</div>';
+    app.appendChild(el);
+    el.addEventListener('click', function(e){ if (e.target === el) el.remove(); });
+
+    var agreed = false;
+    M.$('#agreeRow', el).addEventListener('click', function(){
+      agreed = !agreed;
+      M.$('#agreeBox', el).classList.toggle('on', agreed);
+    });
+
+    M.$('#formSubmit', el).addEventListener('click', function(){
+      var name = M.$('#fName', el).value.trim();
+      var phone = M.$('#fPhone', el).value.trim();
+      var team = M.$('#fTeam', el) ? M.$('#fTeam', el).value.trim() : '';
+      if (!name){ M.toast('请填写参赛人姓名'); return; }
+      if (!/^1[3-9]\d{9}$/.test(phone)){ M.toast('请填写正确的手机号'); return; }
+      if (g.unit === '队' && !team){ M.toast('请填写队伍名称'); return; }
+      if (!agreed){ M.toast('请先阅读并同意报名须知'); return; }
+
+      var remark = M.$('#fRemark', el) ? M.$('#fRemark', el).value.trim() : (team ? ('队伍：' + team) : '');
+      var members = M.$('#fMembers', el) ? M.$('#fMembers', el).value.trim() : '';
+      el.remove();
+
+      M.pay({ amount:g.price, method:'wechat', onSuccess:function(){
+        g.joined += 1;
+        var order = M.createOrder({
+          type:'event', title:ev.name, venue:ev.venue, court:'', sport:ev.type,
+          date:ev.startDate, time:g.name + (members ? ' · 已提交成员信息' : ''), amount:g.price, paid:g.price,
+          payMethod:'微信支付', payment:'wechat', status:'paid',
+          verifyCode:String(Math.floor(Math.random() * 9000) + 1000) + String(Math.floor(Math.random() * 9000) + 1000),
+          invoice:{ status:'未开具', email:'' }, group:g.name,
+          signName:name, signPhone:phone, remark:remark,
+          createdAt:M.today() + ' ' + hm()
+        });
+        M.go('pay-result.html?id=' + order.id);
+      }});
+    });
+  }
+
+  function hm(){
+    var d = new Date();
+    return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+
+  renderGroups(); updateBar();
+  M.init({});
+})();
+</script>
+</body>
+</html>

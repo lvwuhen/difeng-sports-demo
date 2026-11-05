@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>会员卡与权益 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('member', '会员卡与权益');
+
+const levelTagMap = { '普通会员':'tag-blue', '企业会员':'tag-purple', '团体会员':'tag-cyan' };
+
+// 扩展会员卡数据
+const members = JSON.parse(JSON.stringify(MOCK.members));
+members.forEach(m=>{
+  const c = MOCK.customers.find(x=>x.id===m.customerId);
+  m.customerName = c?c.name:'-';
+  m.customerType = c?c.type:'个人';
+  m.phone = c?c.phone:'-';
+  m.venue = c?c.venue:'-';
+  m.timeCards = MOCK.timeCards.filter(t=>t.customerId===m.customerId);
+});
+
+// 会员权益全局配置
+const benefitConfig = {
+  rechargeBonus: [
+    {min:500, ratio:0.05, label:'满500送5%'},
+    {min:1000, ratio:0.08, label:'满1000送8%'},
+    {min:2000, ratio:0.10, label:'满2000送10%'},
+    {min:5000, ratio:0.15, label:'满5000送15%'},
+  ],
+  timeCardEligible: true,
+  exclusiveActivity: true,
+  validMode: 'fixed', // fixed 固定期限 / renew 按充值续期
+  fixedDays: 365,
+  memberPriceEnabled: false, // 本期不启用
+};
+
+let curPage = 1, pageSize = 10;
+
+function getFilteredMembers(){
+  const kw = (document.getElementById('mKw')?.value||'').trim();
+  const ven = document.getElementById('mVenue')?.value||'';
+  const lv = document.getElementById('mLevel')?.value||'';
+  return members.filter(m=>{
+    if(kw && !(m.cardNo.includes(kw)||m.customerName.includes(kw)||m.phone.includes(kw))) return false;
+    if(ven && m.venue!==ven) return false;
+    if(lv && m.level!==lv) return false;
+    return true;
+  });
+}
+
+function renderMembers(){
+  const list = getFilteredMembers();
+  const total = list.length;
+  const start = (curPage-1)*pageSize;
+  const rows = list.slice(start,start+pageSize).map(m=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${m.cardNo}</td>
+      <td><div class="font-medium">${m.customerName}</div><div class="text-muted" style="font-size:12px">${m.phone}</div></td>
+      <td><span class="tag ${levelTagMap[m.level]||'tag-gray'}">${m.level}</span></td>
+      <td class="text-right">¥${m.balance}</td>
+      <td class="text-right text-muted">¥${m.giftBalance}</td>
+      <td class="text-right">${m.points}</td>
+      <td class="text-center">${m.timeCards.length}</td>
+      <td>${m.validUntil}</td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewMember('${m.id}')">详情</button>
+        <button class="btn btn-ghost btn-sm" onclick="setBenefit('${m.id}')">权益配置</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="credit-card"></i></div><div class="empty-text">暂无会员卡数据</div></div></td></tr>`;
+  document.getElementById('memTbody').innerHTML = rows;
+  const pages = Math.max(1, Math.ceil(total/pageSize));
+  let btns='';
+  for(let i=1;i<=pages;i++) btns+=`<button class="page-btn ${i===curPage?'active':''}" onclick="goPage(${i})">${i}</button>`;
+  document.getElementById('memPag').innerHTML = `
+    <div class="pagination-info">共 ${total} 条</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${curPage<=1?'disabled':''} onclick="goPage(${curPage-1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${curPage>=pages?'disabled':''} onclick="goPage(${curPage+1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  if(window.lucide) lucide.createIcons();
+}
+window.goPage = p=>{ curPage=p; renderMembers(); };
+
+// 会员卡详情
+window.viewMember = function(id){
+  const m = members.find(x=>x.id===id);
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">会员卡详情 - ${m.customerName} <span class="tag ${levelTagMap[m.level]}" style="margin-left:8px">${m.level}</span></div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <!-- 电子会员卡展示 -->
+      <div style="background:linear-gradient(135deg,#1677ff,#06b6d4);border-radius:12px;padding:24px;color:#fff;margin-bottom:20px;position:relative;overflow:hidden">
+        <div style="position:absolute;right:-20px;top:-20px;opacity:.15"><i data-lucide="credit-card" style="width:160px;height:160px"></i></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;position:relative">
+          <div>
+            <div style="font-size:13px;opacity:.8">地丰体育 · 电子会员卡</div>
+            <div style="font-size:22px;font-weight:700;margin-top:8px">${m.customerName}</div>
+            <div style="font-size:12px;opacity:.8;margin-top:4px">${m.level} · ${m.venue}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:11px;opacity:.7">卡号</div>
+            <div class="mono" style="font-size:14px">${m.cardNo}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px;position:relative">
+          <div><div style="font-size:11px;opacity:.7">储值余额</div><div style="font-size:20px;font-weight:700">¥${m.balance}</div></div>
+          <div><div style="font-size:11px;opacity:.7">赠送金额</div><div style="font-size:20px;font-weight:700">¥${m.giftBalance}</div></div>
+          <div><div style="font-size:11px;opacity:.7">积分</div><div style="font-size:20px;font-weight:700">${m.points}</div></div>
+          <div><div style="font-size:11px;opacity:.7">持有次卡</div><div style="font-size:20px;font-weight:700">${m.timeCards.length} 张</div></div>
+        </div>
+        <div style="margin-top:16px;font-size:12px;opacity:.8;position:relative">
+          <i data-lucide="calendar" style="width:12px;vertical-align:-2px"></i> 有效期至 ${m.validUntil}
+        </div>
+      </div>
+
+      <!-- 权益内容 -->
+      <div class="font-medium mb-12"><i data-lucide="gift" style="width:16px;vertical-align:-3px;color:var(--primary)"></i> 会员权益</div>
+      <div class="kv-grid mb-20">
+        <div class="kv-item"><div class="k">充值赠送比例</div><div class="v">最高赠送 15%</div></div>
+        <div class="kv-item"><div class="k">次卡购买资格</div><div class="v text-success">享有</div></div>
+        <div class="kv-item"><div class="k">专属活动资格</div><div class="v text-success">享有</div></div>
+        <div class="kv-item"><div class="k">会员价格</div><div class="v text-muted">未启用（本期保留配置）</div></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- 持有次卡 -->
+      <div class="font-medium mb-12"><i data-lucide="repeat" style="width:16px;vertical-align:-3px;color:var(--purple)"></i> 持有次卡</div>
+      ${m.timeCards.length>0?`
+      <table class="data-table">
+        <thead><tr><th>卡名称</th><th>总次数</th><th>已用</th><th>剩余</th><th>有效期</th><th>状态</th></tr></thead>
+        <tbody>${m.timeCards.map(t=>`<tr>
+          <td>${t.productName}</td><td class="text-center">${t.total}</td><td class="text-center">${t.used}</td>
+          <td class="text-center font-medium">${t.remain}</td><td>${t.validUntil}</td>
+          <td><span class="tag ${t.status==='有效'?'tag-green':'tag-gray'}">${t.status}</span></td>
+        </tr>`).join('')}</tbody>
+      </table>`:'<div class="text-muted">暂无次卡</div>'}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="toast('会员卡已发至客户小程序','success')"><i data-lucide="smartphone"></i> 推送至小程序</button>
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 单独/批量设置权益
+window.setBenefit = function(id){
+  const m = id ? members.find(x=>x.id===id) : null;
+  const isBatch = !id;
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">${isBatch?'批量设置会员权益':'设置会员权益 - '+(m?m.customerName:'')}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      ${isBatch?`<div style="background:var(--primary-bg);padding:12px 16px;border-radius:6px;font-size:13px;color:var(--primary);margin-bottom:16px">
+        <i data-lucide="info" style="width:14px;vertical-align:-2px"></i> 批量设置将应用于全部会员（可在下方筛选范围）。
+      </div>`:''}
+
+      <div class="font-medium mb-12">充值赠送比例</div>
+      <table class="data-table mb-16">
+        <thead><tr><th>充值金额（≥）</th><th>赠送比例</th><th>操作</th></tr></thead>
+        <tbody id="bonusRows">
+          ${benefitConfig.rechargeBonus.map((b,i)=>`<tr>
+            <td><input type="number" class="form-input" value="${b.min}" style="width:120px"></td>
+            <td><input type="number" class="form-input" value="${b.ratio*100}" style="width:120px" step="0.1"> %</td>
+            <td><button class="btn btn-ghost btn-sm text-error" onclick="this.closest('tr').remove()"><i data-lucide="trash-2" style="width:14px"></i></button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <button class="btn btn-default btn-sm mb-20" onclick="addBonusRow()"><i data-lucide="plus"></i> 新增赠送档</button>
+
+      <div class="font-medium mb-12">权益开关</div>
+      <div class="form-row">
+        <div class="form-item" style="flex:0 0 auto"><label class="form-label">次卡购买资格</label>
+          <label class="switch"><input type="checkbox" ${benefitConfig.timeCardEligible?'checked':''}><span class="switch-slider"></span></label>
+        </div>
+        <div class="form-item" style="flex:0 0 auto"><label class="form-label">专属活动资格</label>
+          <label class="switch"><input type="checkbox" ${benefitConfig.exclusiveActivity?'checked':''}><span class="switch-slider"></span></label>
+        </div>
+        <div class="form-item" style="flex:0 0 auto"><label class="form-label">会员价格 <span class="tag tag-orange" style="margin-left:6px">本期不启用</span></label>
+          <label class="switch"><input type="checkbox" disabled><span class="switch-slider"></span></label>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="font-medium mb-12">会员有效期设置</div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">有效期方式<span class="required">*</span></label>
+          <select class="form-select" id="validMode" onchange="toggleValidMode()">
+            <option value="fixed" ${benefitConfig.validMode==='fixed'?'selected':''}>固定期限</option>
+            <option value="renew" ${benefitConfig.validMode==='renew'?'selected':''}>按充值行为续期</option>
+          </select>
+        </div>
+        <div class="form-item" id="fixedDaysItem">
+          <label class="form-label">固定天数</label>
+          <input type="number" class="form-input" id="fixedDays" value="${benefitConfig.fixedDays}">
+          <div class="form-hint">开卡之日起计算，到期后会员卡失效</div>
+        </div>
+        <div class="form-item" id="renewDaysItem" style="display:none">
+          <label class="form-label">续期天数（每次充值）</label>
+          <input type="number" class="form-input" value="365">
+          <div class="form-hint">每次充值后有效期向后顺延指定天数</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('${isBatch?'批量':'会员'}权益设置已保存','success');this.closest('.modal-overlay').remove()">保存设置</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.addBonusRow = function(){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input type="number" class="form-input" value="0" style="width:120px"></td>
+    <td><input type="number" class="form-input" value="0" style="width:120px" step="0.1"> %</td>
+    <td><button class="btn btn-ghost btn-sm text-error" onclick="this.closest('tr').remove()"><i data-lucide="trash-2" style="width:14px"></i></button></td>`;
+  document.getElementById('bonusRows').appendChild(tr);
+};
+window.toggleValidMode = function(){
+  const v = document.getElementById('validMode').value;
+  document.getElementById('fixedDaysItem').style.display = v==='fixed'?'block':'none';
+  document.getElementById('renewDaysItem').style.display = v==='renew'?'block':'none';
+};
+
+// 开卡
+window.openCard = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">开通电子会员卡</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">选择客户<span class="required">*</span></label>
+          <select class="form-select" id="ocCust">
+            ${MOCK.customers.filter(c=>!MOCK.members.find(m=>m.customerId===c.id)).map(c=>`<option value="${c.id}">${c.name}（${c.type}）</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">会员类型</label>
+          <select class="form-select"><option>普通会员</option><option>企业会员</option><option>团体会员</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">首充金额（本金）<span class="required">*</span></label>
+          <input type="number" class="form-input" id="ocAmount" value="1000" oninput="calcBonus()">
+        </div>
+        <div class="form-item"><label class="form-label">赠送金额（自动）</label>
+          <input class="form-input" id="ocBonus" value="100" disabled>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">收款方式<span class="required">*</span></label>
+          <select class="form-select"><option>前台收款（现金/扫码）</option><option>小程序在线支付</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">有效期</label>
+          <input class="form-input" value="2027-11-05（开卡日起1年）" disabled>
+        </div>
+      </div>
+      <div style="background:var(--success-bg);padding:12px 16px;border-radius:6px;color:var(--success);font-size:13px">
+        <i data-lucide="check-circle" style="width:14px;vertical-align:-2px"></i> 本系统仅发行电子会员卡，不发实体卡。开卡成功后将自动推送至客户小程序。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('电子会员卡开通成功，已推送至客户小程序','success');this.closest('.modal-overlay').remove()">确认开卡</button>
+    </div>
+  </div>`;
+  openModal(html);
+  window.calcBonus = function(){
+    const amt = parseFloat(document.getElementById('ocAmount').value)||0;
+    let bonus = 0;
+    for(const b of benefitConfig.rechargeBonus){ if(amt>=b.min) bonus = Math.round(amt*b.ratio); }
+    document.getElementById('ocBonus').value = bonus;
+  };
+};
+
+// 权益配置面板渲染
+function renderBenefitConfig(){
+  document.getElementById('bonusGrid').innerHTML = benefitConfig.rechargeBonus.map(b=>`
+    <div style="background:#fafafa;border-radius:8px;padding:16px;text-align:center">
+      <div class="text-muted" style="font-size:12px">充值 ≥ ¥${b.min}</div>
+      <div style="font-size:24px;font-weight:700;color:var(--primary);margin:8px 0">送 ${b.ratio*100}%</div>
+      <div class="text-muted" style="font-size:12px">${b.label}</div>
+    </div>`).join('');
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">会员卡与权益</div>
+  <div class="page-desc">电子会员卡管理，支持储值、积分、次卡、权益配置与有效期管理（本期不设会员等级档次）</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">持卡会员数 <span class="stat-icon blue"><i data-lucide="credit-card"></i></span></div><div class="stat-value">${members.length}</div><div class="stat-trend up">本月新增 +8</div></div>
+  <div class="stat-card"><div class="stat-label">储值余额总计 <span class="stat-icon green"><i data-lucide="wallet"></i></span></div><div class="stat-value" style="font-size:22px">¥${members.reduce((s,m)=>s+m.balance,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">赠送金总计 <span class="stat-icon orange"><i data-lucide="gift"></i></span></div><div class="stat-value" style="font-size:22px;color:var(--warning)">¥${members.reduce((s,m)=>s+m.giftBalance,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">积分总计 <span class="stat-icon purple"><i data-lucide="star"></i></span></div><div class="stat-value" style="font-size:22px">${members.reduce((s,m)=>s+m.points,0).toLocaleString()}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="list" onclick="switchTab('list')">会员列表</div>
+      <div class="tab" data-tab="benefit" onclick="switchTab('benefit')">权益配置</div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="list">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="mVenue" onchange="curPage=1;renderMembers()">
+            <option value="">全部场馆</option>${MOCK.venues.map(v=>{const short=v.name.includes('总部')?'总部':v.name.includes('篮球')?'篮球公园':v.name.includes('网球')?'网球中心':v.name.includes('羽毛球')?'羽毛球馆':v.name;return `<option value="${short}">${v.name}</option>`;}).join('')}
+          </select>
+          <select class="form-select" id="mLevel" onchange="curPage=1;renderMembers()">
+            <option value="">全部类型</option><option>普通会员</option><option>企业会员</option><option>团体会员</option>
+          </select>
+        </div>
+        <input class="form-input" id="mKw" placeholder="卡号/客户/手机号" style="width:220px" oninput="curPage=1;renderMembers()">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出会员列表','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="openCard()"><i data-lucide="plus"></i> 开卡</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>卡号</th><th>客户</th><th>类型</th><th class="text-right">储值余额</th><th class="text-right">赠送金</th><th class="text-right">积分</th><th class="text-center">次卡</th><th>有效期</th><th>操作</th></tr></thead>
+          <tbody id="memTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="memPag"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="benefit" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="font-medium"><i data-lucide="settings" style="width:16px;vertical-align:-3px"></i> 全局会员权益配置</div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="setBenefit('')"><i data-lucide="users"></i> 批量设置</button>
+        <button class="btn btn-primary" onclick="setBenefit('')"><i data-lucide="edit"></i> 编辑配置</button>
+      </div>
+
+      <div class="mb-20">
+        <div class="font-medium mb-12">充值赠送比例</div>
+        <div class="stats-grid" id="bonusGrid" style="grid-template-columns:repeat(4,1fr)"></div>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card">
+          <div class="stat-label">次卡购买资格 <span class="stat-icon green"><i data-lucide="repeat"></i></span></div>
+          <div class="stat-value" style="font-size:18px;color:var(--success)">已开通</div>
+          <div class="stat-trend">会员可购买所有次卡产品</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">专属活动资格 <span class="stat-icon purple"><i data-lucide="party-popper"></i></span></div>
+          <div class="stat-value" style="font-size:18px;color:var(--purple)">已开通</div>
+          <div class="stat-trend">会员专属赛事/活动优先报名</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">会员价格 <span class="stat-icon orange"><i data-lucide="tag"></i></span></div>
+          <div class="stat-value" style="font-size:18px;color:var(--text-4)">未启用</div>
+          <div class="stat-trend text-muted">配置项保留，本期暂不启用</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="font-medium mb-12">会员有效期</div>
+      <div class="kv-grid">
+        <div class="kv-item"><div class="k">有效期方式</div><div class="v">${benefitConfig.validMode==='fixed'?'固定期限':'按充值行为续期'}</div></div>
+        <div class="kv-item"><div class="k">固定天数</div><div class="v">${benefitConfig.fixedDays} 天（开卡日起）</div></div>
+        <div class="kv-item"><div class="k">到期处理</div><div class="v">到期后会员卡失效，储值余额冻结，需续充恢复</div></div>
+        <div class="kv-item"><div class="k">续期方式</div><div class="v">充值后有效期按规则顺延</div></div>
+      </div>
+
+      <div class="divider"></div>
+      <div style="background:var(--warning-bg);padding:12px 16px;border-radius:6px;color:var(--warning);font-size:13px">
+        <i data-lucide="alert-triangle" style="width:14px;vertical-align:-2px"></i> 本期不设会员等级档次（如银卡/金卡/钻石），所有会员权益一致。会员价格配置项已保留但未启用，后续版本可上线。
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderMembers();
+renderBenefitConfig();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

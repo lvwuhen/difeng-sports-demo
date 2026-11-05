@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>销售/调拨/盘点 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+<style>/* 页面级补充样式：优先复用 styles.css */</style>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('inventory', '销售/调拨/盘点');
+
+/* ========== 工具与基础数据 ========== */
+const PAGE_SIZE = 5;
+const TODAY = '2026-11-05';
+let seq = 0;
+let activeModal = null;
+let pg = { overview: 1, transfer: 1, stocktake: 1 };
+
+function todayStr(){ return TODAY; }
+function nowStr(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${TODAY} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function genNo(prefix){
+  seq++;
+  return prefix + TODAY.replace(/-/g, '') + String(seq).padStart(3, '0');
+}
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function isExpiring(s){
+  if(!s.expiry) return false;
+  const diff = (new Date(s.expiry + 'T00:00:00') - new Date(TODAY + 'T00:00:00')) / 86400000;
+  return diff <= 30;
+}
+function stockTags(s){
+  const tags = [];
+  if(s.qty <= 0) tags.push('<span class="tag tag-red">缺货</span>');
+  else if(s.qty < s.minQty) tags.push('<span class="tag tag-orange">低于最低库存</span>');
+  if(isExpiring(s)) tags.push('<span class="tag tag-red">临期</span>');
+  if(!tags.length) tags.push('<span class="tag tag-green">正常</span>');
+  return tags.join(' ');
+}
+
+const TR_STATUS_TAG = {
+  '调出方已确认': 'tag-blue',
+  '调入方待确认': 'tag-orange',
+  '已完成': 'tag-green',
+  '已驳回': 'tag-red'
+};
+const ST_STATUS_TAG = { '待确认': 'tag-orange', '已调整': 'tag-green' };
+
+/* 库存明细：直接引用 MOCK_EXT.stockList，调拨/盘点调整会真实回写库存 */
+const STOCK = MOCK_EXT.stockList;
+
+/* 将历史单据中的商品简称归一化到库存 SKU 全名 */
+function resolveGoodsName(raw){
+  const names = [...new Set(STOCK.map(s => s.name))];
+  if(names.includes(raw)) return raw;
+  const hit = names.find(n => n.startsWith(raw) || raw.startsWith(n));
+  return hit || raw;
+}
+
+/* 调拨单：直接引用 MOCK_EXT.transfers，补充演示单据 */
+const TRANSFERS = MOCK_EXT.transfers;
+TRANSFERS.forEach(t => { t.goodsName = resolveGoodsName(t.items.split('×')[0]); });
+TRANSFERS.push(
+  { id:'TR20261102007', from:'总部主仓库', to:'篮球公园仓', goodsName:'农夫山泉550ml', items:'农夫山泉550ml×40', qty:40, reason:'场馆补货', status:'调出方已确认', createDate:'2026-11-02', operator:'刘库管' },
+  { id:'TR20261030006', from:'网球中心仓', to:'总部主仓库', goodsName:'运动毛巾', items:'运动毛巾×10', qty:10, reason:'余量回收', status:'已完成', createDate:'2026-10-30', operator:'周库管' },
+  { id:'TR20261015004', from:'总部主仓库', to:'网球中心仓', goodsName:'能量棒', items:'能量棒×20', qty:20, reason:'临期调拨', status:'已驳回', createDate:'2026-10-15', operator:'刘库管' },
+  { id:'TR20261103008', from:'篮球公园仓', to:'总部主仓库', goodsName:'斯伯丁篮球7号', items:'斯伯丁篮球7号×2', qty:2, reason:'借调回仓', status:'调入方待确认', createDate:'2026-11-03', operator:'陈库管' }
+);
+TRANSFERS.sort((a, b) => b.createDate.localeCompare(a.createDate));
+
+/* 盘点任务：直接引用 MOCK_EXT.stocktakes，调整结果会真实回写库存 */
+const STOCKTAKES = MOCK_EXT.stocktakes;
+STOCKTAKES.push(
+  { id:'ST20261102001', warehouse:'总部主仓库', bookQty:545, actualQty:543, gain:0, loss:2, diffAmount:-9, status:'待确认', createDate:'2026-11-02', operator:'刘库管' },
+  { id:'ST20261030002', warehouse:'网球中心仓', bookQty:88, actualQty:90, gain:2, loss:0, diffAmount:36, status:'已调整', createDate:'2026-10-30', operator:'周库管' },
+  { id:'ST20261015003', warehouse:'篮球公园仓', bookQty:17, actualQty:15, gain:0, loss:2, diffAmount:-290, status:'已调整', createDate:'2026-10-15', operator:'陈库管' },
+  { id:'ST20260928004', warehouse:'总部主仓库', bookQty:545, actualQty:549, gain:4, loss:0, diffAmount:30, status:'已调整', createDate:'2026-09-28', operator:'刘库管' }
+);
+STOCKTAKES.sort((a, b) => b.createDate.localeCompare(a.createDate));
+
+/* ========== 分页 ========== */
+const RENDERERS = {};
+function gotoPage(key, p){
+  pg[key] = p;
+  if(RENDERERS[key]) RENDERERS[key]();
+}
+function buildPager(key, total, elId){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg[key] > pages) pg[key] = pages;
+  if(pg[key] < 1) pg[key] = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg[key] ? 'active' : ''}" onclick="gotoPage('${key}',${i})">${i}</button>`;
+  }
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg[key]}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg[key] <= 1 ? 'disabled' : ''} onclick="gotoPage('${key}',${pg[key] - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg[key] >= pages ? 'disabled' : ''} onclick="gotoPage('${key}',${pg[key] + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 库存总览 ========== */
+function renderWarehouseCards(){
+  const el = document.getElementById('wh-summary');
+  if(!el) return;
+  el.innerHTML = MOCK.warehouses.map(w => {
+    const rows = STOCK.filter(s => s.warehouse === w.name);
+    const qty = rows.reduce((s, x) => s + x.qty, 0);
+    const amount = rows.reduce((s, x) => s + x.qty * x.cost, 0);
+    const alerts = rows.filter(x => x.qty <= 0 || x.qty < x.minQty || isExpiring(x)).length;
+    return `<div class="stat-card">
+      <div class="stat-label">${w.name} <span class="stat-icon cyan"><i data-lucide="warehouse"></i></span></div>
+      <div class="stat-value" style="font-size:22px">¥${money(amount)}</div>
+      <div class="stat-trend" style="color:var(--text-3)">${rows.length} 个 SKU · ${qty} 件在库</div>
+      ${alerts ? `<div class="stat-trend down">${alerts} 个商品需关注</div>` : `<div class="stat-trend up">库存状态正常</div>`}
+    </div>`;
+  }).join('');
+}
+
+function renderOverview(){
+  renderWarehouseCards();
+  const wh = document.getElementById('iv-wh')?.value || '';
+  const cat = document.getElementById('iv-cat')?.value || '';
+  const kw = (document.getElementById('iv-kw')?.value || '').trim();
+  const list = STOCK.filter(s => {
+    if(wh && s.warehouse !== wh) return false;
+    if(cat && s.category !== cat) return false;
+    if(kw && !(s.name.includes(kw) || s.goodsCode.includes(kw) || s.batch.includes(kw))) return false;
+    return true;
+  });
+  const start = (pg.overview - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(s => `
+    <tr>
+      <td class="mono" style="font-size:13px">${s.goodsCode}</td>
+      <td><div class="font-medium">${s.name}</div><div class="text-muted mono" style="font-size:12px">${s.id}</div></td>
+      <td><span class="tag tag-gray">${s.category}</span></td>
+      <td>${s.warehouse}</td>
+      <td class="mono" style="font-size:12px">${s.location}</td>
+      <td class="mono" style="font-size:12px">${s.batch}</td>
+      <td class="text-right"><span class="${s.qty < s.minQty ? 'text-error font-bold' : ''}">${s.qty}</span></td>
+      <td class="text-right text-muted">${s.minQty}</td>
+      <td class="text-right">¥${s.cost}</td>
+      <td class="text-right font-medium">¥${money(s.qty * s.cost)}</td>
+      <td>${stockTags(s)}</td>
+    </tr>`).join('');
+  document.getElementById('stock-rows').innerHTML = rows || `<tr><td colspan="11"><div class="empty"><div class="empty-icon"><i data-lucide="package-search"></i></div><div class="empty-text">暂无符合条件的库存</div></div></td></tr>`;
+  buildPager('overview', list.length, 'stock-pager');
+  refreshIcons();
+}
+
+/* ========== 调拨管理 ========== */
+function renderTransfers(){
+  const st = document.getElementById('tr-status')?.value || '';
+  const kw = (document.getElementById('tr-kw')?.value || '').trim();
+  const list = TRANSFERS.filter(t => {
+    if(st && t.status !== st) return false;
+    if(kw && !(t.id.includes(kw) || t.items.includes(kw) || t.from.includes(kw) || t.to.includes(kw))) return false;
+    return true;
+  });
+  const start = (pg.transfer - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(t => {
+    const pending = t.status === '调出方已确认' || t.status === '调入方待确认';
+    return `<tr>
+      <td class="mono" style="font-size:13px">${t.id}</td>
+      <td>${t.from}</td>
+      <td>${t.to}</td>
+      <td>${t.items}</td>
+      <td class="text-right">${t.qty}</td>
+      <td>${t.reason}</td>
+      <td><span class="tag ${TR_STATUS_TAG[t.status] || 'tag-gray'}">${t.status}</span></td>
+      <td style="font-size:13px">${t.createDate}</td>
+      <td class="text-muted">${t.operator}</td>
+      <td class="actions" style="flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="viewTransfer('${t.id}')">详情</button>
+        ${pending ? `<button class="btn btn-success btn-sm" onclick="confirmTransfer('${t.id}')">确认调入</button>` : ''}
+        ${pending ? `<button class="btn btn-danger btn-sm" onclick="rejectTransfer('${t.id}')">驳回</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tr-rows').innerHTML = rows || `<tr><td colspan="10"><div class="empty"><div class="empty-icon"><i data-lucide="arrow-right-left"></i></div><div class="empty-text">暂无符合条件的调拨单</div></div></td></tr>`;
+  buildPager('transfer', list.length, 'tr-pager');
+  refreshIcons();
+}
+
+function openTransferForm(){
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header"><div class="modal-title">新建调拨单</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">调出仓<span class="required">*</span></label>
+          <select class="form-select" id="tr-from"><option value="">请选择调出仓</option>${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">调入仓<span class="required">*</span></label>
+          <select class="form-select" id="tr-to"><option value="">请选择调入仓</option>${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">商品<span class="required">*</span></label>
+          <select class="form-select" id="tr-goods"><option value="">请选择商品</option>${[...new Set(STOCK.map(s => s.name))].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">调拨数量<span class="required">*</span></label>
+          <input type="number" class="form-input" id="tr-qty" min="1" value="1">
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">调拨原因<span class="required">*</span></label>
+        <input class="form-input" id="tr-reason" placeholder="如：场馆补货 / 滞销回仓 / 临期调拨">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="submitTransfer()"><i data-lucide="check"></i> 创建调拨单</button>
+    </div></div>`);
+  refreshIcons();
+}
+
+function submitTransfer(){
+  const from = document.getElementById('tr-from').value;
+  const to = document.getElementById('tr-to').value;
+  const goods = document.getElementById('tr-goods').value;
+  const qty = parseInt(document.getElementById('tr-qty').value, 10);
+  const reason = document.getElementById('tr-reason').value.trim();
+  if(!from || !to){ toast('请选择调出仓与调入仓', 'error'); return; }
+  if(from === to){ toast('调出仓与调入仓不能相同', 'error'); return; }
+  if(!goods){ toast('请选择调拨商品', 'error'); return; }
+  if(!(qty > 0)){ toast('请输入有效的调拨数量', 'error'); return; }
+  if(!reason){ toast('请填写调拨原因', 'error'); return; }
+  const src = STOCK.find(s => s.name === goods && s.warehouse === from);
+  if(!src){ toast('调出仓无此商品库存，无法创建调拨单', 'error'); return; }
+  if(src.qty < qty){ toast(`调出仓库存不足，当前可用 ${src.qty} 件`, 'error'); return; }
+
+  const t = {
+    id: genNo('TR'),
+    from, to,
+    goodsName: goods,
+    items: `${goods}×${qty}`,
+    qty,
+    reason,
+    status: '调出方已确认',
+    createDate: TODAY,
+    operator: '刘库管'
+  };
+  TRANSFERS.unshift(t);
+  pg.transfer = 1;
+  closeActiveModal();
+  renderTransfers();
+  toast('调拨单已创建，已由调出方确认，等待调入方确认', 'success');
+}
+
+function confirmTransfer(id){
+  const t = TRANSFERS.find(x => x.id === id);
+  if(!t) return;
+  if(t.status !== '调出方已确认' && t.status !== '调入方待确认') return;
+  const goods = resolveGoodsName(t.goodsName || t.items.split('×')[0]);
+  const src = STOCK.find(s => s.name === goods && s.warehouse === t.from);
+  if(src && src.qty < t.qty){ toast(`调出仓库存不足，当前可用 ${src.qty} 件`, 'error'); return; }
+
+  if(src) src.qty = Math.max(0, src.qty - t.qty);
+  const dest = STOCK.find(s => s.name === goods && s.warehouse === t.to);
+  if(dest){
+    dest.qty += t.qty;
+  } else {
+    STOCK.push({
+      id: genNo('SK'),
+      goodsCode: src ? src.goodsCode : '',
+      name: goods,
+      category: src ? src.category : '其他',
+      warehouse: t.to,
+      location: 'A-01-01',
+      batch: 'B' + TODAY.replace(/-/g, ''),
+      qty: t.qty,
+      minQty: src ? src.minQty : 10,
+      cost: src ? src.cost : 0,
+      expiry: ''
+    });
+  }
+  t.status = '已完成';
+  renderOverview();
+  renderTransfers();
+  toast(`调拨 ${t.id} 已完成，${t.to} 库存已增加 ${t.qty} 件`, 'success');
+}
+
+function rejectTransfer(id){
+  const t = TRANSFERS.find(x => x.id === id);
+  if(!t) return;
+  confirmDialog(`确定驳回该调拨单 ${t.id}？调拨单将标记为已驳回。`, () => {
+    t.status = '已驳回';
+    renderTransfers();
+    toast(`调拨单 ${t.id} 已驳回`, 'info');
+  });
+}
+
+function viewTransfer(id){
+  const t = TRANSFERS.find(x => x.id === id);
+  if(!t) return;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header"><div class="modal-title">调拨单详情 <span class="mono text-muted" style="font-size:13px">${t.id}</span></div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">调拨单号</div><div class="v mono">${t.id}</div></div>
+        <div class="kv-item"><div class="k">状态</div><div class="v"><span class="tag ${TR_STATUS_TAG[t.status]}">${t.status}</span></div></div>
+        <div class="kv-item"><div class="k">调出仓</div><div class="v">${t.from}</div></div>
+        <div class="kv-item"><div class="k">调入仓</div><div class="v">${t.to}</div></div>
+        <div class="kv-item"><div class="k">商品</div><div class="v">${t.items}</div></div>
+        <div class="kv-item"><div class="k">数量</div><div class="v">${t.qty} 件</div></div>
+        <div class="kv-item"><div class="k">原因</div><div class="v">${t.reason}</div></div>
+        <div class="kv-item"><div class="k">操作人 / 日期</div><div class="v">${t.operator} · ${t.createDate}</div></div>
+      </div>
+      <div class="timeline">
+        <div class="timeline-item success"><div class="timeline-time">${t.createDate}</div><div class="timeline-title">调拨单创建</div><div class="timeline-desc">调出方 ${t.operator} 已确认调出</div></div>
+        ${t.status === '已完成' ? `<div class="timeline-item success"><div class="timeline-time">${t.createDate}</div><div class="timeline-title">调入方已确认</div><div class="timeline-desc">库存已完成转移</div></div>` : ''}
+        ${t.status === '已驳回' ? `<div class="timeline-item error"><div class="timeline-time">${t.createDate}</div><div class="timeline-title">调入方已驳回</div><div class="timeline-desc">调拨未执行，库存未变化</div></div>` : ''}
+        ${(t.status === '调入方待确认' || t.status === '调出方已确认') ? `<div class="timeline-item warning"><div class="timeline-time">${t.createDate}</div><div class="timeline-title">等待调入方确认</div><div class="timeline-desc">调入方可确认或驳回</div></div>` : ''}
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div></div>`);
+  refreshIcons();
+}
+
+/* ========== 盘点管理 ========== */
+function renderStocktakes(){
+  const st = document.getElementById('st-status')?.value || '';
+  const kw = (document.getElementById('st-kw')?.value || '').trim();
+  const list = STOCKTAKES.filter(s => {
+    if(st && s.status !== st) return false;
+    if(kw && !(s.id.includes(kw) || s.warehouse.includes(kw))) return false;
+    return true;
+  });
+  const start = (pg.stocktake - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(s => `
+    <tr>
+      <td class="mono" style="font-size:13px">${s.id}</td>
+      <td>${s.warehouse}</td>
+      <td class="text-right">${s.bookQty}</td>
+      <td class="text-right">${s.actualQty}</td>
+      <td class="text-right ${s.gain ? 'text-success' : 'text-muted'}">${s.gain ? '+' + s.gain : 0}</td>
+      <td class="text-right ${s.loss ? 'text-error' : 'text-muted'}">${s.loss ? '-' + s.loss : 0}</td>
+      <td class="text-right ${s.diffAmount > 0 ? 'text-success' : s.diffAmount < 0 ? 'text-error' : 'text-muted'}">¥${money(s.diffAmount)}</td>
+      <td><span class="tag ${ST_STATUS_TAG[s.status] || 'tag-gray'}">${s.status}</span></td>
+      <td style="font-size:13px">${s.createDate}</td>
+      <td class="text-muted">${s.operator}</td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewStocktake('${s.id}')">明细</button>
+        ${s.status === '待确认' ? `<button class="btn btn-warning btn-sm" onclick="openStocktakeAdjust('${s.id}')">确认差异并发起调整</button>` : ''}
+      </td>
+    </tr>`).join('');
+  document.getElementById('st-rows').innerHTML = rows || `<tr><td colspan="11"><div class="empty"><div class="empty-icon"><i data-lucide="clipboard-list"></i></div><div class="empty-text">暂无盘点任务</div></div></td></tr>`;
+  buildPager('stocktake', list.length, 'st-pager');
+  refreshIcons();
+}
+
+function openStocktakeForm(){
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">新建盘点任务</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-item mb-16"><label class="form-label">盘点仓库<span class="required">*</span></label>
+        <select class="form-select" id="st-wh" onchange="renderStocktakeItems()">
+          <option value="">请选择仓库</option>
+          ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>商品</th><th>库位/批次</th><th class="text-right">账面数量</th><th class="text-right" style="width:130px">实盘数量</th><th class="text-right" style="width:100px">差异</th></tr></thead>
+          <tbody id="st-item-rows"></tbody>
+        </table>
+      </div>
+      <div class="kv-grid mt-16">
+        <div class="kv-item"><div class="k">账面数量合计</div><div class="v" id="st-book">0</div></div>
+        <div class="kv-item"><div class="k">实盘数量合计</div><div class="v" id="st-actual">0</div></div>
+        <div class="kv-item"><div class="k">盘盈</div><div class="v text-success" id="st-gain">0</div></div>
+        <div class="kv-item"><div class="k">盘亏</div><div class="v text-error" id="st-loss">0</div></div>
+        <div class="kv-item"><div class="k">差异金额</div><div class="v" id="st-diff">¥0.00</div></div>
+      </div>
+      <div class="form-hint">盘盈盘亏仅作记录，点击「确认差异并发起调整」后才更新库存并留痕。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="submitStocktake()"><i data-lucide="check"></i> 保存盘点任务</button>
+    </div></div>`);
+  renderStocktakeItems();
+  refreshIcons();
+}
+
+function renderStocktakeItems(){
+  const wh = document.getElementById('st-wh')?.value || '';
+  const tbody = document.getElementById('st-item-rows');
+  if(!tbody) return;
+  if(!wh){
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">请先选择盘点仓库</td></tr>`;
+    recalcStocktake();
+    return;
+  }
+  const rows = STOCK.filter(s => s.warehouse === wh);
+  tbody.innerHTML = rows.map(s => `<tr data-book="${s.qty}" data-cost="${s.cost}">
+    <td><div class="font-medium">${s.name}</div><div class="text-muted mono" style="font-size:12px">${s.goodsCode}</div></td>
+    <td class="mono" style="font-size:12px">${s.location}<br>${s.batch}</td>
+    <td class="text-right book-qty">${s.qty}</td>
+    <td class="text-right"><input type="number" class="form-input st-actual" style="width:96px;text-align:center" value="${s.qty}" min="0" oninput="recalcStocktake()"></td>
+    <td class="text-right st-diff">0</td>
+  </tr>`).join('') || `<tr><td colspan="5" class="text-center text-muted">该仓库暂无库存</td></tr>`;
+  recalcStocktake();
+  refreshIcons();
+}
+
+function recalcStocktake(){
+  const rows = [...document.querySelectorAll('#st-item-rows tr')].filter(r => r.dataset.book);
+  let book = 0, actual = 0, gain = 0, loss = 0, diffAmount = 0;
+  rows.forEach(r => {
+    const b = Number(r.dataset.book) || 0;
+    const c = Number(r.dataset.cost) || 0;
+    const a = parseFloat(r.querySelector('.st-actual').value);
+    const diff = (isNaN(a) ? b : a) - b;
+    book += b;
+    actual += isNaN(a) ? b : a;
+    if(diff > 0) gain += diff;
+    if(diff < 0) loss += Math.abs(diff);
+    diffAmount += diff * c;
+    const diffEl = r.querySelector('.st-diff');
+    diffEl.textContent = diff > 0 ? '+' + diff : diff;
+    diffEl.className = 'text-right st-diff ' + (diff > 0 ? 'text-success' : diff < 0 ? 'text-error' : 'text-muted');
+  });
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('st-book', book);
+  set('st-actual', actual);
+  set('st-gain', gain);
+  set('st-loss', loss);
+  set('st-diff', '¥' + money(diffAmount));
+}
+
+function submitStocktake(){
+  const wh = document.getElementById('st-wh').value;
+  if(!wh){ toast('请选择盘点仓库', 'error'); return; }
+  const rows = [...document.querySelectorAll('#st-item-rows tr')].filter(r => r.dataset.book);
+  if(!rows.length){ toast('该仓库暂无库存，无法发起盘点', 'error'); return; }
+  const details = [];
+  let book = 0, actual = 0, gain = 0, loss = 0, diffAmount = 0, bad = false;
+  rows.forEach(r => {
+    const goods = r.querySelector('.font-medium').textContent.trim();
+    const b = Number(r.dataset.book) || 0;
+    const c = Number(r.dataset.cost) || 0;
+    const a = parseFloat(r.querySelector('.st-actual').value);
+    if(isNaN(a) || a < 0){ bad = true; return; }
+    const diff = a - b;
+    book += b; actual += a;
+    if(diff > 0) gain += diff;
+    if(diff < 0) loss += Math.abs(diff);
+    diffAmount += diff * c;
+    details.push({ goods, book: b, actual: a, cost: c });
+  });
+  if(bad){ toast('实盘数量不能为空或小于0', 'error'); return; }
+  const st = {
+    id: genNo('ST'),
+    warehouse: wh,
+    bookQty: book,
+    actualQty: actual,
+    gain,
+    loss,
+    diffAmount,
+    status: '待确认',
+    createDate: TODAY,
+    operator: '刘库管',
+    details
+  };
+  STOCKTAKES.unshift(st);
+  pg.stocktake = 1;
+  closeActiveModal();
+  renderStocktakes();
+  toast('盘点任务已保存，差异待确认后调整库存', 'success');
+}
+
+function openStocktakeAdjust(id){
+  const s = STOCKTAKES.find(x => x.id === id);
+  if(!s) return;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header"><div class="modal-title">确认盘点差异 - ${s.id}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">仓库</div><div class="v">${s.warehouse}</div></div>
+        <div class="kv-item"><div class="k">账面 / 实盘</div><div class="v">${s.bookQty} / ${s.actualQty}</div></div>
+        <div class="kv-item"><div class="k">盘盈 / 盘亏</div><div class="v">+${s.gain} / -${s.loss}</div></div>
+        <div class="kv-item"><div class="k">差异金额</div><div class="v">¥${money(s.diffAmount)}</div></div>
+      </div>
+      <div class="form-item"><label class="form-label">调整原因<span class="required">*</span></label>
+        <select class="form-select" id="sta-reason">
+          <option value="">请选择调整原因</option>
+          <option>录入错误</option><option>盘亏损耗</option><option>盘盈补记</option><option>调拨未及时记账</option><option>其他</option>
+        </select>
+      </div>
+      <div class="form-item mt-12"><label class="form-label">调整说明</label>
+        <textarea class="form-textarea" id="sta-remark" placeholder="补充说明，作为调整留痕"></textarea>
+      </div>
+      <div class="form-hint">确认后库存将按实盘数量更新，盘点单状态变为「已调整」并记录原因与操作时间。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-warning" onclick="submitStocktakeAdjust('${s.id}')"><i data-lucide="check-check"></i> 确认差异并发起调整</button>
+    </div></div>`);
+  refreshIcons();
+}
+
+function submitStocktakeAdjust(id){
+  const s = STOCKTAKES.find(x => x.id === id);
+  if(!s) return;
+  const reason = document.getElementById('sta-reason').value;
+  if(!reason){ toast('请选择调整原因', 'error'); return; }
+  const remark = document.getElementById('sta-remark').value.trim();
+  if(s.details && s.details.length){
+    s.details.forEach(d => {
+      const row = STOCK.find(x => x.name === d.goods && x.warehouse === s.warehouse);
+      if(row) row.qty = Math.max(0, d.actual);
+    });
+  }
+  s.status = '已调整';
+  s.adjustReason = reason;
+  s.adjustRemark = remark;
+  s.adjustTime = nowStr();
+  closeActiveModal();
+  renderOverview();
+  renderStocktakes();
+  toast('盘点差异已确认，库存已调整并记录留痕', 'success');
+}
+
+function viewStocktake(id){
+  const s = STOCKTAKES.find(x => x.id === id);
+  if(!s) return;
+  const detailRows = (s.details || []).map(d => `<tr>
+    <td>${d.goods}</td><td class="text-right">${d.book}</td><td class="text-right">${d.actual}</td>
+    <td class="text-right ${d.actual - d.book >= 0 ? 'text-success' : 'text-error'}">${d.actual - d.book > 0 ? '+' : ''}${d.actual - d.book}</td>
+    <td class="text-right">¥${money((d.actual - d.book) * d.cost)}</td>
+  </tr>`).join('');
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">盘点明细 <span class="mono text-muted" style="font-size:13px">${s.id}</span> <span class="tag ${ST_STATUS_TAG[s.status]}" style="margin-left:8px">${s.status}</span></div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">盘点仓库</div><div class="v">${s.warehouse}</div></div>
+        <div class="kv-item"><div class="k">盘点日期</div><div class="v">${s.createDate}</div></div>
+        <div class="kv-item"><div class="k">账面数量</div><div class="v">${s.bookQty}</div></div>
+        <div class="kv-item"><div class="k">实盘数量</div><div class="v">${s.actualQty}</div></div>
+        <div class="kv-item"><div class="k">盘盈 / 盘亏</div><div class="v">+${s.gain} / -${s.loss}</div></div>
+        <div class="kv-item"><div class="k">差异金额</div><div class="v">¥${money(s.diffAmount)}</div></div>
+      </div>
+      ${s.details && s.details.length ? `<div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>商品</th><th class="text-right">账面</th><th class="text-right">实盘</th><th class="text-right">差异</th><th class="text-right">差异金额</th></tr></thead>
+          <tbody>${detailRows}</tbody>
+        </table>
+      </div>` : `<div class="form-hint">该盘点单为历史汇总数据，未记录商品级明细。</div>`}
+      ${s.adjustReason ? `<div class="divider"></div>
+        <div class="kv-grid">
+          <div class="kv-item"><div class="k">调整原因</div><div class="v">${s.adjustReason}</div></div>
+          <div class="kv-item"><div class="k">调整时间</div><div class="v">${s.adjustTime}</div></div>
+          <div class="kv-item" style="grid-column:1 / -1"><div class="k">调整说明</div><div class="v">${s.adjustRemark || '-'}</div></div>
+        </div>` : ''}
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div></div>`);
+  refreshIcons();
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.style.display = p.dataset.panel === name ? 'block' : 'none');
+}
+
+/* ========== 页面结构 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">销售 / 调拨 / 盘点</div>
+  <div class="page-desc">按仓库汇总库存、商品级明细追踪、跨仓调拨确认、盘点差异记录与确认调整</div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="overview" onclick="switchTab('overview')"><i data-lucide="warehouse" style="width:16px;vertical-align:middle"></i> 库存总览</div>
+      <div class="tab" data-tab="transfer" onclick="switchTab('transfer')"><i data-lucide="arrow-right-left" style="width:16px;vertical-align:middle"></i> 调拨管理</div>
+      <div class="tab" data-tab="stocktake" onclick="switchTab('stocktake')"><i data-lucide="clipboard-list" style="width:16px;vertical-align:middle"></i> 盘点管理</div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="overview">
+    <div class="card-body">
+      <div class="stats-grid" id="wh-summary" style="grid-template-columns:repeat(3,1fr)"></div>
+      <div class="toolbar">
+        <select class="form-select" id="iv-wh">
+          <option value="">全部仓库</option>
+          ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+        </select>
+        <select class="form-select" id="iv-cat">
+          <option value="">全部分类</option>
+          ${[...new Set(MOCK_EXT.stockList.map(s => s.category))].map(c => `<option value="${c}">${c}</option>`).join('')}
+        </select>
+        <input class="form-input" id="iv-kw" placeholder="商品名称/编码/批次" style="width:220px">
+        <button class="btn btn-primary" onclick="pg.overview=1;renderOverview()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('iv-wh').value='';document.getElementById('iv-cat').value='';document.getElementById('iv-kw').value='';pg.overview=1;renderOverview()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出库存</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>商品编码</th><th>商品</th><th>分类</th><th>仓库</th><th>库位</th><th>批次</th>
+            <th class="text-right">数量</th><th class="text-right">最低库存</th><th class="text-right">成本</th>
+            <th class="text-right">库存金额</th><th>状态</th>
+          </tr></thead>
+          <tbody id="stock-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="stock-pager"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="transfer" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <select class="form-select" id="tr-status">
+          <option value="">全部状态</option>
+          <option>调出方已确认</option><option>调入方待确认</option><option>已完成</option><option>已驳回</option>
+        </select>
+        <input class="form-input" id="tr-kw" placeholder="调拨单号/商品/仓库" style="width:240px">
+        <button class="btn btn-primary" onclick="pg.transfer=1;renderTransfers()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('tr-status').value='';document.getElementById('tr-kw').value='';pg.transfer=1;renderTransfers()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出调拨单</button>
+        <button class="btn btn-primary" onclick="openTransferForm()"><i data-lucide="plus"></i> 新建调拨</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>调拨单号</th><th>调出仓</th><th>调入仓</th><th>商品</th><th class="text-right">数量</th>
+            <th>原因</th><th>状态</th><th>日期</th><th>操作人</th><th>操作</th>
+          </tr></thead>
+          <tbody id="tr-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="tr-pager"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="stocktake" style="display:none">
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:flex-start;background:var(--warning-bg);border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--text-2)">
+        <i data-lucide="alert-triangle" style="width:18px;height:18px;color:var(--warning);flex-shrink:0;margin-top:1px"></i>
+        <div>盘盈盘亏先记录、不直接调整库存；需确认差异原因后，通过「确认差异并发起调整」更新库存并保留原因、时间与操作人留痕。</div>
+      </div>
+      <div class="toolbar">
+        <select class="form-select" id="st-status">
+          <option value="">全部状态</option>
+          <option>待确认</option><option>已调整</option>
+        </select>
+        <input class="form-input" id="st-kw" placeholder="盘点单号/仓库" style="width:220px">
+        <button class="btn btn-primary" onclick="pg.stocktake=1;renderStocktakes()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('st-status').value='';document.getElementById('st-kw').value='';pg.stocktake=1;renderStocktakes()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出盘点单</button>
+        <button class="btn btn-primary" onclick="openStocktakeForm()"><i data-lucide="plus"></i> 新建盘点</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>盘点单号</th><th>仓库</th><th class="text-right">账面数量</th><th class="text-right">实盘数量</th>
+            <th class="text-right">盘盈</th><th class="text-right">盘亏</th><th class="text-right">差异金额</th>
+            <th>状态</th><th>日期</th><th>操作人</th><th>操作</th>
+          </tr></thead>
+          <tbody id="st-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="st-pager"></div>
+    </div>
+  </div>
+</div>
+`;
+
+RENDERERS.overview = renderOverview;
+RENDERERS.transfer = renderTransfers;
+RENDERERS.stocktake = renderStocktakes;
+window.switchTab = switchTab;
+window.gotoPage = gotoPage;
+window.confirmTransfer = confirmTransfer;
+window.rejectTransfer = rejectTransfer;
+window.viewTransfer = viewTransfer;
+window.openTransferForm = openTransferForm;
+window.submitTransfer = submitTransfer;
+window.openStocktakeForm = openStocktakeForm;
+window.renderStocktakeItems = renderStocktakeItems;
+window.recalcStocktake = recalcStocktake;
+window.submitStocktake = submitStocktake;
+window.openStocktakeAdjust = openStocktakeAdjust;
+window.submitStocktakeAdjust = submitStocktakeAdjust;
+window.viewStocktake = viewStocktake;
+
+renderOverview();
+renderTransfers();
+renderStocktakes();
+refreshIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>预约下单 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('booking', '预约下单');
+
+// 时段 06:00 - 23:00
+const timeSlots = [];
+for(let h=6;h<23;h++) timeSlots.push(`${String(h).padStart(2,'0')}:00-${String(h+1).padStart(2,'0')}:00`);
+
+// 判断日期类型
+function getDateType(dateStr){
+  const d = new Date(dateStr);
+  const day = d.getDay();
+  // 简化：周末=周六日，其余工作日；节假日示例 2026-11-11
+  const holidays = ['2026-11-11','2027-01-01'];
+  if(holidays.includes(dateStr)) return '节假日';
+  if(day===0||day===6) return '周末';
+  return '工作日';
+}
+// 判断时段类型：高峰 18:00-22:00，其余低峰
+function getPeriodType(startTime){
+  const h = parseInt(startTime.split(':')[0]);
+  return (h>=18&&h<22) ? '高峰' : '低峰';
+}
+// 价格计算：日期类型 + 时段类型 + 场地类型 + 场地属性
+function calcPrice(venueId, courtType, dateStr, startTime, attr){
+  const dateType = getDateType(dateStr);
+  const periodType = getPeriodType(startTime);
+  const rule = MOCK.priceRules.find(r=>r.venueId===venueId&&r.courtType===courtType&&r.dateType===dateType&&r.periodType===periodType&&r.attr===attr);
+  if(rule) return rule.price;
+  // 兜底按属性倍率
+  const base = {篮球:100,足球:260,网球:90,羽毛球:60}[courtType]||80;
+  const attrMul = attr==='VIP'?1.5:attr==='豪华'?2:1;
+  const dateMul = dateType==='节假日'?1.5:dateType==='周末'?1.25:1;
+  const periodMul = periodType==='高峰'?1.3:1;
+  return Math.round(base*attrMul*dateMul*periodMul);
+}
+
+// 状态
+let state = {
+  venueId: MOCK.venues[0].id,
+  courtType: '篮球',
+  date: new Date().toISOString().slice(0,10),
+  selectedSlots: {}, // courtId -> Set of ts
+  customer: null,
+  payMethod: '在线支付',
+  source: '',
+  discount: 0,
+  discountReason: '',
+};
+
+// 模拟锁定/已占用时段
+const lockedSlots = {
+  'C002': ['18:00-19:00','19:00-20:00'],
+  'C001': ['15:00-16:00'],
+};
+
+function getCourts(){
+  return MOCK.courts.filter(c=>c.venueId===state.venueId && c.type===state.courtType);
+}
+
+function renderCourtTimeGrid(){
+  const courts = getCourts();
+  const dateType = getDateType(state.date);
+  if(courts.length===0){
+    document.getElementById('timeGrid').innerHTML = `<div class="empty"><div class="empty-icon"><i data-lucide="calendar-x"></i></div><div class="empty-text">该场馆无${state.courtType}场地</div></div>`;
+    return;
+  }
+  const head = `<div class="schedule-cell header" style="grid-column:1">场地</div>` +
+    timeSlots.map(ts=>{
+      const pt = getPeriodType(ts.split('-')[0]);
+      return `<div class="schedule-cell header" title="${pt}">${ts.split('-')[0]}${pt==='高峰'?' <span class="tag tag-red" style="font-size:10px;padding:0 4px">高</span>':''}</div>`;
+    }).join('');
+  const cells = courts.map(c=>{
+    const row = [`<div class="schedule-cell header" style="grid-column:1"><div class="font-medium">${c.name}</div><div class="text-muted" style="font-size:11px">${c.area}·${c.attr}</div></div>`];
+    timeSlots.forEach(ts=>{
+      const isLocked = (lockedSlots[c.id]||[]).includes(ts);
+      const selected = state.selectedSlots[c.id]?.has(ts);
+      const price = calcPrice(state.venueId, c.type, state.date, ts.split('-')[0], c.attr);
+      const baseCls = isLocked ? 'locked' : selected ? 'booked' : 'available';
+      const style = selected ? 'background:var(--primary);color:#fff' : '';
+      const icon = isLocked ? 'lock' : selected ? 'check' : '';
+      row.push(`<div class="schedule-cell ${baseCls}" style="text-align:center;${style}" onclick="toggleSlot('${c.id}','${ts}',${isLocked})" title="${isLocked?'已锁定/占用':'¥'+price+'/小时'}">
+        ${isLocked?`<i data-lucide="lock" style="width:14px"></i>`:`<div style="font-size:11px">¥${price}</div>`}
+        ${selected?`<i data-lucide="check" style="width:14px"></i>`:''}
+      </div>`);
+    });
+    return row.join('');
+  }).join('');
+  document.getElementById('timeGrid').innerHTML = `<div class="schedule-grid" style="grid-template-columns:140px repeat(${timeSlots.length},1fr)">${head}${cells}</div>`;
+  if(window.lucide) lucide.createIcons();
+  renderSummary();
+}
+
+window.toggleSlot = function(courtId, ts, locked){
+  if(locked){ toast('该时段已锁定/占用，不可预约','error'); return; }
+  if(!state.selectedSlots[courtId]) state.selectedSlots[courtId] = new Set();
+  const set = state.selectedSlots[courtId];
+  if(set.has(ts)) set.delete(ts); else set.add(ts);
+  if(set.size===0) delete state.selectedSlots[courtId];
+  renderCourtTimeGrid();
+};
+
+function getSelectedList(){
+  const list = [];
+  Object.entries(state.selectedSlots).forEach(([cid,set])=>{
+    const court = MOCK.courts.find(c=>c.id===cid);
+    set.forEach(ts=>{
+      const price = calcPrice(state.venueId, court.type, state.date, ts.split('-')[0], court.attr);
+      list.push({courtId:cid, courtName:court.name, ts, price});
+    });
+  });
+  return list;
+}
+
+function renderSummary(){
+  const list = getSelectedList();
+  const subtotal = list.reduce((s,i)=>s+i.price,0);
+  const final = subtotal - state.discount;
+  const rows = list.map(i=>`<tr><td>${i.courtName}</td><td>${i.ts}</td><td class="text-right">¥${i.price}</td></tr>`).join('') ||
+    `<tr><td colspan="3" class="text-center text-muted">尚未选择时段</td></tr>`;
+  document.getElementById('summaryRows').innerHTML = rows;
+  document.getElementById('subtotal').textContent = '¥'+subtotal;
+  document.getElementById('discountAmt').textContent = '- ¥'+state.discount;
+  document.getElementById('finalAmt').textContent = '¥'+Math.max(0,final);
+  document.getElementById('finalAmtBig').textContent = '¥'+Math.max(0,final);
+  document.getElementById('slotCount').textContent = list.length;
+}
+
+// 客户选择
+window.selectCustomer = function(){
+  const list = MOCK.customers.map(c=>`
+    <tr onclick="pickCustomer('${c.id}')" style="cursor:pointer">
+      <td class="mono" style="font-size:13px">${c.id}</td>
+      <td><div class="font-medium">${c.name}</div><div class="text-muted" style="font-size:12px">${c.phone}</div></td>
+      <td><span class="tag ${c.type==='企业'?'tag-blue':c.type==='团体'?'tag-purple':'tag-gray'}">${c.type}</span></td>
+      <td>${c.venue}</td>
+      <td><span class="tag ${c.status==='正常'?'tag-green':'tag-red'}">${c.status}</span></td>
+    </tr>`).join('');
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">选择客户</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索姓名/手机号" style="flex:1" oninput="toast('搜索客户...','info')">
+        <button class="btn btn-primary" onclick="pickCustomer('散客')"><i data-lucide="user-plus"></i> 散客（不建档）</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table"><thead><tr><th>编号</th><th>客户</th><th>类型</th><th>所属场馆</th><th>状态</th></tr></thead>
+        <tbody>${list}</tbody></table>
+      </div>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.pickCustomer = function(id){
+  if(id==='散客'){
+    state.customer = {id:'散客',name:'散客',phone:''};
+  } else {
+    const c = MOCK.customers.find(x=>x.id===id);
+    state.customer = c;
+  }
+  document.getElementById('custDisplay').innerHTML = state.customer.id==='散客'
+    ? `<span class="tag tag-gray">散客</span>`
+    : `<span class="tag tag-blue">${state.customer.type}</span> <b>${state.customer.name}</b> <span class="text-muted">${state.customer.phone}</span> <span class="text-muted">· ${state.customer.venue}</span>`;
+  document.querySelector('.modal-overlay')?.remove();
+  toast('已选择客户：'+state.customer.name,'success');
+};
+
+// 改价
+window.openDiscountModal = function(){
+  const list = getSelectedList();
+  if(list.length===0){ toast('请先选择时段','warning'); return; }
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">改价 / 优惠</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">订单金额</div><div class="v" id="dc-sub">¥${list.reduce((s,i)=>s+i.price,0)}</div></div>
+        <div class="kv-item"><div class="k">时段数</div><div class="v">${list.length}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">优惠金额（元）</label><input type="number" class="form-input" id="dc-amt" value="${state.discount}" min="0"></div>
+        <div class="form-item"><label class="form-label">优惠后金额</label><input class="form-input" id="dc-final" disabled value="¥0"></div>
+      </div>
+      <div class="form-item"><label class="form-label">改价原因<span class="required">*</span></label>
+        <select class="form-select" id="dc-reason">
+          <option value="">请选择原因</option>
+          <option>会员优惠</option><option>熟人优惠</option><option>企业协议价</option><option>补偿/致歉</option><option>促销活动</option><option>其他</option>
+        </select>
+      </div>
+      <div class="form-item"><label class="form-label">备注说明</label><textarea class="form-textarea" id="dc-remark"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="applyDiscount()">确认改价</button>
+    </div>
+  </div>`;
+  openModal(html);
+  const update = ()=>{
+    const sub = list.reduce((s,i)=>s+i.price,0);
+    const amt = parseFloat(document.getElementById('dc-amt').value)||0;
+    document.getElementById('dc-final').value = '¥'+Math.max(0,sub-amt);
+  };
+  document.getElementById('dc-amt').oninput = update;
+  update();
+};
+window.applyDiscount = function(){
+  const amt = parseFloat(document.getElementById('dc-amt').value)||0;
+  const reason = document.getElementById('dc-reason').value;
+  if(!reason){ toast('请选择改价原因','error'); return; }
+  state.discount = amt;
+  state.discountReason = reason;
+  toast('改价已应用','success');
+  document.querySelector('.modal-overlay').remove();
+  renderSummary();
+};
+
+// 提交订单
+window.submitOrder = function(){
+  if(!state.customer){ toast('请选择客户','error'); return; }
+  if(getSelectedList().length===0){ toast('请至少选择一个时段','error'); return; }
+  state.source = document.getElementById('orderSource').value;
+  if(!state.source){ toast('请选择订单来源','error'); return; }
+  state.payMethod = document.getElementById('payMethod').value;
+  // 实时校验
+  const list = getSelectedList();
+  for(const it of list){
+    if((lockedSlots[it.courtId]||[]).includes(it.ts)){
+      toast(`${it.courtName} ${it.ts} 已被锁定，请重新选择`,'error');
+      return;
+    }
+  }
+  const orderNo = 'ORD'+Date.now().toString().slice(-10);
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">下单成功</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div style="text-align:center;padding:20px 0">
+        <div style="width:64px;height:64px;border-radius:50%;background:var(--success-bg);color:var(--success);display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+          <i data-lucide="check-circle-2" style="width:36px;height:36px"></i>
+        </div>
+        <div class="font-bold" style="font-size:18px">订单创建成功</div>
+        <div class="text-muted mt-8">订单号：<span class="mono">${orderNo}</span></div>
+      </div>
+      <div class="divider"></div>
+      <div class="kv-grid">
+        <div class="kv-item"><div class="k">客户</div><div class="v">${state.customer.name}</div></div>
+        <div class="kv-item"><div class="k">来源</div><div class="v">${state.source}</div></div>
+        <div class="kv-item"><div class="k">日期</div><div class="v">${state.date}（${getDateType(state.date)}）</div></div>
+        <div class="kv-item"><div class="k">时段数</div><div class="v">${list.length} 个</div></div>
+        <div class="kv-item"><div class="k">支付方式</div><div class="v">${state.payMethod}</div></div>
+        <div class="kv-item"><div class="k">应付金额</div><div class="v font-bold text-primary" id="finalAmtBig">¥${Math.max(0,list.reduce((s,i)=>s+i.price,0)-state.discount)}</div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      <button class="btn btn-primary" onclick="toast('已跳转收银台','info');this.closest('.modal-overlay').remove()">前往收银台</button>
+    </div>
+  </div>`;
+  openModal(html);
+  if(window.lucide) lucide.createIcons();
+};
+
+// 批量排期
+window.openBatchModal = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">批量排期（长包排期）</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">客户</label>
+          <select class="form-select"><option>鹭岛篮球俱乐部</option><option>厦门建工集团</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">运动类型</label>
+          <select class="form-select"><option>篮球</option><option>足球</option><option>羽毛球</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">场地</label>
+          <select class="form-select"><option>A1篮球场</option><option>A2篮球场</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">周期</label>
+          <select class="form-select" id="batch-cycle"><option>按周</option><option>按月</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">开始日期</label><input type="date" class="form-input" value="${state.date}"></div>
+        <div class="form-item"><label class="form-label">结束日期</label><input type="date" class="form-input"></div>
+      </div>
+      <div class="form-item"><label class="form-label">每周重复</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${['周一','周二','周三','周四','周五','周六','周日'].map((d,i)=>`
+            <label style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--border);border-radius:20px;cursor:pointer">
+              <input type="checkbox" ${i>=5?'checked':''}> ${d}
+            </label>`).join('')}
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">开始时间</label>
+          <select class="form-select">${timeSlots.map(t=>`<option>${t.split('-')[0]}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">时长（小时）</label>
+          <select class="form-select"><option>1</option><option selected>2</option><option>3</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">单价（元/小时）</label><input type="number" class="form-input" value="100"></div>
+        <div class="form-item"><label class="form-label">订单来源</label>
+          <select class="form-select"><option>线下</option><option>小程序</option></select>
+        </div>
+      </div>
+      <div class="card" style="background:var(--primary-bg);border-color:var(--primary)">
+        <div class="card-body" style="padding:12px 16px">
+          <div class="flex items-center justify-between">
+            <div class="text-muted" style="font-size:13px">预计生成场次</div>
+            <div class="font-bold text-primary">约 16 场 · 合计 ¥3,200</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('批量排期已生成 16 场','success');this.closest('.modal-overlay').remove()">确认生成</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">预约下单</div>
+  <div class="page-desc">支持小程序/线下/美团/抖音多渠道预约，自动计价并实时校验场地占用</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card"><div class="stat-label">今日订单</div><div class="stat-value" style="font-size:24px">128</div></div>
+  <div class="stat-card"><div class="stat-label">待支付</div><div class="stat-value" style="font-size:24px;color:var(--warning)">6</div></div>
+  <div class="stat-card"><div class="stat-label">已核销</div><div class="stat-value" style="font-size:24px;color:var(--success)">96</div></div>
+  <div class="stat-card"><div class="stat-label">今日营收</div><div class="stat-value" style="font-size:24px;color:var(--primary)">¥26,750</div></div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:2fr 1fr">
+  <div class="card">
+    <div class="card-header"><div class="card-title">选择预约信息</div></div>
+    <div class="card-body">
+      <!-- 客户 -->
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">客户<span class="required">*</span></label>
+          <div style="display:flex;gap:8px">
+            <div class="form-input" id="custDisplay" style="flex:1;display:flex;align-items:center;gap:8px;min-height:38px;background:var(--border-light)">
+              <span class="text-muted">请选择客户（已有客户/散客）</span>
+            </div>
+            <button class="btn btn-primary" onclick="selectCustomer()">选择客户</button>
+          </div>
+        </div>
+        <div class="form-item">
+          <label class="form-label">订单来源<span class="required">*</span></label>
+          <select class="form-select" id="orderSource">
+            <option value="">请选择</option>
+            <option>小程序</option><option>线下</option><option>美团</option><option>抖音</option>
+          </select>
+        </div>
+      </div>
+      <!-- 场馆/运动/日期 -->
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">场馆</label>
+          <select class="form-select" onchange="state.venueId=this.value;renderCourtTimeGrid()">
+            ${MOCK.venues.map(v=>`<option value="${v.id}" ${v.id===state.venueId?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">运动类型</label>
+          <select class="form-select" onchange="state.courtType=this.value;state.selectedSlots={};renderCourtTimeGrid()">
+            <option>篮球</option><option>足球</option><option>网球</option><option>羽毛球</option>
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">日期</label>
+          <input type="date" class="form-input" value="${state.date}" onchange="state.date=this.value;state.selectedSlots={};renderCourtTimeGrid()">
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="flex items-center justify-between mb-12">
+        <div class="font-medium">时段选择（${getDateType(state.date)}）</div>
+        <div style="display:flex;gap:8px">
+          <span class="tag tag-red">高峰 18:00-22:00</span>
+          <span class="tag tag-gray">低峰 其他时段</span>
+        </div>
+      </div>
+      <div id="timeGrid" style="overflow-x:auto"></div>
+    </div>
+  </div>
+
+  <!-- 订单摘要 -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">订单摘要</div></div>
+    <div class="card-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>场地</th><th>时段</th><th class="text-right">金额</th></tr></thead>
+          <tbody id="summaryRows"></tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="list-row"><span class="text-muted">已选时段</span><b id="slotCount">0</b> 个</div>
+      <div class="list-row"><span class="text-muted">订单金额</span><span id="subtotal">¥0</span></div>
+      <div class="list-row"><span class="text-muted">优惠减免</span><span id="discountAmt" class="text-success">- ¥0</span></div>
+      <div class="list-row" style="border-top:2px solid var(--border)"><span class="font-bold">应付金额</span><span id="finalAmt" class="font-bold text-primary" style="font-size:18px">¥0</span></div>
+
+      <div class="divider"></div>
+      <div class="form-item mb-12"><label class="form-label">支付方式</label>
+        <select class="form-select" id="payMethod">
+          <option>在线支付</option><option>现金</option><option>储值余额</option><option>次卡抵扣</option>
+        </select>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-default" style="flex:1" onclick="openDiscountModal()"><i data-lucide="tag"></i> 改价</button>
+        <button class="btn btn-default" style="flex:1" onclick="openBatchModal()"><i data-lucide="repeat"></i> 批量排期</button>
+      </div>
+      <button class="btn btn-primary btn-lg btn-block mt-12" onclick="submitOrder()"><i data-lucide="check"></i> 提交订单</button>
+    </div>
+  </div>
+</div>
+`;
+
+renderCourtTimeGrid();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

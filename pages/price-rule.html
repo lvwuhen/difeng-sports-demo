@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>时段与价格规则 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('price-rule', '时段与价格规则');
+
+// 页面级数据
+const PERIODS = [
+  {id:'PD01', venue:'总部', low:'06:00-17:00', high:'17:00-22:00', note:'工作日夜场为高峰'},
+  {id:'PD02', venue:'篮球公园', low:'07:00-18:00', high:'18:00-22:30', note:''},
+  {id:'PD03', venue:'网球中心', low:'06:30-16:00', high:'16:00-22:00', note:''},
+  {id:'PD04', venue:'羽毛球馆', low:'06:00-17:00', high:'17:00-23:00', note:''},
+];
+let RULES = MOCK.priceRules.map(r=>({...r}));
+const HOLIDAYS = [
+  {id:'HD01', name:'元旦', date:'2026-01-01', type:'法定节假日', ratio:1.5, enabled:true},
+  {id:'HD02', name:'春节', date:'2026-02-17', type:'法定节假日', ratio:1.8, enabled:true},
+  {id:'HD03', name:'劳动节', date:'2026-05-01', type:'法定节假日', ratio:1.5, enabled:true},
+  {id:'HD04', name:'国庆节', date:'2026-10-01', type:'法定节假日', ratio:1.5, enabled:true},
+  {id:'HD05', name:'店庆日', date:'2026-11-08', type:'自定义', ratio:1.2, enabled:false},
+];
+const VENUE_NAME = {V001:'总部', V002:'篮球公园', V003:'网球中心', V004:'羽毛球馆'};
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">时段与价格规则</div>
+  <div class="page-desc">按场馆、场地类型、日期类型、时段类型与场地属性配置价格；所有客户预约天数一致，与会员身份无关</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">价格规则数 <span class="stat-icon blue"><i data-lucide="tags"></i></span></div><div class="stat-value">${RULES.length}</div><div class="stat-trend" style="color:var(--text-3)">覆盖 4 个场馆</div></div>
+  <div class="stat-card"><div class="stat-label">工作日价 <span class="stat-icon green"><i data-lucide="sun"></i></span></div><div class="stat-value">¥80 起</div><div class="stat-trend" style="color:var(--text-3)">低峰时段</div></div>
+  <div class="stat-card"><div class="stat-label">周末/节假日价 <span class="stat-icon orange"><i data-lucide="calendar"></i></span></div><div class="stat-value">¥150 起</div><div class="stat-trend" style="color:var(--text-3)">高峰时段</div></div>
+  <div class="stat-card"><div class="stat-label">生效节假日 <span class="stat-icon purple"><i data-lucide="party-popper"></i></span></div><div class="stat-value">${HOLIDAYS.filter(h=>h.enabled).length}</div><div class="stat-trend" style="color:var(--text-3)">按倍率加价</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" id="priceTabs">
+      <div class="tab active" onclick="switchTab('rules')">价格规则</div>
+      <div class="tab" onclick="switchTab('periods')">时段划分</div>
+      <div class="tab" onclick="switchTab('holidays')">节假日价格</div>
+      <div class="tab" onclick="switchTab('memberPrice')">会员价设置</div>
+    </div>
+  </div>
+
+  <div id="tab-rules">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="f-venue" onchange="renderRules()">
+            <option value="">全部场馆</option>
+            <option value="V001">总部</option><option value="V002">篮球公园</option><option value="V003">网球中心</option><option value="V004">羽毛球馆</option>
+          </select>
+          <select class="form-select" id="f-type" onchange="renderRules()">
+            <option value="">全部场地类型</option><option>足球</option><option>篮球</option><option>网球</option><option>羽毛球</option>
+          </select>
+          <select class="form-select" id="f-date" onchange="renderRules()">
+            <option value="">全部日期类型</option><option>工作日</option><option>周末</option><option>节假日</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i>导出</button>
+        <button class="btn btn-primary" onclick="openRuleModal()"><i data-lucide="plus"></i>新增价格规则</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>规则编号</th><th>场馆</th><th>场地类型</th><th>日期类型</th><th>时段类型</th><th>场地属性</th><th>单价(元/小时)</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="ruleBody"></tbody>
+        </table>
+      </div>
+      <div class="pagination"><div class="pagination-info" id="ruleInfo"></div><div class="pagination-pages" id="rulePages"></div></div>
+      <div class="divider"></div>
+      <div class="form-hint">计价优先级：节假日规则 &gt; 周末规则 &gt; 工作日规则；同维度下 VIP 场地属性优先于普通场地。未命中规则时按场馆默认价。</div>
+    </div>
+  </div>
+
+  <div id="tab-periods" style="display:none">
+    <div class="card-body">
+      <div class="toolbar"><div class="spacer"></div><button class="btn btn-primary" onclick="openPeriodModal()"><i data-lucide="plus"></i>新增时段划分</button></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>场馆</th><th>低峰时段</th><th>高峰时段</th><th>说明</th><th>操作</th></tr></thead>
+        <tbody id="periodBody"></tbody>
+      </table></div>
+      <div class="form-hint mt-12">时段按场馆单独定义，高峰时段价格通常为低峰的 1.5 倍；时段划分与价格规则解耦，修改时段不会自动改价。</div>
+    </div>
+  </div>
+
+  <div id="tab-holidays" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="form-hint">节假日价格按倍率作用于对应日期类型的基准价，可单独启用/停用。</div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="openHolidayModal()"><i data-lucide="plus"></i>新增节假日</button>
+      </div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>名称</th><th>日期</th><th>类型</th><th>加价倍率</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="holidayBody"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div id="tab-memberPrice" style="display:none">
+    <div class="card-body">
+      <div class="card" style="border:1px dashed var(--border)">
+        <div class="card-body">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="font-bold">会员专属价格</div>
+              <div class="text-muted mt-8">会员价配置项保留，本期不启用。当前所有客户按同一价格规则计费，会员权益以充值赠送、次卡等形式体现。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="memberPriceSwitch" onchange="toggleMemberPrice()"><span class="switch-slider"></span></label>
+          </div>
+        </div>
+      </div>
+      <div class="card mt-16">
+        <div class="card-header"><div class="card-title">会员价规则（未启用）</div></div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-item"><label class="form-label">折扣方式</label><select class="form-select" disabled><option>按比例折扣</option><option>固定会员价</option></select></div>
+            <div class="form-item"><label class="form-label">折扣比例</label><input class="form-input" value="0.9" disabled></div>
+            <div class="form-item"><label class="form-label">适用范围</label><input class="form-input" value="全部场地类型" disabled></div>
+          </div>
+          <div class="form-hint">启用后需重新校验历史订单价格快照，避免对已结算订单产生影响。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+/* ---------- 价格规则 ---------- */
+let rulePage = 1;
+const PAGE_SIZE = 6;
+function filteredRules(){
+  const v = document.getElementById('f-venue').value;
+  const t = document.getElementById('f-type').value;
+  const d = document.getElementById('f-date').value;
+  return RULES.filter(r => (!v || r.venueId===v) && (!t || r.courtType===t) && (!d || r.dateType===d));
+}
+function renderRules(){
+  const list = filteredRules();
+  const total = list.length;
+  const maxPage = Math.max(1, Math.ceil(total/PAGE_SIZE));
+  if(rulePage > maxPage) rulePage = maxPage;
+  const start = (rulePage-1)*PAGE_SIZE;
+  const rows = list.slice(start, start+PAGE_SIZE);
+  document.getElementById('ruleBody').innerHTML = rows.length ? rows.map(r=>`
+    <tr>
+      <td class="mono">${r.id}</td>
+      <td>${VENUE_NAME[r.venueId]||r.venueId}</td>
+      <td>${r.courtType}</td>
+      <td><span class="tag ${r.dateType==='节假日'?'tag-red':r.dateType==='周末'?'tag-orange':'tag-blue'}">${r.dateType}</span></td>
+      <td><span class="tag ${r.periodType==='高峰'?'tag-purple':'tag-gray'}">${r.periodType}</span></td>
+      <td>${r.attr}</td>
+      <td class="font-medium">¥${r.price}</td>
+      <td><span class="tag tag-green">生效</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="openRuleModal('${r.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="delRule('${r.id}')">删除</button>
+      </td>
+    </tr>`).join('') : `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📋</div><div class="empty-text">暂无符合条件的价格规则</div></div></td></tr>`;
+  document.getElementById('ruleInfo').textContent = `共 ${total} 条，每页 ${PAGE_SIZE} 条`;
+  let pages = '';
+  for(let i=1;i<=maxPage;i++) pages += `<button class="page-btn ${i===rulePage?'active':''}" onclick="rulePage=${i};renderRules()">${i}</button>`;
+  document.getElementById('rulePages').innerHTML = pages;
+}
+window.openRuleModal = (id)=>{
+  const r = id ? RULES.find(x=>x.id===id) : {venueId:'V001', courtType:'篮球', dateType:'工作日', periodType:'高峰', attr:'普通', price:''};
+  const ov = openModal(`
+    <div class="modal">
+      <div class="modal-header"><div class="modal-title">${id?'编辑':'新增'}价格规则</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">场馆<span class="required">*</span></label>
+            <select class="form-select" id="m-venue">${Object.entries(VENUE_NAME).map(([k,v])=>`<option value="${k}" ${r.venueId===k?'selected':''}>${v}</option>`).join('')}</select></div>
+          <div class="form-item"><label class="form-label">场地类型<span class="required">*</span></label>
+            <select class="form-select" id="m-type">${['足球','篮球','网球','羽毛球','乒乓球'].map(t=>`<option ${r.courtType===t?'selected':''}>${t}</option>`).join('')}</select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">日期类型<span class="required">*</span></label>
+            <select class="form-select" id="m-date">${['工作日','周末','节假日'].map(t=>`<option ${r.dateType===t?'selected':''}>${t}</option>`).join('')}</select></div>
+          <div class="form-item"><label class="form-label">时段类型<span class="required">*</span></label>
+            <select class="form-select" id="m-period">${['低峰','高峰'].map(t=>`<option ${r.periodType===t?'selected':''}>${t}</option>`).join('')}</select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">场地属性<span class="required">*</span></label>
+            <select class="form-select" id="m-attr">${['普通','VIP'].map(t=>`<option ${r.attr===t?'selected':''}>${t}</option>`).join('')}</select></div>
+          <div class="form-item"><label class="form-label">单价(元/小时)<span class="required">*</span></label>
+            <input class="form-input" id="m-price" type="number" min="0" value="${r.price}" placeholder="请输入单价"></div>
+        </div>
+        <div class="form-hint">同一维度组合已存在规则时，保存将覆盖原规则。</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="saveRule('${id||''}')">保存</button>
+      </div>
+    </div>`);
+  window.__ov = ov;
+};
+window.saveRule = (id)=>{
+  const venueId = document.getElementById('m-venue').value;
+  const courtType = document.getElementById('m-type').value;
+  const dateType = document.getElementById('m-date').value;
+  const periodType = document.getElementById('m-period').value;
+  const attr = document.getElementById('m-attr').value;
+  const price = document.getElementById('m-price').value;
+  if(!price || Number(price)<=0){ toast('请填写有效的单价','error'); return; }
+  if(id){
+    Object.assign(RULES.find(x=>x.id===id), {venueId,courtType,dateType,periodType,attr,price:Number(price)});
+    toast('价格规则已更新');
+  } else {
+    const dup = RULES.find(x=>x.venueId===venueId&&x.courtType===courtType&&x.dateType===dateType&&x.periodType===periodType&&x.attr===attr);
+    if(dup){ toast('相同维度组合已存在，请先编辑原规则','error'); return; }
+    RULES.push({id:'P'+String(RULES.length+1).padStart(3,'0'), venueId,courtType,dateType,periodType,attr,price:Number(price)});
+    toast('价格规则已新增');
+  }
+  closeModal(window.__ov); renderRules();
+};
+window.delRule = (id)=>{
+  confirmDialog('确认删除该价格规则？删除后该维度将回退至场馆默认价。', ()=>{
+    RULES = RULES.filter(x=>x.id!==id); renderRules(); toast('价格规则已删除');
+  });
+};
+
+/* ---------- 时段划分 ---------- */
+function renderPeriods(){
+  document.getElementById('periodBody').innerHTML = PERIODS.map(p=>`
+    <tr>
+      <td>${p.venue}</td>
+      <td class="mono">${p.low}</td>
+      <td class="mono">${p.high}</td>
+      <td class="text-muted">${p.note||'-'}</td>
+      <td class="actions"><button class="btn btn-ghost btn-sm" onclick="openPeriodModal('${p.id}')">编辑</button></td>
+    </tr>`).join('');
+}
+window.openPeriodModal = (id)=>{
+  const p = id ? PERIODS.find(x=>x.id===id) : {venue:'', low:'', high:'', note:''};
+  const ov = openModal(`
+    <div class="modal">
+      <div class="modal-header"><div class="modal-title">${id?'编辑':'新增'}时段划分</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">场馆<span class="required">*</span></label><input class="form-input" id="p-venue" value="${p.venue}" placeholder="如：总部"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">低峰时段<span class="required">*</span></label><input class="form-input" id="p-low" value="${p.low}" placeholder="06:00-17:00"></div>
+          <div class="form-item"><label class="form-label">高峰时段<span class="required">*</span></label><input class="form-input" id="p-high" value="${p.high}" placeholder="17:00-22:00"></div>
+        </div>
+        <div class="form-row"><div class="form-item"><label class="form-label">说明</label><input class="form-input" id="p-note" value="${p.note||''}"></div></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="savePeriod('${id||''}')">保存</button>
+      </div>
+    </div>`);
+  window.__ov2 = ov;
+};
+window.savePeriod = (id)=>{
+  const venue = document.getElementById('p-venue').value.trim();
+  const low = document.getElementById('p-low').value.trim();
+  const high = document.getElementById('p-high').value.trim();
+  const note = document.getElementById('p-note').value.trim();
+  if(!venue || !low || !high){ toast('场馆与高低峰时段为必填项','error'); return; }
+  if(id){ Object.assign(PERIODS.find(x=>x.id===id), {venue,low,high,note}); toast('时段划分已更新'); }
+  else { PERIODS.push({id:'PD'+String(PERIODS.length+1).padStart(2,'0'), venue,low,high,note}); toast('时段划分已新增'); }
+  closeModal(window.__ov2); renderPeriods();
+};
+
+/* ---------- 节假日 ---------- */
+function renderHolidays(){
+  document.getElementById('holidayBody').innerHTML = HOLIDAYS.map(h=>`
+    <tr>
+      <td>${h.name}</td>
+      <td class="mono">${h.date}</td>
+      <td><span class="tag ${h.type==='法定节假日'?'tag-red':'tag-purple'}">${h.type}</span></td>
+      <td class="font-medium">${h.ratio} 倍</td>
+      <td><span class="tag ${h.enabled?'tag-green':'tag-gray'}">${h.enabled?'已启用':'已停用'}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="toggleHoliday('${h.id}')">${h.enabled?'停用':'启用'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="openHolidayModal('${h.id}')">编辑</button>
+      </td>
+    </tr>`).join('');
+}
+window.toggleHoliday = (id)=>{ const h=HOLIDAYS.find(x=>x.id===id); h.enabled=!h.enabled; renderHolidays(); toast(`已${h.enabled?'启用':'停用'}「${h.name}」加价`); };
+window.openHolidayModal = (id)=>{
+  const h = id ? HOLIDAYS.find(x=>x.id===id) : {name:'',date:'',type:'法定节假日',ratio:1.5};
+  const ov = openModal(`
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header"><div class="modal-title">${id?'编辑':'新增'}节假日价格</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+      <div class="modal-body">
+        <div class="form-row"><div class="form-item"><label class="form-label">名称<span class="required">*</span></label><input class="form-input" id="h-name" value="${h.name}"></div></div>
+        <div class="form-row"><div class="form-item"><label class="form-label">日期<span class="required">*</span></label><input class="form-input" id="h-date" type="date" value="${h.date}"></div></div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">类型</label><select class="form-select" id="h-type"><option ${h.type==='法定节假日'?'selected':''}>法定节假日</option><option ${h.type==='自定义'?'selected':''}>自定义</option></select></div>
+          <div class="form-item"><label class="form-label">加价倍率<span class="required">*</span></label><input class="form-input" id="h-ratio" type="number" step="0.1" min="1" value="${h.ratio}"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="saveHoliday('${id||''}')">保存</button>
+      </div>
+    </div>`);
+  window.__ov3 = ov;
+};
+window.saveHoliday = (id)=>{
+  const name = document.getElementById('h-name').value.trim();
+  const date = document.getElementById('h-date').value;
+  const type = document.getElementById('h-type').value;
+  const ratio = Number(document.getElementById('h-ratio').value);
+  if(!name || !date){ toast('名称与日期为必填项','error'); return; }
+  if(!ratio || ratio < 1){ toast('加价倍率需大于等于 1','error'); return; }
+  if(id){ Object.assign(HOLIDAYS.find(x=>x.id===id), {name,date,type,ratio}); toast('节假日价格已更新'); }
+  else { HOLIDAYS.push({id:'HD'+String(HOLIDAYS.length+1).padStart(2,'0'), name,date,type,ratio,enabled:true}); toast('节假日价格已新增'); }
+  closeModal(window.__ov3); renderHolidays();
+};
+window.toggleMemberPrice = (e)=>{
+  const on = document.getElementById('memberPriceSwitch').checked;
+  toast(on ? '会员价功能本期保留，启用需产品确认' : '会员价已保持不启用','info');
+  if(on) document.getElementById('memberPriceSwitch').checked = false;
+};
+
+/* ---------- Tab ---------- */
+window.switchTab = (key)=>{
+  ['rules','periods','holidays','memberPrice'].forEach(k=>{
+    document.getElementById('tab-'+k).style.display = k===key ? '' : 'none';
+  });
+  document.querySelectorAll('#priceTabs .tab').forEach((t,i)=>{
+    const order = ['rules','periods','holidays','memberPrice'];
+    t.classList.toggle('active', order[i]===key);
+  });
+  if(key==='periods') renderPeriods();
+  if(key==='holidays') renderHolidays();
+  if(window.lucide) lucide.createIcons();
+};
+
+renderRules();
+renderPeriods();
+renderHolidays();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

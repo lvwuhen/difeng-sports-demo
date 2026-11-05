@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 赛事活动</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="dark">
+<div class="app">
+  <div class="scroll">
+    <div class="navbar">
+      <button class="nav-back" onclick="M.go('home.html')">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+      </button>
+      <div class="nav-title">赛事活动</div>
+      <a class="nav-act" href="orders.html">报名记录</a>
+    </div>
+
+    <div style="background:#fff;padding:12px 16px 10px">
+      <div class="chips-row" id="filter" style="display:flex;gap:8px;overflow-x:auto"></div>
+    </div>
+
+    <div class="section tight" style="margin-top:14px">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>赛事列表</div>
+        <span class="sub" id="count"></span>
+      </div>
+      <div id="list"></div>
+    </div>
+
+    <div class="section">
+      <div class="notice-box">
+        <span style="flex-shrink:0">说明</span>
+        <span>赛事活动支持线上报名、线上支付；报名成功后生成电子凭证，赛前凭凭证与身份证件签到，报名订单支持整单退款。</span>
+      </div>
+    </div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var filters = ['全部','报名中','即将开始','已结束'];
+  var current = '全部';
+
+  function renderFilters(){
+    M.$('#filter').innerHTML = filters.map(function(f){
+      return '<span class="chip' + (f === current ? ' active' : '') + '" data-f="' + f + '">' + f + '</span>';
+    }).join('');
+    M.$$('#filter .chip').forEach(function(el){
+      el.addEventListener('click', function(){
+        current = el.getAttribute('data-f');
+        renderFilters(); renderList();
+      });
+    });
+  }
+
+  function renderList(){
+    var list = M.EVENTS.filter(function(e){ return current === '全部' || e.status === current; });
+    M.$('#count').textContent = '共 ' + list.length + ' 场';
+    M.$('#list').innerHTML = list.map(function(e){
+      var tone = e.status === '报名中' ? 'tag-green' : (e.status === '即将开始' ? 'tag-orange' : 'tag-gray');
+      var cta = e.status === '报名中' ? '立即报名' : (e.status === '即将开始' ? '查看赛事' : '查看回顾');
+      return '<a class="event-card pressable" style="display:block" href="event-detail.html?id=' + e.id + '">' +
+        '<div class="event-cover ' + e.cover + '">' +
+          '<span class="ev-type">' + e.type + ' · ' + e.mode + '</span>' +
+          '<span class="ev-name">' + e.name + '</span>' +
+        '</div>' +
+        '<div class="event-body">' +
+          '<div class="between">' +
+            '<div class="event-meta">' + M.icon('calendar', 14) + M.dateCN(e.startDate) + '-' + M.dateCN(e.endDate) + '</div>' +
+            '<span class="tag ' + tone + '">' + e.status + '</span>' +
+          '</div>' +
+          '<div class="event-meta mt6">' + M.icon('pin', 14) + e.venue + '</div>' +
+          '<div class="event-meta mt4">' + M.icon('users', 14) + (e.groups.length ? e.groups[0].joined + ' / ' + e.groups[0].quota + ' 人已报名' : '邀请制 · 不开放报名') + '</div>' +
+          '<div class="event-foot">' +
+            '<span class="sub">' + (e.priceFrom ? '报名费 ¥' + e.priceFrom + ' 起' : '免费 / 邀请制') + '</span>' +
+            '<span class="btn ' + (e.status === '报名中' ? 'btn-primary' : 'btn-line') + ' btn-sm">' + cta + '</span>' +
+          '</div>' +
+        '</div>' +
+      '</a>';
+    }).join('');
+  }
+
+  renderFilters(); renderList();
+  M.init({});
+})();
+</script>
+</body>
+</html>

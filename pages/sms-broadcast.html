@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>短信群发 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('sms-broadcast', '短信群发');
+
+/* ========== 基础工具 ========== */
+var step = 0;
+var selected = {};
+var selectedTemplate = null;
+var sendMode = 'now';
+var lastTask = null;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function nowStr(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2, '0'); };
+  return '2026-11-05 ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function fmtSchedule(v){
+  return v ? v.replace('T', ' ') : '';
+}
+
+/* ========== 客户池 ========== */
+var CUSTOMERS = [
+  {id:'B001', name:'陈晓明', phone:'138****1234', identity:'储值会员', stored:'有余额', balance:2350, venue:'总部', totalAmount:12580, lastConsume:'2026-10-28', tags:['高价值客户','活跃客户'], blacklist:false},
+  {id:'B002', name:'林雅婷', phone:'139****5678', identity:'储值会员', stored:'有余额', balance:860, venue:'总部', totalAmount:8650, lastConsume:'2026-10-29', tags:['活跃客户'], blacklist:false},
+  {id:'B003', name:'厦门建工集团有限公司', phone:'0592-8888****', identity:'企业会员', stored:'有余额', balance:12500, venue:'总部', totalAmount:56800, lastConsume:'2026-10-25', tags:['企业客户','高价值客户'], blacklist:false},
+  {id:'B004', name:'鹭岛篮球俱乐部', phone:'137****9012', identity:'企业会员', stored:'有余额', balance:5680, venue:'篮球公园', totalAmount:32400, lastConsume:'2026-10-27', tags:['团体客户','活跃客户'], blacklist:false},
+  {id:'B005', name:'王志强', phone:'136****3456', identity:'普通会员', stored:'余额不足', balance:32, venue:'总部', totalAmount:3200, lastConsume:'2026-09-10', tags:['沉睡客户'], blacklist:false},
+  {id:'B006', name:'张伟', phone:'135****2201', identity:'储值会员', stored:'有余额', balance:1200, venue:'篮球公园', totalAmount:7620, lastConsume:'2026-10-30', tags:['活跃客户'], blacklist:false},
+  {id:'B007', name:'李静', phone:'158****3344', identity:'普通会员', stored:'无储值', balance:0, venue:'网球中心', totalAmount:2180, lastConsume:'2026-09-18', tags:['新客'], blacklist:false},
+  {id:'B008', name:'赵敏', phone:'189****7788', identity:'储值会员', stored:'有余额', balance:420, venue:'羽毛球馆', totalAmount:9860, lastConsume:'2026-10-26', tags:['亲子客群'], blacklist:false},
+  {id:'B009', name:'黄海', phone:'131****5566', identity:'普通会员', stored:'无储值', balance:0, venue:'羽毛球馆', totalAmount:540, lastConsume:'2026-08-30', tags:['沉睡客户'], blacklist:true},
+  {id:'B010', name:'周杰', phone:'176****9900', identity:'储值会员', stored:'余额不足', balance:68, venue:'网球中心', totalAmount:6420, lastConsume:'2026-10-24', tags:['赛事爱好者'], blacklist:false},
+  {id:'B011', name:'吴倩', phone:'133****1122', identity:'普通会员', stored:'无储值', balance:0, venue:'篮球公园', totalAmount:1280, lastConsume:'2026-10-21', tags:['新客'], blacklist:false},
+  {id:'B012', name:'郑凯', phone:'150****4455', identity:'储值会员', stored:'有余额', balance:3200, venue:'总部', totalAmount:15800, lastConsume:'2026-10-29', tags:['高价值客户','赛事爱好者'], blacklist:false},
+  {id:'B013', name:'孙丽', phone:'187****6677', identity:'企业会员', stored:'有余额', balance:6800, venue:'网球中心', totalAmount:22400, lastConsume:'2026-10-20', tags:['企业客户'], blacklist:false},
+  {id:'B014', name:'马超', phone:'132****8899', identity:'储值会员', stored:'余额不足', balance:150, venue:'篮球公园', totalAmount:4380, lastConsume:'2026-09-25', tags:['沉睡客户'], blacklist:false},
+  {id:'B015', name:'何雨', phone:'159****0011', identity:'普通会员', stored:'无储值', balance:0, venue:'羽毛球馆', totalAmount:890, lastConsume:'2026-10-12', tags:['亲子客群'], blacklist:false},
+  {id:'B016', name:'许晨', phone:'186****2233', identity:'非会员', stored:'无储值', balance:0, venue:'总部', totalAmount:260, lastConsume:'2026-07-15', tags:['沉睡客户'], blacklist:true},
+  {id:'B017', name:'唐雅', phone:'137****3344', identity:'储值会员', stored:'有余额', balance:980, venue:'总部', totalAmount:5320, lastConsume:'2026-10-31', tags:['活跃客户'], blacklist:false},
+  {id:'B018', name:'冯磊', phone:'181****5566', identity:'企业会员', stored:'有余额', balance:4200, venue:'篮球公园', totalAmount:18900, lastConsume:'2026-10-18', tags:['企业客户','团体客户'], blacklist:false},
+  {id:'B019', name:'陈可欣', phone:'188****6677', identity:'储值会员', stored:'有余额', balance:1580, venue:'羽毛球馆', totalAmount:4680, lastConsume:'2026-11-02', tags:['活跃客户','亲子客群'], blacklist:false},
+  {id:'B020', name:'林志远', phone:'198****7788', identity:'普通会员', stored:'无储值', balance:0, venue:'网球中心', totalAmount:3860, lastConsume:'2026-10-27', tags:['赛事爱好者'], blacklist:false}
+];
+
+/* ========== 模板 ========== */
+var TEMPLATES = MOCK.smsTemplates.map(function(t){ return Object.assign({}, t); });
+TEMPLATES.push({id:'T005', name:'活动通知', scene:'活动通知',
+  content:'【地丰体育】尊敬的{会员名}，本周末{场馆名称}会员专场开放报名，现场有专业教练指导，回复 TD 退订。', status:'启用'});
+TEMPLATES.push({id:'T006', name:'场馆公告', scene:'活动通知',
+  content:'【地丰体育】尊敬的{会员名}，{场馆名称}因设备维护临时调整营业时间，具体以小程序公告为准。', status:'启用'});
+
+var VENUE_FULL = {'总部':'地丰体育中心', '篮球公园':'地丰篮球公园', '网球中心':'地丰网球中心', '羽毛球馆':'地丰羽毛球馆'};
+function previewVars(){
+  var firstId = Object.keys(selected)[0];
+  var c = CUSTOMERS.find(function(x){ return x.id === firstId; }) || CUSTOMERS[0];
+  return {
+    '会员名': c.name, '充值金额':'800', '赠送金额':'80', '余额': String(c.balance || 200),
+    '消费金额':'240', '场馆名称': VENUE_FULL[c.venue] || '地丰体育中心',
+    '预约时间':'11-08 18:00-19:00'
+  };
+}
+function fillPreview(text){
+  var vars = previewVars();
+  return String(text || '').replace(/\{([^}]+)\}/g, function(m, k){
+    return vars[k] !== undefined ? vars[k] : m;
+  });
+}
+function perPersonCount(){
+  if(!selectedTemplate) return 1;
+  var t = TEMPLATES.find(function(x){ return x.id === selectedTemplate; });
+  if(!t) return 1;
+  return Math.max(1, Math.ceil(fillPreview(t.content).length / 70));
+}
+function selectedCount(){ return Object.keys(selected).length; }
+
+/* ========== 筛选 ========== */
+var FILTERS = {identity:'', stored:'', tag:'', venue:'', amountMin:'', amountMax:'', dateStart:'', dateEnd:'', excludeBlack:true};
+var CUST_PAGE = 1;
+var CUST_PAGE_SIZE = 8;
+
+function readFilters(){
+  var get = function(id){ var el = document.getElementById(id); return el ? el.value : ''; };
+  FILTERS.identity = get('f-identity');
+  FILTERS.stored = get('f-stored');
+  FILTERS.tag = get('f-tag');
+  FILTERS.venue = get('f-venue');
+  FILTERS.amountMin = get('f-amount-min');
+  FILTERS.amountMax = get('f-amount-max');
+  FILTERS.dateStart = get('f-date-start');
+  FILTERS.dateEnd = get('f-date-end');
+  var black = document.getElementById('f-black');
+  FILTERS.excludeBlack = black ? black.checked : true;
+}
+
+function targets(){
+  return CUSTOMERS.filter(function(c){
+    if(FILTERS.identity && c.identity !== FILTERS.identity) return false;
+    if(FILTERS.stored && c.stored !== FILTERS.stored) return false;
+    if(FILTERS.tag && c.tags.indexOf(FILTERS.tag) === -1) return false;
+    if(FILTERS.venue && c.venue !== FILTERS.venue) return false;
+    if(FILTERS.amountMin && c.totalAmount < Number(FILTERS.amountMin)) return false;
+    if(FILTERS.amountMax && c.totalAmount > Number(FILTERS.amountMax)) return false;
+    if(FILTERS.dateStart && c.lastConsume < FILTERS.dateStart) return false;
+    if(FILTERS.dateEnd && c.lastConsume > FILTERS.dateEnd) return false;
+    if(FILTERS.excludeBlack && c.blacklist) return false;
+    return true;
+  });
+}
+
+function pagedList(){
+  var list = targets();
+  var pages = Math.max(1, Math.ceil(list.length / CUST_PAGE_SIZE));
+  if(CUST_PAGE > pages) CUST_PAGE = pages;
+  if(CUST_PAGE < 1) CUST_PAGE = 1;
+  return list.slice((CUST_PAGE - 1) * CUST_PAGE_SIZE, CUST_PAGE * CUST_PAGE_SIZE);
+}
+
+function filterSummary(){
+  var parts = [];
+  if(FILTERS.identity) parts.push(FILTERS.identity);
+  if(FILTERS.stored) parts.push('储值状态：' + FILTERS.stored);
+  if(FILTERS.tag) parts.push('标签：' + FILTERS.tag);
+  if(FILTERS.venue) parts.push(FILTERS.venue);
+  if(FILTERS.amountMin || FILTERS.amountMax){
+    parts.push('累计消费 ' + (FILTERS.amountMin || '0') + '~' + (FILTERS.amountMax || '不限') + ' 元');
+  }
+  if(FILTERS.dateStart || FILTERS.dateEnd){
+    parts.push('消费时间 ' + (FILTERS.dateStart || '不限') + ' 至 ' + (FILTERS.dateEnd || '不限'));
+  }
+  parts.push(FILTERS.excludeBlack ? '排除黑名单' : '含黑名单');
+  return parts.join(' · ');
+}
+
+/* ---------- 客户表 ---------- */
+function customerRows(){
+  var list = pagedList();
+  if(!list.length){
+    return '<tr><td colspan="7"><div class="empty"><div class="empty-icon"><i data-lucide="users"></i></div><div class="empty-text">当前筛选条件下无匹配客户，请放宽条件</div></div></td></tr>';
+  }
+  return list.map(function(c){
+    var tags = c.tags.map(function(t){ return '<span class="tag tag-cyan" style="margin-right:4px">' + esc(t) + '</span>'; }).join('');
+    if(c.blacklist) tags += '<span class="tag tag-red">黑名单 / 已退订</span>';
+    return `<tr>
+      <td><input type="checkbox" class="cust-check" data-id="${c.id}" ${selected[c.id] ? 'checked' : ''} onchange="toggleSelect('${c.id}', this.checked)" /></td>
+      <td class="mono" style="font-size:13px">${esc(c.phone)}</td>
+      <td><div class="font-medium">${esc(c.name)}</div><div class="text-muted" style="font-size:12px">${esc(c.identity)}</div></td>
+      <td style="max-width:200px">${tags}</td>
+      <td>${esc(c.venue)}</td>
+      <td class="text-right">¥${c.totalAmount.toLocaleString('zh-CN')}</td>
+      <td style="font-size:13px">${esc(c.lastConsume)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCustPager(total){
+  var el = document.getElementById('cust-pager');
+  if(!el) return;
+  var pages = Math.max(1, Math.ceil(total / CUST_PAGE_SIZE));
+  var btns = '';
+  for(var i = 1; i <= pages; i++){
+    btns += '<button class="page-btn ' + (i === CUST_PAGE ? 'active' : '') + '" onclick="gotoCustPage(' + i + ')">' + i + '</button>';
+  }
+  el.innerHTML = '<div class="pagination-info">共 ' + total + ' 位候选客户 · 第 ' + CUST_PAGE + '/' + pages + ' 页</div>' +
+    '<div class="pagination-pages">' +
+    '<button class="page-btn" ' + (CUST_PAGE <= 1 ? 'disabled' : '') + ' onclick="gotoCustPage(' + (CUST_PAGE - 1) + ')"><i data-lucide="chevron-left" style="width:14px"></i></button>' +
+    btns +
+    '<button class="page-btn" ' + (CUST_PAGE >= pages ? 'disabled' : '') + ' onclick="gotoCustPage(' + (CUST_PAGE + 1) + ')"><i data-lucide="chevron-right" style="width:14px"></i></button>' +
+    '</div>';
+  refreshIcons();
+}
+
+function gotoCustPage(n){
+  CUST_PAGE = n;
+  var rows = document.getElementById('cust-rows');
+  if(rows){
+    rows.innerHTML = customerRows();
+    refreshIcons();
+  }
+  renderCustPager(targets().length);
+  updateSelectionUI();
+}
+
+function toggleSelect(id, checked){
+  if(checked) selected[id] = true; else delete selected[id];
+  updateSelectionUI();
+}
+
+function toggleSelectAll(checked){
+  pagedList().forEach(function(c){
+    if(checked) selected[c.id] = true; else delete selected[c.id];
+  });
+  var rows = document.getElementById('cust-rows');
+  if(rows){
+    rows.innerHTML = customerRows();
+    refreshIcons();
+  }
+  updateSelectionUI();
+}
+
+function updateSelectionUI(){
+  var el = document.getElementById('sel-count');
+  if(el) el.textContent = selectedCount() + ' 人';
+  var list = targets().length;
+  if(document.getElementById('est-people')) document.getElementById('est-people').textContent = list + ' 人';
+  if(document.getElementById('est-count')) document.getElementById('est-count').textContent = list + ' 条';
+  if(document.getElementById('cust-total')) document.getElementById('cust-total').textContent = '筛选结果 ' + list + ' 人';
+  var all = document.getElementById('select-all');
+  if(all){
+    var page = pagedList();
+    all.checked = page.length > 0 && page.every(function(c){ return selected[c.id]; });
+  }
+}
+
+function refreshCustomerView(){
+  if(!document.getElementById('cust-rows')) return;
+  var list = targets();
+  var valid = {};
+  list.forEach(function(c){ valid[c.id] = true; });
+  Object.keys(selected).forEach(function(id){
+    if(!valid[id]) delete selected[id];
+  });
+  var rows = document.getElementById('cust-rows');
+  rows.innerHTML = customerRows();
+  renderCustPager(list.length);
+  updateSelectionUI();
+  refreshIcons();
+}
+
+/* ========== 步骤渲染 ========== */
+var STEP_LABELS = ['筛选客户','选模板','预览发送','完成'];
+
+function stepBarHtml(){
+  return STEP_LABELS.map(function(label, i){
+    var cls = i < step ? 'step done' : (i === step ? 'step active' : 'step');
+    var num = i < step ? '✓' : String(i + 1);
+    var color = i === step ? 'var(--primary)' : 'var(--text-3)';
+    return '<div class="' + cls + '">' +
+      '<span class="step-num">' + num + '</span>' +
+      '<span style="font-size:13px;color:' + color + '">' + label + '</span>' +
+      (i < STEP_LABELS.length - 1 ? '<div class="step-line"></div>' : '') +
+      '</div>';
+  }).join('');
+}
+
+function opt(v, cur, label){
+  return '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + (label || v) + '</option>';
+}
+
+function step1Html(){
+  return `
+    <div class="card mb-16">
+      <div class="card-header"><div class="card-title">筛选条件</div><span class="text-muted" style="font-size:12px">多条件可组合，修改后实时统计人数</span></div>
+      <div class="card-body">
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">会员身份</label>
+            <select class="form-select" id="f-identity" onchange="readFilters();refreshCustomerView()">
+              ${opt('', FILTERS.identity, '全部会员身份')}
+              ${opt('储值会员', FILTERS.identity)}
+              ${opt('企业会员', FILTERS.identity)}
+              ${opt('普通会员', FILTERS.identity)}
+              ${opt('非会员', FILTERS.identity)}
+            </select>
+          </div>
+          <div class="form-item">
+            <label class="form-label">储值状态</label>
+            <select class="form-select" id="f-stored" onchange="readFilters();refreshCustomerView()">
+              ${opt('', FILTERS.stored, '全部储值状态')}
+              ${opt('有余额', FILTERS.stored)}
+              ${opt('余额不足', FILTERS.stored)}
+              ${opt('无储值', FILTERS.stored)}
+            </select>
+          </div>
+          <div class="form-item">
+            <label class="form-label">客户标签</label>
+            <select class="form-select" id="f-tag" onchange="readFilters();refreshCustomerView()">
+              ${opt('', FILTERS.tag, '全部标签')}
+              ${['高价值客户','活跃客户','沉睡客户','企业客户','团体客户','新客','亲子客群','赛事爱好者'].map(function(t){ return opt(t, FILTERS.tag); }).join('')}
+            </select>
+          </div>
+          <div class="form-item">
+            <label class="form-label">所属场馆</label>
+            <select class="form-select" id="f-venue" onchange="readFilters();refreshCustomerView()">
+              ${opt('', FILTERS.venue, '全部场馆')}
+              ${['总部','篮球公园','网球中心','羽毛球馆'].map(function(v){ return opt(v, FILTERS.venue); }).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="form-row" style="margin-bottom:8px">
+          <div class="form-item">
+            <label class="form-label">累计消费金额区间（元）</label>
+            <div class="flex gap-8 items-center">
+              <input class="form-input" id="f-amount-min" type="number" min="0" value="${esc(FILTERS.amountMin)}" placeholder="最低" oninput="readFilters();refreshCustomerView()" />
+              <span class="text-muted">~</span>
+              <input class="form-input" id="f-amount-max" type="number" min="0" value="${esc(FILTERS.amountMax)}" placeholder="最高" oninput="readFilters();refreshCustomerView()" />
+            </div>
+          </div>
+          <div class="form-item">
+            <label class="form-label">最近消费时间区间</label>
+            <div class="flex gap-8 items-center">
+              <input class="form-input" id="f-date-start" type="date" value="${esc(FILTERS.dateStart)}" onchange="readFilters();refreshCustomerView()" />
+              <span class="text-muted">至</span>
+              <input class="form-input" id="f-date-end" type="date" value="${esc(FILTERS.dateEnd)}" onchange="readFilters();refreshCustomerView()" />
+            </div>
+          </div>
+        </div>
+        <label class="flex items-center gap-8" style="font-size:13px;cursor:pointer;color:var(--text-2)">
+          <input type="checkbox" id="f-black" ${FILTERS.excludeBlack ? 'checked' : ''} onchange="readFilters();refreshCustomerView()" />
+          排除黑名单 / 已退订客户（推荐）
+        </label>
+      </div>
+    </div>
+
+    <div class="card mb-16" style="background:var(--primary-bg);border-color:var(--primary)">
+      <div class="card-body" style="padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px">
+        <div class="flex items-center" style="gap:24px;flex-wrap:wrap">
+          <div><div class="text-muted" style="font-size:12px">预计发送人数</div><div style="font-size:22px;font-weight:700;color:var(--primary)" id="est-people">0 人</div></div>
+          <div style="width:1px;height:34px;background:var(--border)"></div>
+          <div><div class="text-muted" style="font-size:12px">预计消耗</div><div style="font-size:22px;font-weight:700;color:var(--text-1)" id="est-count">0 条</div></div>
+          <div style="width:1px;height:34px;background:var(--border)"></div>
+          <div><div class="text-muted" style="font-size:12px">已选客户</div><div style="font-size:22px;font-weight:700;color:var(--success)" id="sel-count">0 人</div></div>
+        </div>
+        <span class="text-muted" style="font-size:12px;max-width:320px">勾选客户后方可进入下一步；黑名单客户不参与群发</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">客户选择</div>
+          <div class="text-muted" style="font-size:12px" id="cust-total">筛选结果 0 人</div>
+        </div>
+        <span class="tag tag-cyan">手机号已脱敏展示</span>
+      </div>
+      <div class="card-body">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:44px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)" /></th>
+                <th>手机号</th>
+                <th>姓名</th>
+                <th>标签</th>
+                <th>场馆</th>
+                <th class="text-right">累计消费</th>
+                <th>最近消费</th>
+              </tr>
+            </thead>
+            <tbody id="cust-rows"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="cust-pager"></div>
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center mt-16">
+      <button class="btn btn-default" disabled><i data-lucide="arrow-left"></i>上一步</button>
+      <button class="btn btn-primary" onclick="goStep(1)">下一步：选择模板<i data-lucide="arrow-right"></i></button>
+    </div>`;
+}
+
+function step2Html(){
+  var cards = TEMPLATES.filter(function(t){ return t.status === '启用'; }).map(function(t){
+    var on = selectedTemplate === t.id;
+    return `<div class="card" style="cursor:pointer;border-color:${on ? 'var(--primary)' : 'var(--border-light)'};box-shadow:${on ? '0 0 0 3px var(--primary-bg)' : 'none'}" onclick="selectTemplate('${t.id}')">
+      <div class="card-body" style="padding:16px 18px">
+        <div class="flex justify-between items-center" style="margin-bottom:8px">
+          <b style="font-size:15px">${esc(t.name)}</b>
+          ${on ? '<span class="tag tag-blue">已选择</span>' : '<span class="tag tag-gray">可选</span>'}
+        </div>
+        <div class="flex gap-8" style="flex-wrap:wrap;margin-bottom:10px">
+          <span class="tag tag-purple">${esc(t.scene)}</span>
+          <span class="tag tag-gray">${fillPreview(t.content).length} 字</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-3);line-height:1.7">${esc(fillPreview(t.content).slice(0, 64))}…</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="card mb-16">
+      <div class="card-header"><div class="card-title">选择短信模板</div><span class="text-muted" style="font-size:12px">内容将按所选客户与场馆自动替换变量</span></div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">${cards}</div>
+        <div class="form-hint" style="margin-top:14px">预览基于首位已选客户「${esc(previewVars()['会员名'])}」生成，实际发送时按每位客户的数据替换变量。</div>
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center mt-16">
+      <button class="btn btn-default" onclick="goStep(0)"><i data-lucide="arrow-left"></i>上一步</button>
+      <button class="btn btn-primary" onclick="goStep(2)">下一步：预览发送<i data-lucide="arrow-right"></i></button>
+    </div>`;
+}
+
+function step3Html(){
+  var t = null;
+  TEMPLATES.forEach(function(x){ if(x.id === selectedTemplate) t = x; });
+  var people = selectedCount();
+  var per = perPersonCount();
+  var count = people * per;
+  var fee = (count * 0.045).toFixed(2);
+  var sample = t ? fillPreview(t.content) : '';
+  return `
+    <div class="card mb-16">
+      <div class="card-header"><div class="card-title">发送概要</div><span class="tag tag-blue">待确认</span></div>
+      <div class="card-body">
+        <div class="kv-grid">
+          <div class="kv-item"><div class="k">发送人数</div><div class="v">${people} 人</div></div>
+          <div class="kv-item"><div class="k">预计消耗条数</div><div class="v">${count} 条（${per} 条/人）</div></div>
+          <div class="kv-item"><div class="k">预计短信费用</div><div class="v">¥${fee}</div></div>
+          <div class="kv-item"><div class="k">所选模板</div><div class="v">${t ? esc(t.name) + '（' + esc(t.scene) + '）' : '未选择'}</div></div>
+          <div class="kv-item" style="grid-column:1 / -1"><div class="k">筛选条件摘要</div><div class="v" style="font-size:13px;font-weight:400">${esc(filterSummary())}</div></div>
+        </div>
+        <div class="divider"></div>
+        <div class="flex items-center gap-8" style="margin-bottom:10px">
+          <span class="user-avatar" style="width:28px;height:28px;font-size:12px">地</span>
+          <span style="font-size:13px;font-weight:500">样例短信（变量已替换）</span>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.7">${esc(sample)}</div>
+        <div class="form-hint" style="margin-top:8px">样例按首位已选客户生成，实际内容将按客户数据替换；超过 70 字按多条计费。</div>
+      </div>
+    </div>
+
+    <div class="card mb-16">
+      <div class="card-header"><div class="card-title">发送设置</div></div>
+      <div class="card-body">
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">任务名称 <span class="required">*</span></label>
+            <input class="form-input" id="task-name" placeholder="如：双十一会员促销" value="${esc((t ? t.name : '会员短信') + ' · 11-05')}" />
+          </div>
+        </div>
+        <div class="form-item">
+          <label class="form-label">发送方式</label>
+          <div class="flex gap-16 items-center" style="margin-bottom:8px">
+            <label class="flex items-center gap-8" style="font-size:14px;cursor:pointer">
+              <input type="radio" name="send-mode" value="now" ${sendMode === 'now' ? 'checked' : ''} onchange="setSendMode('now')" /> 立即发送
+            </label>
+            <label class="flex items-center gap-8" style="font-size:14px;cursor:pointer">
+              <input type="radio" name="send-mode" value="scheduled" ${sendMode === 'scheduled' ? 'checked' : ''} onchange="setSendMode('scheduled')" /> 定时发送
+            </label>
+          </div>
+          <div id="schedule-box" style="display:${sendMode === 'scheduled' ? 'block' : 'none'};max-width:320px">
+            <label class="form-label">定时发送时间 <span class="required">*</span></label>
+            <input class="form-input" id="send-time" type="datetime-local" value="2026-12-25T09:00" />
+            <div class="form-hint">定时任务到点自动执行，可在任务列表中取消。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center mt-16">
+      <button class="btn btn-default" onclick="goStep(1)"><i data-lucide="arrow-left"></i>上一步</button>
+      <button class="btn btn-primary" onclick="doSend()"><i data-lucide="send"></i>确认发送</button>
+    </div>`;
+}
+
+function step4Html(){
+  var t = lastTask;
+  return `
+    <div class="card">
+      <div class="card-body" style="text-align:center;padding:48px 24px">
+        <span class="stat-icon green" style="width:56px;height:56px;margin:0 auto 16px"><i data-lucide="check-check"></i></span>
+        <div style="font-size:20px;font-weight:600">群发任务已提交</div>
+        <div class="text-muted" style="font-size:13px;margin-top:6px">${t ? esc(t.name) : ''} · ${t ? t.total : 0} 人 · ${t ? esc(t.status) : ''}</div>
+        <div class="kv-grid" style="max-width:640px;margin:24px auto 0;text-align:left">
+          <div class="kv-item"><div class="k">发送方式</div><div class="v">${t && t.status === '定时待发' ? '定时发送' : '立即发送'}</div></div>
+          <div class="kv-item"><div class="k">模板</div><div class="v">${t ? esc(t.template) : '—'}</div></div>
+          <div class="kv-item"><div class="k">发送时间</div><div class="v">${t ? esc(t.time) : '—'}</div></div>
+          <div class="kv-item"><div class="k">预计消耗</div><div class="v">${t ? t.smsCount : 0} 条 / ¥${t ? t.fee : '0.00'}</div></div>
+        </div>
+        <div class="flex justify-center gap-8 mt-20">
+          <button class="btn btn-default" onclick="resetBroadcast()"><i data-lucide="rotate-ccw"></i>再发一批</button>
+          <a class="btn btn-primary" href="sms-record.html"><i data-lucide="bar-chart-3"></i>查看发送记录</a>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderStep(){
+  var bar = document.getElementById('step-bar');
+  var body = document.getElementById('step-body');
+  if(!bar || !body) return;
+  bar.innerHTML = stepBarHtml();
+  if(step === 0) body.innerHTML = step1Html();
+  else if(step === 1) body.innerHTML = step2Html();
+  else if(step === 2) body.innerHTML = step3Html();
+  else body.innerHTML = step4Html();
+  if(step === 0) refreshCustomerView();
+  refreshIcons();
+}
+
+function goStep(n){
+  if(n === 1){
+    refreshCustomerView();
+    if(targets().length === 0){ toast('当前筛选条件无匹配客户，请放宽筛选条件', 'error'); return; }
+    if(selectedCount() === 0){ toast('请至少勾选 1 位客户', 'error'); return; }
+    if(CUST_PAGE !== 1) CUST_PAGE = 1;
+  }
+  if(n === 2 && !selectedTemplate){ toast('请选择 1 个短信模板', 'error'); return; }
+  step = n;
+  renderStep();
+  toast('已进入「' + STEP_LABELS[n] + '」', 'info');
+}
+
+function selectTemplate(id){
+  selectedTemplate = id;
+  renderStep();
+  var t = TEMPLATES.find(function(x){ return x.id === id; });
+  if(t) toast('已选择模板「' + t.name + '」', 'success');
+}
+
+function setSendMode(mode){
+  sendMode = mode;
+  var box = document.getElementById('schedule-box');
+  if(box) box.style.display = mode === 'scheduled' ? 'block' : 'none';
+}
+
+/* ========== 发送任务 ========== */
+var TASKS = MOCK_EXT.smsBroadcast.map(function(t){
+  return {
+    id:t.id, name:t.name, filter:t.filter, template:t.template, total:t.total, success:t.success,
+    status:t.status, time:t.time, operator:t.operator,
+    progress: t.status === '已完成' ? 100 : 0,
+    smsCount: t.total, fee:'0.00'
+  };
+});
+TASKS.unshift({
+  id:'BC004', name:'篮球馆会员关怀', filter:'篮球公园 · 活跃客户 · 有储值余额', template:'活动通知',
+  total:156, success:96, status:'进行中', time:'2026-11-05 09:40', operator:'李运营', progress:62, smsCount:156, fee:'7.02'
+});
+
+function taskRows(){
+  return TASKS.map(function(t){
+    var statusTag = t.status === '已完成' ? 'tag-green' : (t.status === '进行中' ? 'tag-blue' : 'tag-orange');
+    var progress = '';
+    if(t.status === '已完成'){
+      progress = '<div class="progress" style="width:90px"><div class="progress-bar" style="width:100%;background:var(--success)"></div></div><span style="font-size:12px;margin-left:6px">100%</span>';
+    } else if(t.status === '进行中'){
+      progress = '<div class="progress" style="width:90px"><div class="progress-bar" id="task-bar-' + t.id + '" style="width:' + t.progress + '%"></div></div><span id="task-pct-' + t.id + '" style="font-size:12px;margin-left:6px">' + t.progress + '%</span>';
+    } else {
+      progress = '<span class="text-muted" style="font-size:12px">等待定时执行</span>';
+    }
+    return `<tr>
+      <td><div class="font-medium">${esc(t.name)}</div><div class="mono text-muted" style="font-size:12px">${t.id}</div></td>
+      <td style="max-width:240px;font-size:13px;color:var(--text-2)">${esc(t.filter)}</td>
+      <td style="font-size:13px">${esc(t.template)}</td>
+      <td class="text-right">${t.total} 人</td>
+      <td><div class="flex items-center" style="flex-wrap:nowrap">${progress}</div></td>
+      <td style="font-size:13px">${esc(t.time)}</td>
+      <td><span class="tag ${statusTag}">${t.status}</span></td>
+      <td style="font-size:13px">${esc(t.operator)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTasks(){
+  var el = document.getElementById('task-rows');
+  if(!el) return;
+  el.innerHTML = taskRows();
+  refreshIcons();
+}
+
+function simulateProgress(task){
+  var timer = setInterval(function(){
+    task.progress = Math.min(100, task.progress + 8 + Math.round(Math.random() * 10));
+    if(task.progress >= 100){
+      task.progress = 100;
+      task.status = '已完成';
+      task.success = task.total;
+      clearInterval(timer);
+      renderTasks();
+      toast('任务「' + task.name + '」发送完成，成功 ' + task.total + ' 条', 'success');
+      return;
+    }
+    var bar = document.getElementById('task-bar-' + task.id);
+    var pct = document.getElementById('task-pct-' + task.id);
+    if(bar) bar.style.width = task.progress + '%';
+    if(pct) pct.textContent = task.progress + '%';
+  }, 420);
+}
+
+function doSend(){
+  var name = trimVal('task-name');
+  if(!name){ toast('请填写任务名称', 'error'); return; }
+  if(selectedCount() === 0){ toast('未选择任何客户，无法发送', 'error'); return; }
+  if(!selectedTemplate){ toast('请选择短信模板', 'error'); return; }
+  var time = '';
+  if(sendMode === 'scheduled'){
+    time = document.getElementById('send-time') ? document.getElementById('send-time').value : '';
+    if(!time){ toast('请选择定时发送时间', 'error'); return; }
+  }
+  var t = TEMPLATES.find(function(x){ return x.id === selectedTemplate; });
+  var total = selectedCount();
+  var per = perPersonCount();
+  var n = TASKS.length + 1;
+  var newId = 'BC' + String(n).padStart(3, '0');
+  while(TASKS.some(function(x){ return x.id === newId; })){ n++; newId = 'BC' + String(n).padStart(3, '0'); }
+  var task = {
+    id:newId, name:name, filter:filterSummary(), template:t ? t.name : '',
+    total:total, success:0, status:sendMode === 'scheduled' ? '定时待发' : '进行中',
+    time:sendMode === 'scheduled' ? fmtSchedule(time) : nowStr(), operator:'李运营',
+    progress:0, smsCount:total * per, fee:(total * per * 0.045).toFixed(2)
+  };
+  TASKS.unshift(task);
+  lastTask = task;
+  step = 3;
+  renderStep();
+  renderTasks();
+  toast(sendMode === 'scheduled'
+    ? '定时任务已创建，将于 ' + task.time + ' 自动发送（共 ' + total + ' 人）'
+    : '群发任务已提交，正在发送（共 ' + total + ' 人）', 'success');
+  if(sendMode === 'now') simulateProgress(task);
+}
+
+function resetBroadcast(){
+  step = 0;
+  selected = {};
+  selectedTemplate = null;
+  sendMode = 'now';
+  renderStep();
+  toast('已重置，可开始新一轮群发', 'info');
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">短信群发</div>
+        <div class="page-desc">按会员身份、储值、标签、场馆与消费行为组合筛选目标客户，支持模板变量替换与定时发送</div>
+      </div>
+      <div class="flex gap-8">
+        <a class="btn btn-default" href="sms.html"><i data-lucide="settings-2"></i>通道与模板</a>
+        <a class="btn btn-default" href="sms-record.html"><i data-lucide="bar-chart-3"></i>发送记录</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-body" style="padding:20px 24px 8px">
+      <div class="step-bar" id="step-bar"></div>
+      <div id="step-body"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">发送任务列表</div>
+      <span class="text-muted" style="font-size:12px">进行中的任务实时显示发送进度</span>
+    </div>
+    <div class="card-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>任务名称</th>
+              <th>筛选条件摘要</th>
+              <th>模板</th>
+              <th class="text-right">发送人数</th>
+              <th>发送进度</th>
+              <th>发送时间</th>
+              <th>状态</th>
+              <th>操作人</th>
+            </tr>
+          </thead>
+          <tbody id="task-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+`;
+
+renderStep();
+renderTasks();
+refreshIcons();
+</script>
+</body>
+</html>

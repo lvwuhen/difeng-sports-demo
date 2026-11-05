@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 次卡</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="dark">
+<div class="app">
+  <div class="scroll">
+    <div class="navbar">
+      <button class="nav-back" onclick="M.go('me.html')">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+      </button>
+      <div class="nav-title">次卡</div>
+      <button class="nav-act" id="ruleBtn">规则</button>
+    </div>
+
+    <div class="section tight" style="margin-top:10px">
+      <div style="display:flex;background:#fff;border-radius:12px;padding:4px;box-shadow:var(--m-shadow)">
+        <button class="seg" data-view="mine" style="flex:1;height:36px;border:0;border-radius:9px;font-size:13px;cursor:pointer">我的次卡</button>
+        <button class="seg" data-view="buy" style="flex:1;height:36px;border:0;border-radius:9px;font-size:13px;cursor:pointer">购买次卡</button>
+      </div>
+    </div>
+
+    <div id="body"></div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var view = 'mine';
+
+  function renderSeg(){
+    M.$$('.seg').forEach(function(b){
+      var on = b.getAttribute('data-view') === view;
+      b.style.background = on ? 'var(--m-primary)' : 'transparent';
+      b.style.color = on ? '#fff' : 'var(--m-text-3)';
+      b.style.fontWeight = on ? '600' : '500';
+    });
+  }
+
+  function renderMine(){
+    var cards = M.state.cards;
+    var totalRemain = cards.reduce(function(n, c){ return n + Math.max(0, c.total - c.used); }, 0);
+    var html =
+      '<div class="section tight" style="margin-top:14px">' +
+        '<div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px">' +
+          '<div><div class="sub">可用次数合计</div><div style="font-size:22px;font-weight:700;margin-top:2px">' + totalRemain + ' <span style="font-size:13px;font-weight:500;color:#6b7280">次</span></div></div>' +
+          '<a class="btn btn-ghost btn-sm" href="venues.html">去预约</a>' +
+        '</div>' +
+      '</div>' +
+      '<div class="section"><div class="section-head"><div class="section-title"><span class="bar"></span>我的次卡</div>' +
+        '<span class="sub">' + cards.length + ' 张</span></div><div id="cards"></div></div>';
+
+    M.$('#body').innerHTML = html;
+    M.$('#cards').innerHTML = cards.map(function(c){
+      var remain = Math.max(0, c.total - c.used);
+      var ratio = c.total ? Math.round(remain / c.total * 100) : 0;
+      var expired = c.status === '已过期' || c.status === '已用完';
+      return '<div class="timecard' + (expired ? ' expired' : '') + '">' +
+        '<div class="tc-head">' +
+          '<div><div class="tc-name">' + c.name + '</div>' +
+            '<div class="sub" style="margin-top:3px">' + c.type + '场地 · ' + c.total + ' 次 · 有效期至 ' + c.validUntil + '</div></div>' +
+          '<span class="tag ' + (expired ? 'tag-gray' : 'tag-blue') + '">' + c.status + '</span>' +
+        '</div>' +
+        '<div style="display:flex;align-items:baseline;gap:4px;margin-top:12px">' +
+          '<span style="font-size:24px;font-weight:700;' + (expired ? 'color:#9aa3b2' : '') + '">' + remain + '</span>' +
+          '<span style="font-size:12px;color:var(--m-text-3)">/ ' + c.total + ' 次可用</span>' +
+        '</div>' +
+        '<div style="height:6px;border-radius:3px;background:#eef1f5;margin-top:8px;overflow:hidden">' +
+          '<span style="display:block;height:100%;width:' + ratio + '%;background:' + (expired ? '#cbd5e1' : 'linear-gradient(90deg,#1677ff,#0ea5e9)') + '"></span>' +
+        '</div>' +
+        '<div class="between" style="margin-top:12px">' +
+          '<button class="btn btn-line btn-sm" data-hist="' + c.id + '">使用记录</button>' +
+          (expired
+            ? '<a class="btn btn-line btn-sm" href="timecard.html?view=buy">再买一张</a>'
+            : '<a class="btn btn-primary btn-sm" href="venues.html">立即使用</a>') +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    M.$$('[data-hist]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var c = M.state.cards.filter(function(x){ return x.id === b.getAttribute('data-hist'); })[0];
+        var rows = [];
+        for (var i = 0; i < Math.min(c.used, 4); i++){
+          var d = M.fmtDate(M.addDays(new Date(), -(i * 9 + 3)));
+          rows.push('• ' + d + ' · ' + c.type + '场核销 1 次');
+        }
+        M.modal({
+          title:c.name + ' 使用记录',
+          text:(rows.length ? rows.join('<br>') : '暂无核销记录') + '<br><br>累计已用 ' + c.used + ' 次，剩余 ' + (c.total - c.used) + ' 次。<br>次卡按次抵扣，同一时段仅可使用 1 次。',
+          confirmText:'知道了', cancelText:false
+        });
+      });
+    });
+  }
+
+  function renderBuy(){
+    var products = M.CARD_PRODUCTS;
+    M.$('#body').innerHTML =
+      '<div class="section" style="margin-top:16px"><div class="section-head"><div class="section-title"><span class="bar"></span>次卡产品</div>' +
+      '<span class="sub">线上购买 · 支付后即时到账</span></div>' +
+      products.map(function(p){
+        return '<div class="card" style="margin-bottom:10px">' +
+          '<div class="between">' +
+            '<div><div style="font-size:15px;font-weight:600">' + p.name + '</div>' +
+              '<div class="sub" style="margin-top:3px;max-width:210px">' + p.desc + '</div></div>' +
+            '<div style="text-align:right"><div class="amount" style="font-size:22px"><span class="rmb">¥</span>' + p.price + '</div>' +
+              '<div class="tiny">' + p.total + ' 次 · 有效期 ' + p.validMonths + ' 个月</div></div>' +
+          '</div>' +
+          '<div class="between" style="margin-top:12px;padding-top:11px;border-top:1px solid var(--m-line)">' +
+            '<span class="tiny">单次约 ¥' + (p.price / p.total).toFixed(0) + ' · 会员可购</span>' +
+            '<button class="btn btn-primary btn-sm" data-buy="' + p.id + '">立即购买</button>' +
+          '</div>' +
+        '</div>';
+      }).join('') +
+      '</div>' +
+      '<div class="section"><div class="notice-box"><span style="flex-shrink:0">说明</span><span>次卡购买后不支持退款与转让，有效期内未用完自动作废；下单需使用对应运动类型的场地。</span></div></div>';
+
+    M.$$('[data-buy]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var p = M.cardProduct(b.getAttribute('data-buy'));
+        M.pay({ amount:p.price, method:'wechat', onSuccess:function(){ buy(p); } });
+      });
+    });
+  }
+
+  function buy(p){
+    var valid = M.fmtDate(M.addDays(new Date(), p.validMonths * 30));
+    var c = {
+      id:'TC' + String(Date.now()).slice(-6), name:p.name, type:p.type,
+      total:p.total, used:0, validUntil:valid, status:'有效', price:p.price
+    };
+    M.state.cards.unshift(c);
+    M.state.flows.unshift({ date:M.today() + ' ' + hm(), label:'次卡购买 · ' + p.name, type:'consume', amount:p.price, method:'微信支付' });
+    M.createOrder({
+      type:'card', title:'购买 · ' + p.name, venue:'地丰体育', court:'', sport:p.type,
+      date:M.today(), time:valid + ' 到期', amount:p.price, paid:p.price,
+      payMethod:'微信支付', payment:'wechat', status:'used',
+      verifyCode:'', invoice:{ status:'未开具', email:'' }, createdAt:M.today() + ' ' + hm(), remark:''
+    });
+    M.save();
+    view = 'mine';
+    renderSeg(); renderMine();
+    M.toast('购买成功，次卡已到账', 'success');
+  }
+
+  function hm(){
+    var d = new Date();
+    return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+
+  M.$$('.seg').forEach(function(b){
+    b.addEventListener('click', function(){
+      view = b.getAttribute('data-view');
+      renderSeg();
+      if (view === 'mine') renderMine(); else renderBuy();
+    });
+  });
+
+  M.$('#ruleBtn').addEventListener('click', function(){
+    M.modal({
+      title:'次卡使用规则',
+      text:'1. 次卡按次抵扣，不可叠加使用；<br>2. 每张次卡仅限对应运动类型场地；<br>3. 有效期内未使用完自动作废，不支持退款转让；<br>4. 使用次卡时仍需按流程预约时段。',
+      confirmText:'知道了', cancelText:false
+    });
+  });
+
+  var qview = new URLSearchParams(location.search).get('view');
+  if (qview === 'buy') view = 'buy';
+  renderSeg();
+  if (view === 'mine') renderMine(); else renderBuy();
+  M.init({});
+})();
+</script>
+</body>
+</html>

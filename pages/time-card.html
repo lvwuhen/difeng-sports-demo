@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>次卡管理 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('time-card', '次卡管理');
+
+// 次卡产品定义
+const cardProducts = [
+  {id:'TCP001', name:'篮球10次卡', courtType:'篮球', period:'全场通用', totalTimes:10, validDays:365, price:800, desc:'适用于所有篮球场，高峰低峰均可使用', status:'启用', sold:156},
+  {id:'TCP002', name:'羽毛球20次卡', courtType:'羽毛球', period:'低峰时段', totalTimes:20, validDays:180, price:1200, desc:'工作日 06:00-18:00 使用', status:'启用', sold:89},
+  {id:'TCP003', name:'网球5次卡', courtType:'网球', period:'全场通用', totalTimes:5, validDays:90, price:600, desc:'所有网球场通用', status:'启用', sold:42},
+  {id:'TCP004', name:'篮球30次卡（团体）', courtType:'篮球', period:'全场通用', totalTimes:30, validDays:365, price:2100, desc:'适合团体客户，可多人共用', status:'启用', sold:28},
+  {id:'TCP005', name:'足球季度卡', courtType:'足球', period:'工作日低峰', totalTimes:12, validDays:90, price:1800, desc:'工作日 06:00-16:00 使用', status:'禁用', sold:0},
+];
+
+// 客户持有次卡（含核销记录）
+const timeCards = JSON.parse(JSON.stringify(MOCK.timeCards));
+timeCards.forEach(t=>{
+  const c = MOCK.customers.find(x=>x.id===t.customerId);
+  t.customerName = c?c.name:'-';
+  t.phone = c?c.phone:'-';
+  t.product = cardProducts.find(p=>p.name===t.productName) || cardProducts[0];
+  // 核销记录
+  t.records = [];
+  for(let i=0;i<t.used;i++){
+    t.records.push({
+      time:`2026-10-${String(20+i).padStart(2,'0')} 1${i}:00`,
+      orderNo:`ORD202610${String(20+i).padStart(2,'0')}00${i+1}`,
+      court:t.product.courtType+'场地',
+      times:1,
+      afterRemain:t.total-(i+1),
+      operator:i%2===0?'张敏':'系统'
+    });
+  }
+});
+
+const statusTagMap = { '有效':'tag-green', '已过期':'tag-gray', '已用完':'tag-red', '已退款':'tag-orange' };
+const productStatusMap = { '启用':'tag-green', '禁用':'tag-gray' };
+
+let curListPage = 1, listPageSize = 10;
+
+function renderCardList(){
+  const st = document.getElementById('tcStatus')?.value||'';
+  const kw = (document.getElementById('tcKw')?.value||'').trim();
+  let list = timeCards;
+  if(st) list = list.filter(t=>t.status===st);
+  if(kw) list = list.filter(t=>t.productName.includes(kw)||t.customerName.includes(kw)||t.id.includes(kw));
+  const total = list.length;
+  const start = (curListPage-1)*listPageSize;
+  const rows = list.slice(start,start+listPageSize).map(t=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${t.id}</td>
+      <td><div class="font-medium">${t.productName}</div><div class="text-muted" style="font-size:12px">${t.customerName}</div></td>
+      <td class="text-center">${t.total}</td>
+      <td class="text-center">${t.used}</td>
+      <td class="text-center font-medium">${t.remain}</td>
+      <td>
+        <div class="progress" style="width:100px"><div class="progress-bar" style="width:${(t.used/t.total)*100}%"></div></div>
+      </td>
+      <td>${t.validUntil}</td>
+      <td><span class="tag ${statusTagMap[t.status]}">${t.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewCard('${t.id}')">详情</button>
+        <button class="btn btn-ghost btn-sm" onclick="viewRecords('${t.id}')">核销记录</button>
+        ${t.status==='有效'&&t.remain>0?`<button class="btn btn-ghost btn-sm text-error" onclick="refundCard('${t.id}')">未用次数退款</button>`:''}
+        ${t.status==='有效'?`<button class="btn btn-ghost btn-sm" onclick="expireCard('${t.id}')">过期作废</button>`:''}
+      </td>
+    </tr>`).join('') || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="repeat"></i></div><div class="empty-text">暂无次卡</div></div></td></tr>`;
+  document.getElementById('tcTbody').innerHTML = rows;
+  document.getElementById('tcPag').innerHTML = `<div class="pagination-info">共 ${total} 条</div>`;
+  if(window.lucide) lucide.createIcons();
+}
+
+// 次卡详情
+window.viewCard = function(id){
+  const t = timeCards.find(x=>x.id===id);
+  const p = t.product;
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">次卡详情 <span class="tag ${statusTagMap[t.status]}" style="margin-left:8px">${t.status}</span></div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <!-- 次卡展示 -->
+      <div style="background:linear-gradient(135deg,#8b5cf6,#6366f1);border-radius:12px;padding:24px;color:#fff;margin-bottom:20px">
+        <div class="flex justify-between items-center mb-12">
+          <div>
+            <div style="font-size:20px;font-weight:700">${t.productName}</div>
+            <div class="mono" style="font-size:13px;opacity:.8;margin-top:4px">${t.id}</div>
+          </div>
+          <div style="font-size:13px;opacity:.8">${p.courtType} · ${p.period}</div>
+        </div>
+        <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin:0">
+          <div><div style="font-size:11px;opacity:.7">总次数</div><div style="font-size:22px;font-weight:700">${t.total}</div></div>
+          <div><div style="font-size:11px;opacity:.7">已用</div><div style="font-size:22px;font-weight:700">${t.used}</div></div>
+          <div><div style="font-size:11px;opacity:.7">剩余</div><div style="font-size:22px;font-weight:700">${t.remain}</div></div>
+          <div><div style="font-size:11px;opacity:.7">有效期至</div><div style="font-size:14px;font-weight:700">${t.validUntil}</div></div>
+        </div>
+      </div>
+
+      <div class="kv-grid mb-20">
+        <div class="kv-item"><div class="k">持有人</div><div class="v">${t.customerName}（${t.phone}）</div></div>
+        <div class="kv-item"><div class="k">售价</div><div class="v">¥${t.price}</div></div>
+        <div class="kv-item"><div class="k">适用场地</div><div class="v">${p.courtType}</div></div>
+        <div class="kv-item"><div class="k">可用时段</div><div class="v">${p.period}</div></div>
+      </div>
+
+      <div style="background:var(--info-bg);padding:12px 16px;border-radius:6px;color:var(--info);font-size:13px">
+        <i data-lucide="info" style="width:14px;vertical-align:-2px"></i> 抵扣规则：一张次卡同一时段可预约多块场地；不支持同时段多张次卡叠加；次卡与储值余额相互独立。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="viewRecords('${t.id}')"><i data-lucide="list"></i> 核销记录</button>
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 核销记录
+window.viewRecords = function(id){
+  const t = timeCards.find(x=>x.id===id);
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">核销记录 - ${t.productName} <span class="text-muted" style="font-size:13px;margin-left:8px">${t.customerName}</span></div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      ${t.records.length>0?`
+      <table class="data-table">
+        <thead><tr><th>抵扣时间</th><th>关联订单</th><th>场地</th><th class="text-center">扣减次数</th><th class="text-center">扣减后余额</th><th>操作人</th></tr></thead>
+        <tbody>${t.records.map(r=>`<tr>
+          <td style="font-size:13px">${r.time}</td>
+          <td class="mono" style="font-size:12px">${r.orderNo}</td>
+          <td>${r.court}</td>
+          <td class="text-center text-error">-${r.times}</td>
+          <td class="text-center font-medium">${r.afterRemain}</td>
+          <td>${r.operator}</td>
+        </tr>`).join('')}</tbody>
+      </table>`:'<div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无核销记录</div></div>'}
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>
+  </div>`;
+  openModal(html);
+};
+
+// 未使用次数退款
+window.refundCard = function(id){
+  const t = timeCards.find(x=>x.id===id);
+  const refundAmount = Math.round((t.remain/t.total)*t.price);
+  const html = `<div class="modal" style="max-width:460px">
+    <div class="modal-header"><div class="modal-title">未使用次数退款</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">次卡</div><div class="v">${t.productName}</div></div>
+        <div class="kv-item"><div class="k">持有人</div><div class="v">${t.customerName}</div></div>
+        <div class="kv-item"><div class="k">剩余次数</div><div class="v">${t.remain} / ${t.total}</div></div>
+        <div class="kv-item"><div class="k">原售价</div><div class="v">¥${t.price}</div></div>
+        <div class="kv-item"><div class="k">可退金额</div><div class="v text-success font-bold">¥${refundAmount}</div></div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">退款方式</label>
+        <select class="form-select"><option>原路退回</option><option>退回储值余额</option><option>现金</option></select>
+      </div>
+      <div class="form-item mt-12">
+        <label class="form-label">退款原因<span class="required">*</span></label>
+        <textarea class="form-textarea" placeholder="请填写原因"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-danger" onclick="toast('退款成功 ¥${refundAmount}，次卡已作废','success');this.closest('.modal-overlay').remove()">确认退款</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+window.expireCard = function(id){
+  confirmDialog('确认将该次卡过期作废？作废后剩余次数不可使用，也不可退款。', ()=>{
+    const t = timeCards.find(x=>x.id===id);
+    t.status = '已过期';
+    toast(`次卡 ${t.productName} 已过期作废`,'success');
+    renderCardList();
+  });
+};
+
+// 购买开卡
+window.buyCard = function(productId){
+  const p = productId ? cardProducts.find(x=>x.id===productId) : cardProducts[0];
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">购买开卡 - ${p.name}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div style="background:var(--purple-bg);padding:16px;border-radius:8px;margin-bottom:16px">
+        <div class="font-medium" style="color:var(--purple)">${p.name}</div>
+        <div class="text-muted" style="font-size:13px;margin-top:4px">${p.desc}</div>
+        <div class="flex justify-between items-center mt-12">
+          <span class="text-muted">售价</span>
+          <span style="font-size:24px;font-weight:700;color:var(--purple)">¥${p.price}</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">选择客户<span class="required">*</span></label>
+          <select class="form-select">
+            ${MOCK.customers.map(c=>`<option value="${c.id}">${c.name}（${c.type}）</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">支付方式<span class="required">*</span></label>
+          <select class="form-select"><option>前台收款 - 现金</option><option>前台收款 - 扫码</option><option>储值余额</option><option>小程序在线支付</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">总次数</label><input class="form-input" value="${p.totalTimes} 次" disabled></div>
+        <div class="form-item"><label class="form-label">有效期</label><input class="form-input" value="自开卡日起 ${p.validDays} 天" disabled></div>
+      </div>
+      <div style="background:var(--success-bg);padding:12px 16px;border-radius:6px;color:var(--success);font-size:13px">
+        <i data-lucide="check-circle" style="width:14px;vertical-align:-2px"></i> 支付成功后将自动生成订单并开卡，同时可开具电子发票。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('开卡成功，已生成订单并自动开卡','success');this.closest('.modal-overlay').remove()">确认收款并开卡</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 产品管理
+let curProdPage = 1, prodPageSize = 10;
+
+function renderProducts(){
+  const rows = cardProducts.map(p=>`
+    <tr>
+      <td><div class="font-medium">${p.name}</div><div class="text-muted" style="font-size:12px">${p.id}</div></td>
+      <td><span class="tag tag-blue">${p.courtType}</span></td>
+      <td style="font-size:13px">${p.period}</td>
+      <td class="text-center">${p.totalTimes} 次</td>
+      <td>${p.validDays} 天</td>
+      <td class="text-right font-medium">¥${p.price}</td>
+      <td class="text-center">${p.sold}</td>
+      <td><span class="tag ${productStatusMap[p.status]}">${p.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="editProduct('${p.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="buyCard('${p.id}')">开卡</button>
+        ${p.status==='启用'?`<button class="btn btn-ghost btn-sm text-error" onclick="toggleProduct('${p.id}')">禁用</button>`:`<button class="btn btn-ghost btn-sm text-success" onclick="toggleProduct('${p.id}')">启用</button>`}
+      </td>
+    </tr>`).join('');
+  document.getElementById('prodTbody').innerHTML = rows;
+}
+
+window.editProduct = function(id){
+  const p = id ? cardProducts.find(x=>x.id===id) : {name:'',courtType:'篮球',period:'全场通用',totalTimes:10,validDays:365,price:0,desc:'',status:'启用'};
+  const isEdit = !!id;
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">${isEdit?'编辑':'新增'}次卡产品</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">卡名称<span class="required">*</span></label><input class="form-input" value="${p.name}"></div>
+        <div class="form-item"><label class="form-label">适用场地类型<span class="required">*</span></label>
+          <select class="form-select">${['篮球','足球','网球','羽毛球','乒乓球','游泳'].map(t=>`<option ${p.courtType===t?'selected':''}>${t}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">可使用时段<span class="required">*</span></label>
+          <select class="form-select"><option ${p.period==='全场通用'?'selected':''}>全场通用</option><option ${p.period==='低峰时段'?'selected':''}>低峰时段</option><option ${p.period==='高峰时段'?'selected':''}>高峰时段</option><option ${p.period==='工作日低峰'?'selected':''}>工作日低峰</option><option>周末全天</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">总次数<span class="required">*</span></label><input type="number" class="form-input" value="${p.totalTimes}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">有效期（天）<span class="required">*</span></label><input type="number" class="form-input" value="${p.validDays}"></div>
+        <div class="form-item"><label class="form-label">售价（元）<span class="required">*</span></label><input type="number" class="form-input" value="${p.price}"></div>
+      </div>
+      <div class="form-item"><label class="form-label">产品描述</label><textarea class="form-textarea">${p.desc}</textarea></div>
+      <div style="background:var(--info-bg);padding:12px 16px;border-radius:6px;color:var(--info);font-size:13px">
+        <i data-lucide="info" style="width:14px;vertical-align:-2px"></i> 抵扣规则：一张次卡同一时段可约多块场地；不支持同时段多张次卡叠加；次卡与储值余额独立。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('${isEdit?'产品已更新':'产品已创建'}','success');this.closest('.modal-overlay').remove()">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+window.toggleProduct = function(id){
+  const p = cardProducts.find(x=>x.id===id);
+  p.status = p.status==='启用'?'禁用':'启用';
+  toast(`产品「${p.name}」已${p.status}`,'success');
+  renderProducts();
+};
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+  if(name==='product') renderProducts();
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">次卡管理</div>
+  <div class="page-desc">次卡产品定义、购买开卡、预约抵扣与核销记录管理（一张次卡同时段可约多场地，不支持多卡叠加，与储值余额独立）</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">有效次卡数 <span class="stat-icon purple"><i data-lucide="repeat"></i></span></div><div class="stat-value">${timeCards.filter(t=>t.status==='有效').length}</div></div>
+  <div class="stat-card"><div class="stat-label">次卡产品 <span class="stat-icon blue"><i data-lucide="layers"></i></span></div><div class="stat-value">${cardProducts.length}</div><div class="stat-trend">启用 ${cardProducts.filter(p=>p.status==='启用').length}</div></div>
+  <div class="stat-card"><div class="stat-label">本月开卡 <span class="stat-icon green"><i data-lucide="credit-card"></i></span></div><div class="stat-value">32</div><div class="stat-trend up">+18%</div></div>
+  <div class="stat-card"><div class="stat-label">本月核销次数 <span class="stat-icon orange"><i data-lucide="check-check"></i></span></div><div class="stat-value">186</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="list" onclick="switchTab('list')">次卡列表</div>
+      <div class="tab" data-tab="product" onclick="switchTab('product')">产品管理</div>
+    </div>
+  </div>
+
+  <!-- 次卡列表 -->
+  <div class="tab-panel" data-panel="list">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="tcStatus" onchange="curListPage=1;renderCardList()">
+            <option value="">全部状态</option><option>有效</option><option>已过期</option><option>已用完</option><option>已退款</option>
+          </select>
+        </div>
+        <input class="form-input" id="tcKw" placeholder="卡名称/客户/卡号" style="width:220px" oninput="renderCardList()">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出次卡列表','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="buyCard('')"><i data-lucide="plus"></i> 购买开卡</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>卡号</th><th>卡名称/客户</th><th class="text-center">总次数</th><th class="text-center">已用</th><th class="text-center">剩余</th><th>使用进度</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="tcTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="tcPag"></div>
+    </div>
+  </div>
+
+  <!-- 产品管理 -->
+  <div class="tab-panel" data-panel="product" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select"><option>全部场地类型</option><option>篮球</option><option>足球</option><option>网球</option><option>羽毛球</option></select>
+          <select class="form-select"><option>全部状态</option><option>启用</option><option>禁用</option></select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出次卡产品','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="editProduct('')"><i data-lucide="plus"></i> 新增产品</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>产品名称</th><th>场地类型</th><th>可用时段</th><th class="text-center">总次数</th><th>有效期</th><th class="text-right">售价</th><th class="text-center">已售</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="prodTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderCardList();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

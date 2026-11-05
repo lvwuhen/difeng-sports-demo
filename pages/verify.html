@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>预约核销 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('verify', '预约核销');
+
+const statusTagMap = {'待支付':'tag-orange','已支付':'tag-blue','已核销':'tag-green','已退款':'tag-gray','已取消':'tag-red','已完成':'tag-green'};
+
+// 核销记录
+let verifyRecords = [
+  {id:'VR001', order:'ORD20261030002', customer:'林雅婷', court:'B1羽毛球场', time:'2026-11-01 14:00-15:00', amount:60, verifier:'张敏', method:'扫码', terminal:'PC-01', verifyTime:'2026-11-01 13:55'},
+  {id:'VR002', order:'ORD20261030001', customer:'陈晓明', court:'2号篮球场', time:'2026-11-01 18:00-20:00', amount:240, verifier:'张敏', method:'订单号', terminal:'PC-01', verifyTime:'2026-11-01 17:50'},
+  {id:'VR003', order:'ORD20261029003', customer:'散客', court:'A1篮球场', time:'2026-10-29 19:00-21:00', amount:200, verifier:'李强', method:'手机号', terminal:'PC-02', verifyTime:'2026-10-29 18:58'},
+];
+
+let curMethod = 'scan'; // scan / orderNo / phone
+let matchedOrder = null;
+
+function renderVerifyPanel(){
+  const placeholders = {scan:'请将二维码对准扫码枪，或手动输入订单号', orderNo:'请输入订单号', phone:'请输入客户手机号'};
+  const icons = {scan:'scan-line', orderNo:'receipt', phone:'phone'};
+  const titles = {scan:'扫码核销', orderNo:'订单号核销', phone:'手机号核销'};
+  document.getElementById('vpTitle').innerHTML = `<i data-lucide="${icons[curMethod]}" style="width:20px;height:20px"></i> ${titles[curMethod]}`;
+  const input = document.getElementById('vpInput');
+  input.placeholder = placeholders[curMethod];
+  input.value = '';
+  input.focus();
+  matchedOrder = null;
+  document.getElementById('orderInfoBox').innerHTML = '';
+  if(window.lucide) lucide.createIcons();
+}
+
+window.switchMethod = function(m){
+  curMethod = m;
+  document.querySelectorAll('.method-card').forEach(c=>c.classList.toggle('active', c.dataset.method===m));
+  renderVerifyPanel();
+};
+
+// 查找订单
+window.doLookup = function(){
+  const val = document.getElementById('vpInput').value.trim();
+  if(!val){ toast('请输入核销信息','warning'); return; }
+  let order = null;
+  if(curMethod==='orderNo'||curMethod==='scan'){
+    order = MOCK.orders.find(o=>o.id===val);
+  } else if(curMethod==='phone'){
+    order = MOCK.orders.find(o=>o.phone===val||o.phone.includes(val.replace(/\*/g,'').slice(0,3)));
+  }
+  if(!order){
+    toast('未找到匹配的订单','error');
+    document.getElementById('orderInfoBox').innerHTML = `<div class="empty"><div class="empty-icon"><i data-lucide="search-x"></i></div><div class="empty-text">未找到匹配的订单，请检查输入</div></div>`;
+    return;
+  }
+  matchedOrder = order;
+  // 核销校验
+  let canVerify = true;
+  let warnMsg = '';
+  if(order.status==='已核销'||order.status==='已完成'){ canVerify=false; warnMsg='该订单已核销，不可重复核销'; }
+  else if(order.status==='待支付'){ canVerify=false; warnMsg='该订单尚未支付，无法核销'; }
+  else if(order.status==='已退款'||order.status==='已取消'){ canVerify=false; warnMsg='该订单已'+order.status+'，无法核销'; }
+  // 逾期校验（模拟）
+  const now = new Date();
+  const orderDate = new Date(order.time.split(' ')[0]+'T'+order.time.split(' ')[1].split('-')[0]+':00');
+  const isOverdue = (now - orderDate) > 24*3600*1000 && order.status!=='已核销';
+  if(isOverdue && canVerify){ warnMsg = '注意：该预约时段已过，将记录为逾期核销'; }
+
+  const html = `
+    <div class="card" style="border:2px solid ${canVerify?'var(--success)':'var(--error)'}">
+      <div class="card-header">
+        <div class="card-title">订单信息 <span class="mono text-muted" style="font-size:13px">${order.id}</span></div>
+        <span class="tag ${statusTagMap[order.status]}">${order.status}</span>
+      </div>
+      <div class="card-body">
+        <div class="kv-grid">
+          <div class="kv-item"><div class="k">客户</div><div class="v">${order.customer}（${order.phone}）</div></div>
+          <div class="kv-item"><div class="k">来源</div><div class="v">${order.source}</div></div>
+          <div class="kv-item"><div class="k">场馆</div><div class="v">${order.venue}</div></div>
+          <div class="kv-item"><div class="k">场地</div><div class="v">${order.court}</div></div>
+          <div class="kv-item"><div class="k">预约时段</div><div class="v">${order.time}</div></div>
+          <div class="kv-item"><div class="k">金额</div><div class="v font-bold text-primary">¥${order.amount}</div></div>
+          <div class="kv-item"><div class="k">支付方式</div><div class="v">${order.payMethod}</div></div>
+          <div class="kv-item"><div class="k">核销次数</div><div class="v">${order.status==='已核销'?'1 / 1':'0 / 1'}</div></div>
+        </div>
+        ${warnMsg?`<div class="card" style="background:var(--warning-bg);border-color:var(--warning);margin-top:16px"><div class="card-body" style="padding:10px 16px;color:var(--warning)"><i data-lucide="alert-triangle" style="width:16px;vertical-align:-3px"></i> ${warnMsg}</div></div>`:''}
+        <div class="divider"></div>
+        <div style="display:flex;gap:12px">
+          <button class="btn btn-default" style="flex:1" onclick="toast('打印小票','info')"><i data-lucide="printer"></i> 打印小票</button>
+          <button class="btn ${canVerify?'btn-success':'btn-default'}" style="flex:2" ${canVerify?'':'disabled'} onclick="confirmVerify()">
+            <i data-lucide="check-circle-2"></i> ${canVerify?'确认核销':'无法核销'}
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('orderInfoBox').innerHTML = html;
+  if(window.lucide) lucide.createIcons();
+};
+
+window.confirmVerify = function(){
+  if(!matchedOrder) return;
+  const method = {scan:'扫码', orderNo:'订单号', phone:'手机号'}[curMethod];
+  confirmDialog(`确认核销订单 ${matchedOrder.id}？`, ()=>{
+    const rec = {
+      id:'VR'+Date.now().toString().slice(-6),
+      order: matchedOrder.id,
+      customer: matchedOrder.customer,
+      court: matchedOrder.court,
+      time: matchedOrder.time,
+      amount: matchedOrder.amount,
+      verifier:'张敏',
+      method,
+      terminal:'PC-01',
+      verifyTime: new Date().toLocaleString('zh-CN',{hour12:false}).replace(/\//g,'-')
+    };
+    verifyRecords.unshift(rec);
+    renderRecords();
+    toast(`核销成功！客户：${matchedOrder.customer}，场地：${matchedOrder.court}`,'success');
+    matchedOrder = null;
+    document.getElementById('vpInput').value = '';
+    document.getElementById('orderInfoBox').innerHTML = '';
+  });
+};
+
+// 扫码枪模拟
+window.simulateScan = function(){
+  toast('扫码枪已触发，正在读取二维码...','info');
+  setTimeout(()=>{
+    document.getElementById('vpInput').value = 'ORD20261030001';
+    doLookup();
+  }, 800);
+};
+
+function renderRecords(){
+  const rows = verifyRecords.map(r=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${r.order}</td>
+      <td>${r.customer}</td>
+      <td>${r.court}</td>
+      <td style="font-size:13px">${r.time}</td>
+      <td class="text-right font-medium">¥${r.amount}</td>
+      <td><span class="tag ${r.method==='扫码'?'tag-blue':r.method==='订单号'?'tag-green':'tag-purple'}">${r.method}</span></td>
+      <td>${r.verifier}</td>
+      <td class="text-muted" style="font-size:13px">${r.terminal}</td>
+      <td style="font-size:13px">${r.verifyTime}</td>
+    </tr>`).join('') || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无核销记录</div></div></td></tr>`;
+  document.getElementById('recordTbody').innerHTML = rows;
+  if(window.lucide) lucide.createIcons();
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">预约核销</div>
+  <div class="page-desc">支持扫码枪、订单号、手机号三种核销方式，自动校验订单状态与时段</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card"><div class="stat-label">今日核销 <span class="stat-icon green"><i data-lucide="scan-line"></i></span></div><div class="stat-value">96</div><div class="stat-trend up">核销率 75%</div></div>
+  <div class="stat-card"><div class="stat-label">扫码核销 <span class="stat-icon blue"><i data-lucide="qr-code"></i></span></div><div class="stat-value">68</div><div class="stat-trend" style="color:var(--text-3)">占比 70.8%</div></div>
+  <div class="stat-card"><div class="stat-label">逾期核销 <span class="stat-icon orange"><i data-lucide="clock"></i></span></div><div class="stat-value" style="color:var(--warning)">3</div><div class="stat-trend down">需关注</div></div>
+  <div class="stat-card"><div class="stat-label">核销失败 <span class="stat-icon red"><i data-lucide="x-circle"></i></span></div><div class="stat-value" style="color:var(--error)">2</div><div class="stat-trend" style="color:var(--text-3)">未支付/已退款</div></div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:1.2fr 1fr">
+  <!-- 核销主操作区 -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">核销操作</div></div>
+    <div class="card-body">
+      <!-- 核销方式切换 -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+        <div class="method-card active" data-method="scan" onclick="switchMethod('scan')" style="padding:16px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer;text-align:center;transition:all .15s;background:#fff">
+          <i data-lucide="scan-line" style="width:28px;height:28px;color:var(--primary)"></i>
+          <div class="font-medium mt-8">扫码核销</div>
+          <div class="text-muted" style="font-size:12px">扫码枪读取二维码</div>
+        </div>
+        <div class="method-card" data-method="orderNo" onclick="switchMethod('orderNo')" style="padding:16px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer;text-align:center;transition:all .15s;background:#fff">
+          <i data-lucide="receipt" style="width:28px;height:28px;color:var(--text-3)"></i>
+          <div class="font-medium mt-8">订单号核销</div>
+          <div class="text-muted" style="font-size:12px">手动输入订单号</div>
+        </div>
+        <div class="method-card" data-method="phone" onclick="switchMethod('phone')" style="padding:16px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer;text-align:center;transition:all .15s;background:#fff">
+          <i data-lucide="phone" style="width:28px;height:28px;color:var(--text-3)"></i>
+          <div class="font-medium mt-8">手机号核销</div>
+          <div class="text-muted" style="font-size:12px">输入客户手机号</div>
+        </div>
+      </div>
+
+      <!-- 大号输入框 -->
+      <div class="form-item mb-16">
+        <label class="form-label" id="vpTitle"><i data-lucide="scan-line"></i> 扫码核销</label>
+        <div class="input-group">
+          <input class="form-input" id="vpInput" placeholder="请将二维码对准扫码枪，或手动输入订单号" style="font-size:18px;padding:14px 16px;height:52px" onkeydown="if(event.key==='Enter')doLookup()" autofocus>
+          <button class="btn btn-primary" style="padding:0 24px" onclick="doLookup()"><i data-lucide="search"></i> 查询</button>
+        </div>
+        <div class="form-hint">支持扫码枪自动输入，扫码后自动查询订单</div>
+      </div>
+
+      <button class="btn btn-default btn-block mb-16" onclick="simulateScan()"><i data-lucide="scan-line"></i> 模拟扫码枪读取（演示）</button>
+
+      <div id="orderInfoBox"></div>
+    </div>
+  </div>
+
+  <!-- 右侧：核销规则与统计 -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-header"><div class="card-title">核销规则</div></div>
+      <div class="card-body no-pad">
+        <div class="list-row" style="padding:10px 20px">
+          <i data-lucide="check-circle-2" style="color:var(--success);width:18px;height:18px;flex-shrink:0"></i>
+          <div class="flex-1" style="font-size:13px">订单状态为「已支付」方可核销</div>
+        </div>
+        <div class="list-row" style="padding:10px 20px">
+          <i data-lucide="check-circle-2" style="color:var(--success);width:18px;height:18px;flex-shrink:0"></i>
+          <div class="flex-1" style="font-size:13px">每笔订单仅可核销一次</div>
+        </div>
+        <div class="list-row" style="padding:10px 20px">
+          <i data-lucide="alert-triangle" style="color:var(--warning);width:18px;height:18px;flex-shrink:0"></i>
+          <div class="flex-1" style="font-size:13px">超过预约时段核销将记录为逾期</div>
+        </div>
+        <div class="list-row" style="padding:10px 20px">
+          <i data-lucide="x-circle" style="color:var(--error);width:18px;height:18px;flex-shrink:0"></i>
+          <div class="flex-1" style="font-size:13px">已退款/已取消订单不可核销</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">今日核销分布</div></div>
+      <div class="card-body">
+        <div class="bar-chart" id="verifyChart" style="height:160px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 核销记录 -->
+<div class="card mt-20">
+  <div class="card-header">
+    <div class="card-title">核销记录</div>
+    <div style="display:flex;gap:8px">
+      <select class="form-select" style="width:auto"><option>全部方式</option><option>扫码</option><option>订单号</option><option>手机号</option></select>
+      <button class="btn btn-default" onclick="toast('已导出核销记录','success')"><i data-lucide="download"></i> 导出</button>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>订单号</th><th>客户</th><th>场地</th><th>预约时段</th><th class="text-right">金额</th><th>核销方式</th><th>核销人</th><th>终端</th><th>核销时间</th></tr></thead>
+        <tbody id="recordTbody"></tbody>
+      </table>
+    </div>
+    <div class="pagination" style="padding:0 20px 16px">
+      <div class="pagination-info">共 ${verifyRecords.length} 条</div>
+      <div class="pagination-pages"><button class="page-btn active">1</button></div>
+    </div>
+  </div>
+</div>
+`;
+
+// 渲染柱状图
+function renderVerifyChart(){
+  const data = [{label:'08时',v:5},{label:'10时',v:12},{label:'12时',v:8},{label:'14时',v:18},{label:'16时',v:15},{label:'18时',v:22},{label:'20时',v:16}];
+  const max = Math.max(...data.map(d=>d.v));
+  document.getElementById('verifyChart').innerHTML = data.map(d=>`
+    <div class="bar">
+      <div class="bar-fill" style="height:${(d.v/max*100)}%"></div>
+      <div class="bar-label">${d.label}</div>
+    </div>`).join('');
+}
+
+renderVerifyPanel();
+renderRecords();
+renderVerifyChart();
+
+// method-card active 样式
+const style = document.createElement('style');
+style.textContent = `.method-card.active{border-color:var(--primary)!important;background:var(--primary-bg)!important}`;
+document.head.appendChild(style);
+
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

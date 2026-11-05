@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>发送记录统计 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('sms-record', '发送记录统计');
+
+/* ========== 基础工具 ========== */
+var activeTab = 'records';
+var REC_PAGE = 1;
+var REC_PAGE_SIZE = 8;
+var COST_PER_SMS = 0.045;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function money(n){ return (Number(n) || 0).toFixed(2); }
+function pct(a, b){ return b ? (a / b * 100).toFixed(1) + '%' : '—'; }
+function nowStr(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2, '0'); };
+  return '2026-11-05 ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+/* ========== 数据 ========== */
+var SCENE_MAP = {
+  '充值到账通知':'会员充值', '预约确认':'预约', '余额不足提醒':'余额提醒', '消费通知':'消费',
+  '活动通知':'活动通知', '开场提醒':'预约', '场馆公告':'活动通知'
+};
+
+var RECORDS = MOCK_EXT.smsRecords.map(function(r){
+  return {
+    id:r.id, phone:r.phone, template:r.template, scene:SCENE_MAP[r.template] || '消费',
+    venue:'总部', content:r.content, time:r.time, status:r.status,
+    receipt:r.receipt || '', failReason:r.failReason || ''
+  };
+});
+
+var EXTRA_RECORDS = [
+  {id:'SM005', phone:'181****5566', template:'预约确认', scene:'预约', venue:'篮球公园', content:'【地丰体育】尊敬的会员，您已预约篮球公园A1场 11-06 19:00-21:00，请准时到场。', time:'2026-11-05 10:02', status:'待回执', receipt:'', failReason:''},
+  {id:'SM006', phone:'136****3456', template:'余额不足提醒', scene:'余额提醒', venue:'总部', content:'【地丰体育】尊敬的会员，您的储值余额仅剩32元，请及时充值。', time:'2026-11-05 08:10', status:'失败', receipt:'', failReason:'号码已停机'},
+  {id:'SM007', phone:'137****9012', template:'消费通知', scene:'消费', venue:'篮球公园', content:'【地丰体育】尊敬的会员，您消费240元，剩余余额5480元。', time:'2026-11-04 20:05', status:'成功', receipt:'2026-11-04 20:05', failReason:''},
+  {id:'SM008', phone:'135****2201', template:'开场提醒', scene:'预约', venue:'篮球公园', content:'【地丰体育】尊敬的会员，您在篮球公园的预约将于11-05 19:00开场，请提前15分钟到场。', time:'2026-11-04 19:30', status:'成功', receipt:'2026-11-04 19:30', failReason:''},
+  {id:'SM009', phone:'188****6677', template:'活动通知', scene:'活动通知', venue:'羽毛球馆', content:'【地丰体育】尊敬的会员，本周末羽毛球馆会员专场开放报名，现场有专业教练指导。', time:'2026-11-04 16:12', status:'成功', receipt:'2026-11-04 16:12', failReason:''},
+  {id:'SM010', phone:'189****7788', template:'消费通知', scene:'消费', venue:'羽毛球馆', content:'【地丰体育】尊敬的会员，您消费120元，剩余余额300元。', time:'2026-11-03 18:22', status:'成功', receipt:'2026-11-03 18:22', failReason:''},
+  {id:'SM011', phone:'176****9900', template:'余额不足提醒', scene:'余额提醒', venue:'网球中心', content:'【地丰体育】尊敬的会员，您的储值余额仅剩68元，请及时充值。', time:'2026-11-03 15:40', status:'成功', receipt:'2026-11-03 15:40', failReason:''},
+  {id:'SM012', phone:'150****4455', template:'充值到账通知', scene:'会员充值', venue:'总部', content:'【地丰体育】尊敬的会员，您充值3000元成功，赠送200元，当前余额3200元。', time:'2026-11-02 20:31', status:'成功', receipt:'2026-11-02 20:31', failReason:''},
+  {id:'SM013', phone:'0592-8888****', template:'预约确认', scene:'预约', venue:'总部', content:'【地丰体育】尊敬的会员，您已预约总部1号足球场 11-03 15:00-17:00，请准时到场。', time:'2026-11-02 11:05', status:'成功', receipt:'2026-11-02 11:05', failReason:''},
+  {id:'SM014', phone:'187****6677', template:'消费通知', scene:'消费', venue:'网球中心', content:'【地丰体育】尊敬的会员，您消费180元，剩余余额6620元。', time:'2026-11-01 21:18', status:'失败', receipt:'', failReason:'通道限流，运营商拒绝'},
+  {id:'SM015', phone:'133****1122', template:'活动通知', scene:'活动通知', venue:'篮球公园', content:'【地丰体育】尊敬的会员，篮球公园11月会员夜场开放报名，场地费5折。', time:'2026-11-01 18:02', status:'成功', receipt:'2026-11-01 18:02', failReason:''},
+  {id:'SM016', phone:'137****3344', template:'充值到账通知', scene:'会员充值', venue:'总部', content:'【地丰体育】尊敬的会员，您充值1000元成功，赠送100元，当前余额980元。', time:'2026-11-01 10:33', status:'成功', receipt:'2026-11-01 10:33', failReason:''},
+  {id:'SM017', phone:'198****7788', template:'活动通知', scene:'活动通知', venue:'网球中心', content:'【地丰体育】尊敬的会员，网球中心11月私教体验课开放报名，会员专享价199元。', time:'2026-11-05 11:26', status:'成功', receipt:'2026-11-05 11:26', failReason:''},
+  {id:'SM018', phone:'158****3344', template:'预约确认', scene:'预约', venue:'网球中心', content:'【地丰体育】尊敬的会员，您已预约T1网球场 11-06 09:00-11:00，请准时到场。', time:'2026-11-04 09:15', status:'成功', receipt:'2026-11-04 09:15', failReason:''},
+  {id:'SM019', phone:'139****5678', template:'开场提醒', scene:'预约', venue:'总部', content:'【地丰体育】尊敬的会员，您在总部的预约将于11-04 14:00开场，请提前15分钟到场。', time:'2026-11-03 10:08', status:'成功', receipt:'2026-11-03 10:08', failReason:''},
+  {id:'SM020', phone:'135****2201', template:'消费通知', scene:'消费', venue:'篮球公园', content:'【地丰体育】尊敬的会员，您消费200元，剩余余额1000元。', time:'2026-10-30 14:26', status:'成功', receipt:'2026-10-30 14:26', failReason:''},
+  {id:'SM021', phone:'131****5566', template:'活动通知', scene:'活动通知', venue:'羽毛球馆', content:'【地丰体育】尊敬的会员，羽毛球馆年度会员赛开始报名，欢迎参与。', time:'2026-10-30 11:40', status:'失败', receipt:'', failReason:'用户已退订'},
+  {id:'SM022', phone:'181****5566', template:'充值到账通知', scene:'会员充值', venue:'篮球公园', content:'【地丰体育】尊敬的会员，您充值4000元成功，赠送200元，当前余额4200元。', time:'2026-10-29 19:12', status:'成功', receipt:'2026-10-29 19:12', failReason:''},
+  {id:'SM023', phone:'150****4455', template:'开场提醒', scene:'预约', venue:'总部', content:'【地丰体育】尊敬的会员，您在总部的预约将于10-30 18:00开场，请提前15分钟到场。', time:'2026-10-28 20:50', status:'成功', receipt:'2026-10-28 20:50', failReason:''},
+  {id:'SM024', phone:'176****9900', template:'余额不足提醒', scene:'余额提醒', venue:'网球中心', content:'【地丰体育】尊敬的会员，您的储值余额仅剩68元，请及时充值。', time:'2026-10-27 15:02', status:'成功', receipt:'2026-10-27 15:02', failReason:''},
+  {id:'SM025', phone:'186****2233', template:'活动通知', scene:'活动通知', venue:'总部', content:'【地丰体育】尊敬的会员，地丰体育中心11月会员开放日可免费体验新场馆。', time:'2026-10-26 09:35', status:'成功', receipt:'2026-10-26 09:35', failReason:''},
+  {id:'SM026', phone:'198****7788', template:'预约确认', scene:'预约', venue:'网球中心', content:'【地丰体育】尊敬的会员，您已预约T1网球场 10-26 10:00-12:00，请准时到场。', time:'2026-10-25 18:40', status:'失败', receipt:'', failReason:'短信签名不规范被拦截'},
+  {id:'SM027', phone:'133****1122', template:'消费通知', scene:'消费', venue:'篮球公园', content:'【地丰体育】尊敬的会员，您消费60元，剩余余额1220元。', time:'2026-10-23 16:18', status:'成功', receipt:'2026-10-23 16:18', failReason:''},
+  {id:'SM028', phone:'187****6677', template:'充值到账通知', scene:'会员充值', venue:'网球中心', content:'【地丰体育】尊敬的会员，您充值5000元成功，赠送300元，当前余额6800元。', time:'2026-10-20 10:06', status:'成功', receipt:'2026-10-20 10:06', failReason:''}
+];
+RECORDS = RECORDS.concat(EXTRA_RECORDS);
+RECORDS.sort(function(a, b){ return b.time.localeCompare(a.time); });
+
+/* ========== 统计卡 ========== */
+function monthRecords(){
+  return RECORDS.filter(function(r){ return r.time.indexOf('2026-11') === 0; });
+}
+function renderRecordStats(){
+  var el = document.getElementById('rec-stats');
+  if(!el) return;
+  var list = monthRecords();
+  var success = list.filter(function(r){ return r.status === '成功'; }).length;
+  var fail = list.filter(function(r){ return r.status === '失败'; }).length;
+  var pending = list.filter(function(r){ return r.status === '待回执'; }).length;
+  var rate = list.length ? (success / list.length * 100).toFixed(1) : '0.0';
+  var fee = list.length * COST_PER_SMS;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">本月发送量 <span class="stat-icon blue"><i data-lucide="send"></i></span></div>
+      <div class="stat-value">${list.length}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>2026-11 当月累计提交</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">成功量 <span class="stat-icon green"><i data-lucide="check-circle-2"></i></span></div>
+      <div class="stat-value text-success">${success}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend up"><i data-lucide="arrow-up" style="width:14px"></i>回执确认已送达</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">失败量 <span class="stat-icon red"><i data-lucide="x-circle"></i></span></div>
+      <div class="stat-value text-error">${fail}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend down"><i data-lucide="alert-triangle" style="width:14px"></i>待回执 ${pending} 条</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">成功率 <span class="stat-icon purple"><i data-lucide="percent"></i></span></div>
+      <div class="stat-value">${rate}<span style="font-size:16px">%</span></div>
+      <div class="stat-trend"><div class="progress" style="width:100%;max-width:140px"><div class="progress-bar" style="width:${rate}%;background:var(--purple)"></div></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">费用消耗 <span class="stat-icon cyan"><i data-lucide="circle-dollar-sign"></i></span></div>
+      <div class="stat-value">¥${money(fee)}</div>
+      <div class="stat-trend"><i data-lucide="receipt" style="width:14px;color:var(--text-3)"></i>按 ¥${COST_PER_SMS}/条 计费</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 发送记录 ========== */
+function recordFiltered(){
+  var st = document.getElementById('r-status') ? document.getElementById('r-status').value : '';
+  var tpl = document.getElementById('r-template') ? document.getElementById('r-template').value : '';
+  var start = document.getElementById('r-start') ? document.getElementById('r-start').value : '';
+  var end = document.getElementById('r-end') ? document.getElementById('r-end').value : '';
+  var kw = document.getElementById('r-kw') ? document.getElementById('r-kw').value.trim() : '';
+  return RECORDS.filter(function(r){
+    if(st && r.status !== st) return false;
+    if(tpl && r.template !== tpl) return false;
+    var date = r.time.slice(0, 10);
+    if(start && date < start) return false;
+    if(end && date > end) return false;
+    if(kw && !(r.phone.indexOf(kw) > -1 || r.template.indexOf(kw) > -1 || r.content.indexOf(kw) > -1 || r.id.indexOf(kw) > -1)) return false;
+    return true;
+  });
+}
+
+function recordRows(list){
+  if(!list.length){
+    return '<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">当前筛选条件下暂无发送记录</div></div></td></tr>';
+  }
+  return list.map(function(r){
+    var statusTag = r.status === '成功' ? 'tag-green' : (r.status === '失败' ? 'tag-red' : 'tag-orange');
+    var action = r.status === '成功'
+      ? '<span class="text-muted" style="font-size:12px">已送达</span>'
+      : `<button class="btn btn-default btn-sm" onclick="resendRecord('${r.id}')"><i data-lucide="rotate-ccw" style="width:13px"></i>重发</button>`;
+    return `<tr>
+      <td class="mono" style="font-size:13px">${esc(r.phone)}</td>
+      <td><div class="font-medium" style="font-size:13px">${esc(r.template)}</div><div class="text-muted" style="font-size:12px">${esc(r.scene)} · ${esc(r.venue)}</div></td>
+      <td style="max-width:280px;font-size:13px;color:var(--text-2)">${esc(r.content)}</td>
+      <td style="font-size:13px;white-space:nowrap">${esc(r.time)}</td>
+      <td><span class="tag ${statusTag}">${r.status}</span></td>
+      <td style="font-size:12px;color:${r.failReason ? 'var(--error)' : 'var(--text-3)'}">${r.failReason ? esc(r.failReason) : '—'}</td>
+      <td style="font-size:13px;color:var(--text-3)">${r.receipt ? esc(r.receipt) : '—'}</td>
+      <td class="actions">${action}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderRecPager(total){
+  var el = document.getElementById('rec-pager');
+  if(!el) return;
+  var pages = Math.max(1, Math.ceil(total / REC_PAGE_SIZE));
+  if(REC_PAGE > pages) REC_PAGE = pages;
+  var btns = '';
+  for(var i = 1; i <= pages; i++){
+    btns += '<button class="page-btn ' + (i === REC_PAGE ? 'active' : '') + '" onclick="gotoRecPage(' + i + ')">' + i + '</button>';
+  }
+  el.innerHTML = '<div class="pagination-info">共 ' + total + ' 条记录 · 第 ' + REC_PAGE + '/' + pages + ' 页</div>' +
+    '<div class="pagination-pages">' +
+    '<button class="page-btn" ' + (REC_PAGE <= 1 ? 'disabled' : '') + ' onclick="gotoRecPage(' + (REC_PAGE - 1) + ')"><i data-lucide="chevron-left" style="width:14px"></i></button>' +
+    btns +
+    '<button class="page-btn" ' + (REC_PAGE >= pages ? 'disabled' : '') + ' onclick="gotoRecPage(' + (REC_PAGE + 1) + ')"><i data-lucide="chevron-right" style="width:14px"></i></button>' +
+    '</div>';
+  refreshIcons();
+}
+
+function renderRecordTable(){
+  var list = recordFiltered();
+  var start = (REC_PAGE - 1) * REC_PAGE_SIZE;
+  var rows = document.getElementById('rec-rows');
+  if(rows){
+    rows.innerHTML = recordRows(list.slice(start, start + REC_PAGE_SIZE));
+  }
+  var cnt = document.getElementById('rec-count');
+  if(cnt) cnt.textContent = '筛选结果 ' + list.length + ' 条';
+  renderRecPager(list.length);
+  refreshIcons();
+}
+
+function gotoRecPage(n){
+  REC_PAGE = n;
+  renderRecordTable();
+}
+
+function applyRecordFilters(){
+  REC_PAGE = 1;
+  renderRecordTable();
+}
+
+function resendRecord(id){
+  var r = RECORDS.find(function(x){ return x.id === id; });
+  if(!r) return;
+  if(r.status === '成功'){ toast('该记录已发送成功，无需重发', 'info'); return; }
+  r.status = '成功';
+  r.receipt = nowStr();
+  r.failReason = '';
+  renderRecordStats();
+  renderRecordTable();
+  if(activeTab === 'stats') renderStatsTab();
+  toast('记录 ' + r.id + ' 已重发成功，回执已回写', 'success');
+}
+
+/* ========== 发送统计 ========== */
+var STAT_FILTER = {range:'2026-11', scene:'', template:'', venue:''};
+var RANGE_LABEL = {'2026-11':'本月（2026-11）', '2026-10':'上月（2026-10）', 'last7':'近 7 天', 'all':'全部时间'};
+
+function statFiltered(){
+  return RECORDS.filter(function(r){
+    var date = r.time.slice(0, 10);
+    if(STAT_FILTER.range === '2026-11' && r.time.indexOf('2026-11') !== 0) return false;
+    if(STAT_FILTER.range === '2026-10' && r.time.indexOf('2026-10') !== 0) return false;
+    if(STAT_FILTER.range === 'last7' && date < '2026-10-30') return false;
+    if(STAT_FILTER.scene && r.scene !== STAT_FILTER.scene) return false;
+    if(STAT_FILTER.template && r.template !== STAT_FILTER.template) return false;
+    if(STAT_FILTER.venue && r.venue !== STAT_FILTER.venue) return false;
+    return true;
+  });
+}
+
+function statGroups(list){
+  var map = {};
+  list.forEach(function(r){
+    var d = r.time.slice(0, 10);
+    if(!map[d]) map[d] = {date:d, total:0, success:0, fail:0, pending:0, fee:0};
+    map[d].total++;
+    map[d].fee += COST_PER_SMS;
+    if(r.status === '成功') map[d].success++;
+    else if(r.status === '失败') map[d].fail++;
+    else map[d].pending++;
+  });
+  return Object.keys(map).sort().reverse().map(function(k){ return map[k]; });
+}
+
+function onStatFilter(){
+  STAT_FILTER.range = document.getElementById('s-range').value;
+  STAT_FILTER.scene = document.getElementById('s-scene').value;
+  STAT_FILTER.template = document.getElementById('s-template').value;
+  STAT_FILTER.venue = document.getElementById('s-venue').value;
+  renderStatsTab();
+}
+
+function renderStatsTab(){
+  var el = document.getElementById('tab-stats');
+  if(!el) return;
+  var list = statFiltered();
+  var groups = statGroups(list);
+  var total = list.length;
+  var success = list.filter(function(r){ return r.status === '成功'; }).length;
+  var fail = list.filter(function(r){ return r.status === '失败'; }).length;
+  var fee = total * COST_PER_SMS;
+  var max = groups.reduce(function(m, g){ return Math.max(m, g.total); }, 0);
+
+  var rows = groups.map(function(g){
+    return `<tr>
+      <td style="font-size:13px">${g.date}</td>
+      <td class="text-right">${g.total}</td>
+      <td class="text-right text-success">${g.success}</td>
+      <td class="text-right ${g.fail ? 'text-error' : 'text-muted'}">${g.fail}</td>
+      <td class="text-right">${pct(g.success, g.total)}</td>
+      <td class="text-right">¥${money(g.fee)}</td>
+    </tr>`;
+  }).join('');
+
+  if(!groups.length){
+    rows = '<tr><td colspan="6"><div class="empty"><div class="empty-icon"><i data-lucide="bar-chart-3"></i></div><div class="empty-text">当前条件下暂无统计数据</div></div></td></tr>';
+  } else {
+    rows += `<tr style="background:#fafafa;font-weight:600">
+      <td>合计</td>
+      <td class="text-right">${total}</td>
+      <td class="text-right text-success">${success}</td>
+      <td class="text-right text-error">${fail}</td>
+      <td class="text-right">${pct(success, total)}</td>
+      <td class="text-right">¥${money(fee)}</td>
+    </tr>`;
+  }
+
+  var bars = groups.slice().reverse().map(function(g){
+    var h = max ? Math.max(8, Math.round(g.total / max * 150)) : 8;
+    return `<div class="bar">
+      <span style="font-size:11px;color:var(--text-3)">${g.total}</span>
+      <div class="bar-fill" style="height:${h}px"></div>
+      <div class="bar-label">${g.date.slice(5)}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="card mb-16">
+      <div class="card-body">
+        <div class="toolbar" style="margin-bottom:0">
+          <select class="form-select" id="s-range" onchange="onStatFilter()">
+            ${Object.keys(RANGE_LABEL).map(function(k){ return '<option value="' + k + '"' + (STAT_FILTER.range === k ? ' selected' : '') + '>' + RANGE_LABEL[k] + '</option>'; }).join('')}
+          </select>
+          <select class="form-select" id="s-scene" onchange="onStatFilter()">
+            <option value="">全部场景</option>
+            ${['会员充值','预约','余额提醒','消费','活动通知'].map(function(s){ return '<option value="' + s + '"' + (STAT_FILTER.scene === s ? ' selected' : '') + '>' + s + '</option>'; }).join('')}
+          </select>
+          <select class="form-select" id="s-template" onchange="onStatFilter()">
+            <option value="">全部模板</option>
+            ${['充值到账通知','预约确认','余额不足提醒','消费通知','活动通知','开场提醒'].map(function(t){ return '<option value="' + t + '"' + (STAT_FILTER.template === t ? ' selected' : '') + '>' + t + '</option>'; }).join('')}
+          </select>
+          <select class="form-select" id="s-venue" onchange="onStatFilter()">
+            <option value="">全部场馆</option>
+            ${['总部','篮球公园','网球中心','羽毛球馆'].map(function(v){ return '<option value="' + v + '"' + (STAT_FILTER.venue === v ? ' selected' : '') + '>' + v + '</option>'; }).join('')}
+          </select>
+          <div class="spacer"></div>
+          <span class="text-muted" style="font-size:13px">${RANGE_LABEL[STAT_FILTER.range]} · 共 ${total} 条</span>
+          <button class="btn btn-primary btn-sm" onclick="exportStats()"><i data-lucide="download" style="width:14px"></i>导出统计</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-16">
+      <div class="card-header">
+        <div class="card-title">按日发送量</div>
+        <span class="text-muted" style="font-size:12px">柱高按当日发送量占比绘制</span>
+      </div>
+      <div class="card-body">
+        <div class="bar-chart" style="height:210px">${bars || '<div class="empty" style="width:100%"><div class="empty-icon"><i data-lucide="bar-chart-3"></i></div><div class="empty-text">暂无数据</div></div>'}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">汇总明细</div>
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <span class="tag tag-green">成功 ${success}</span>
+          <span class="tag tag-red">失败 ${fail}</span>
+          <span class="tag tag-orange">待回执 ${total - success - fail}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th class="text-right">发送量</th>
+                <th class="text-right">成功量</th>
+                <th class="text-right">失败量</th>
+                <th class="text-right">成功率</th>
+                <th class="text-right">费用（元）</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+  refreshIcons();
+}
+
+function exportStats(){
+  toast('统计报表已导出：' + RANGE_LABEL[STAT_FILTER.range] + '，共 ' + statFiltered().length + ' 条发送记录', 'success');
+}
+
+/* ========== Tab ========== */
+function showTab(name){
+  activeTab = name;
+  ['records','stats'].forEach(function(k){
+    var btn = document.getElementById('tabbtn-' + k);
+    var panel = document.getElementById('tab-' + k);
+    if(!btn || !panel) return;
+    btn.className = 'tab' + (k === name ? ' active' : '');
+    panel.style.display = k === name ? '' : 'none';
+  });
+  if(name === 'stats') renderStatsTab();
+  else renderRecordTable();
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">发送记录统计</div>
+        <div class="page-desc">查询短信发送明细与回执状态，按时间、场景、模板、场馆多维度汇总发送量与成功率</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="renderRecordStats();renderRecordTable();toast('发送记录与统计已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+        <a class="btn btn-primary" href="sms-broadcast.html"><i data-lucide="send"></i>发起群发</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="rec-stats"></div>
+
+  <div class="tabs">
+    <div class="tab active" id="tabbtn-records" onclick="showTab('records')">发送记录</div>
+    <div class="tab" id="tabbtn-stats" onclick="showTab('stats')">发送统计</div>
+  </div>
+
+  <div id="tab-records">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">发送记录</div>
+        <span class="text-muted" style="font-size:13px" id="rec-count"></span>
+      </div>
+      <div class="card-body">
+        <div class="toolbar">
+          <select class="form-select" id="r-status" onchange="applyRecordFilters()">
+            <option value="">全部状态</option>
+            <option value="成功">成功</option>
+            <option value="失败">失败</option>
+            <option value="待回执">待回执</option>
+          </select>
+          <select class="form-select" id="r-template" onchange="applyRecordFilters()">
+            <option value="">全部模板</option>
+            <option value="充值到账通知">充值到账通知</option>
+            <option value="预约确认">预约确认</option>
+            <option value="余额不足提醒">余额不足提醒</option>
+            <option value="消费通知">消费通知</option>
+            <option value="活动通知">活动通知</option>
+            <option value="开场提醒">开场提醒</option>
+          </select>
+          <input class="form-input" id="r-start" type="date" onchange="applyRecordFilters()" style="min-width:150px" />
+          <input class="form-input" id="r-end" type="date" onchange="applyRecordFilters()" style="min-width:150px" />
+          <input class="form-input" id="r-kw" placeholder="搜索手机号 / 模板 / 内容 / 记录号" oninput="applyRecordFilters()" style="min-width:240px" />
+          <div class="spacer"></div>
+          <span class="text-muted" style="font-size:12px">接收号码已脱敏展示</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>接收号码</th>
+                <th>模板 / 场景</th>
+                <th>短信内容</th>
+                <th>发送时间</th>
+                <th>状态</th>
+                <th>失败原因</th>
+                <th>回执时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="rec-rows"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="rec-pager"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-stats" style="display:none"></div>
+`;
+
+renderRecordStats();
+renderRecordTable();
+refreshIcons();
+</script>
+</body>
+</html>

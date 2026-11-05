@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>商品/仓库/库位 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('warehouse-goods', '商品/仓库/库位');
+
+/* ========== 数据 ========== */
+// 商品档案（含采购价、成本价、供应商）
+let GOODS = [
+  {id:'G001', code:'SP001', name:'农夫山泉550ml', cat1:'食品饮料', cat2:'饮用水', spec:'550ml/瓶', unit:'瓶', purchasePrice:1.5, retailPrice:3, costPrice:1.5, supplier:'厦门食品批发部', stock:520, status:'启用'},
+  {id:'G002', code:'SP002', name:'脉动运动饮料', cat1:'食品饮料', cat2:'功能饮料', spec:'600ml/瓶', unit:'瓶', purchasePrice:4, retailPrice:6, costPrice:4, supplier:'厦门食品批发部', stock:180, status:'启用'},
+  {id:'G003', code:'SP003', name:'红双喜DHS羽毛球', cat1:'运动器材', cat2:'球类', spec:'12只/筒', unit:'筒', purchasePrice:65, retailPrice:85, costPrice:65, supplier:'鸿星体育批发', stock:45, status:'启用'},
+  {id:'G004', code:'SP004', name:'斯伯丁篮球7号', cat1:'运动器材', cat2:'球类', spec:'7号球', unit:'个', purchasePrice:150, retailPrice:199, costPrice:150, supplier:'鸿星体育批发', stock:12, status:'启用'},
+  {id:'G005', code:'SP005', name:'能量棒', cat1:'食品饮料', cat2:'零食', spec:'40g/条', unit:'条', purchasePrice:7, retailPrice:12, costPrice:7, supplier:'厦门食品批发部', stock:0, status:'启用'},
+  {id:'G006', code:'SP006', name:'网球（训练用）', cat1:'运动器材', cat2:'球类', spec:'4只/罐', unit:'罐', purchasePrice:30, retailPrice:45, costPrice:30, supplier:'鸿星体育批发', stock:60, status:'启用'},
+];
+
+// 仓库
+let WAREHOUSES = [
+  {id:'W001', code:'WH-HQ', name:'总部主仓库', venues:['总部'], manager:'刘芳', phone:'138****1003', area:120, status:'启用'},
+  {id:'W002', code:'WH-BK', name:'篮球公园仓', venues:['篮球公园'], manager:'李强', phone:'138****1002', area:80, status:'启用'},
+  {id:'W003', code:'WH-TN', name:'网球中心仓', venues:['网球中心'], manager:'周库管', phone:'138****1005', area:60, status:'启用'},
+  {id:'W004', code:'WH-BM', name:'羽毛球馆仓', venues:['羽毛球馆','总部'], manager:'赵库管', phone:'138****1006', area:70, status:'停用'},
+];
+
+// 库位
+let LOCATIONS = [
+  {id:'L001', code:'A-01-01', warehouse:'总部主仓库', area:'A区', capacity:200, used:150, remark:'饮料区'},
+  {id:'L002', code:'A-01-02', warehouse:'总部主仓库', area:'A区', capacity:200, used:80, remark:'饮料区'},
+  {id:'L003', code:'B-02-01', warehouse:'总部主仓库', area:'B区', capacity:100, used:45, remark:'球类区'},
+  {id:'L004', code:'C-01-01', warehouse:'总部主仓库', area:'C区', capacity:50, used:12, remark:'器材区'},
+  {id:'L005', code:'A-01-01', warehouse:'篮球公园仓', area:'A区', capacity:80, used:30, remark:'综合区'},
+  {id:'L006', code:'A-01-01', warehouse:'网球中心仓', area:'A区', capacity:60, used:40, remark:'网球器材区'},
+];
+
+// 批次
+let BATCHES = [
+  {id:'B20261028001', batchNo:'PC20261028001', goods:'农夫山泉550ml', warehouse:'总部主仓库', location:'A-01-01', inOrder:'RK20261028001', qty:200, unitPrice:1.5, amount:300, inTime:'2026-10-28 10:30', operator:'刘芳', remain:200},
+  {id:'B20261025002', batchNo:'PC20261025002', goods:'斯伯丁篮球7号', warehouse:'篮球公园仓', location:'A-01-01', inOrder:'RK20261025002', qty:10, unitPrice:150, amount:1500, inTime:'2026-10-25 14:20', operator:'李强', remain:10},
+  {id:'B20261020003', batchNo:'PC20261020003', goods:'红双喜DHS羽毛球', warehouse:'总部主仓库', location:'B-02-01', inOrder:'RK20261020003', qty:20, unitPrice:65, amount:1300, inTime:'2026-10-20 09:15', operator:'刘芳', remain:18},
+  {id:'B20261015004', batchNo:'PC20261015004', goods:'网球（训练用）', warehouse:'网球中心仓', location:'A-01-01', inOrder:'RK20261015004', qty:30, unitPrice:30, amount:900, inTime:'2026-10-15 16:00', operator:'周库管', remain:30},
+];
+
+let activeTab = 'goods';
+function switchTab(name){
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+window.switchTab = switchTab;
+
+/* ========== 商品档案 ========== */
+function renderGoods(){
+  const kw = document.getElementById('w-search')?.value?.trim() || '';
+  const rows = GOODS.filter(g=>!kw||g.name.includes(kw)||g.code.includes(kw)).map(g=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${g.code}</td>
+      <td><div class="font-medium">${g.name}</div></td>
+      <td><span class="tag tag-gray">${g.cat1}</span> <span class="text-muted">/ ${g.cat2}</span></td>
+      <td class="text-muted">${g.spec}</td>
+      <td>${g.unit}</td>
+      <td class="text-right">¥${g.purchasePrice}</td>
+      <td class="text-right">¥${g.retailPrice}</td>
+      <td class="text-right text-muted">¥${g.costPrice}</td>
+      <td class="text-muted">${g.supplier}</td>
+      <td class="text-right">${g.stock}</td>
+      <td><span class="tag ${g.status==='启用'?'tag-green':'tag-gray'}">${g.status}</span></td>
+      <td class="text-center">
+        <button class="btn btn-ghost btn-sm" onclick="toast('编辑商品：${g.name}','info')"><i data-lucide="pencil" style="width:14px"></i></button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('wg-rows').innerHTML = rows || `<tr><td colspan="12" class="text-center text-muted">暂无商品</td></tr>`;
+}
+
+window.openGoodsForm = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">新增商品档案</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">商品编码<span class="required">*</span></label><input class="form-input" placeholder="如 SP007"></div>
+        <div class="form-item"><label class="form-label">商品名称<span class="required">*</span></label><input class="form-input" placeholder="商品名称"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">一级分类</label>
+          <select class="form-select"><option>食品饮料</option><option>运动器材</option><option>生活用品</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">二级分类</label>
+          <select class="form-select"><option>饮用水</option><option>功能饮料</option><option>球类</option><option>零食</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">规格</label><input class="form-input" placeholder="如 550ml/瓶"></div>
+        <div class="form-item"><label class="form-label">单位</label><input class="form-input" placeholder="瓶/筒/个"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">采购价</label><input type="number" class="form-input" placeholder="0.00"></div>
+        <div class="form-item"><label class="form-label">零售价</label><input type="number" class="form-input" placeholder="0.00"></div>
+        <div class="form-item"><label class="form-label">成本价</label><input type="number" class="form-input" placeholder="0.00"></div>
+      </div>
+      <div class="form-item"><label class="form-label">供应商（文本，非主数据）</label>
+        <input class="form-input" placeholder="供应商名称">
+      </div>
+      <div class="form-item"><label class="form-label">启用状态</label>
+        <select class="form-select"><option>启用</option><option>停用</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('商品档案已保存（演示）','success');this.closest('.modal-overlay').remove()">保存</button>
+    </div></div>`;
+  openModal(html);
+};
+
+/* ========== 仓库管理 ========== */
+function renderWarehouses(){
+  const rows = WAREHOUSES.map(w=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${w.code}</td>
+      <td><div class="font-medium">${w.name}</div></td>
+      <td>${w.venues.map(v=>`<span class="tag tag-cyan">${v}</span>`).join(' ')}</td>
+      <td>${w.manager}</td>
+      <td class="text-muted">${w.phone}</td>
+      <td class="text-right">${w.area}㎡</td>
+      <td><span class="tag ${w.status==='启用'?'tag-green':'tag-gray'}">${w.status}</span></td>
+      <td class="text-center">
+        <button class="btn btn-ghost btn-sm" onclick="toast('编辑仓库：${w.name}','info')"><i data-lucide="pencil" style="width:14px"></i></button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('wh-rows').innerHTML = rows || `<tr><td colspan="8" class="text-center text-muted">暂无仓库</td></tr>`;
+}
+
+window.openWarehouseForm = function(){
+  const venues = MOCK.venues.map(v=>`<option>${v.name.replace('地丰','').replace('（总部）','总部')}</option>`).join('');
+  const html = `<div class="modal" style="max-width:560px">
+    <div class="modal-header"><div class="modal-title">新增仓库</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">仓库编码<span class="required">*</span></label><input class="form-input" placeholder="WH-XX"></div>
+        <div class="form-item"><label class="form-label">仓库名称<span class="required">*</span></label><input class="form-input" placeholder="仓库名称"></div>
+      </div>
+      <div class="form-item"><label class="form-label">所属场馆（多对多，可多选）</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${['总部','篮球公园','网球中心','羽毛球馆'].map(v=>`
+            <label style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--border);border-radius:20px;cursor:pointer">
+              <input type="checkbox"> ${v}
+            </label>`).join('')}
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">负责人</label><input class="form-input" placeholder="负责人姓名"></div>
+        <div class="form-item"><label class="form-label">联系电话</label><input class="form-input" placeholder="联系电话"></div>
+        <div class="form-item"><label class="form-label">面积(㎡)</label><input type="number" class="form-input"></div>
+      </div>
+      <div class="form-item"><label class="form-label">状态</label>
+        <select class="form-select"><option>启用</option><option>停用</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('仓库已保存（演示）','success');this.closest('.modal-overlay').remove()">保存</button>
+    </div></div>`;
+  openModal(html);
+};
+
+/* ========== 库位管理 ========== */
+function renderLocations(){
+  const wh = document.getElementById('loc-wh')?.value || '';
+  const rows = LOCATIONS.filter(l=>!wh||l.warehouse===wh).map(l=>{
+    const pct = Math.round(l.used/l.capacity*100);
+    return `<tr>
+      <td class="mono" style="font-size:13px">${l.code}</td>
+      <td>${l.warehouse}</td>
+      <td><span class="tag tag-blue">${l.area}</span></td>
+      <td class="text-right">${l.capacity}</td>
+      <td class="text-right">${l.used}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:6px;background:var(--border-light);border-radius:3px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:${pct>80?'var(--error)':pct>60?'var(--warning)':'var(--success)'}"></div>
+          </div>
+          <span class="text-muted" style="font-size:12px;min-width:36px">${pct}%</span>
+        </div>
+      </td>
+      <td class="text-muted">${l.remark}</td>
+      <td class="text-center"><button class="btn btn-ghost btn-sm" onclick="toast('编辑库位','info')"><i data-lucide="pencil" style="width:14px"></i></button></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('loc-rows').innerHTML = rows || `<tr><td colspan="8" class="text-center text-muted">暂无库位</td></tr>`;
+}
+
+/* ========== 批次管理 ========== */
+function renderBatches(){
+  const kw = document.getElementById('bt-search')?.value?.trim() || '';
+  const rows = BATCHES.filter(b=>!kw||b.goods.includes(kw)||b.batchNo.includes(kw)).map(b=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${b.batchNo}</td>
+      <td>${b.goods}</td>
+      <td>${b.warehouse}</td>
+      <td class="mono" style="font-size:12px">${b.location}</td>
+      <td class="mono" style="font-size:12px">${b.inOrder}</td>
+      <td class="text-right">${b.qty}</td>
+      <td class="text-right">${b.remain}</td>
+      <td class="text-right">¥${b.unitPrice}</td>
+      <td class="text-right">¥${b.amount}</td>
+      <td>${b.inTime}</td>
+      <td class="text-muted">${b.operator}</td>
+    </tr>`).join('');
+  document.getElementById('bt-rows').innerHTML = rows || `<tr><td colspan="11" class="text-center text-muted">暂无批次</td></tr>`;
+}
+
+/* ========== 页面 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">商品 / 仓库 / 库位</div>
+  <div class="page-desc">商品档案（含采购价/成本价/供应商文本）、多仓库与场馆多对多、库位容量管理、入库批次登记与追溯</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card"><div class="stat-label">商品种类</div><div class="stat-value" style="font-size:24px">${GOODS.length}</div></div>
+  <div class="stat-card"><div class="stat-label">仓库数量</div><div class="stat-value" style="font-size:24px">${WAREHOUSES.length}</div></div>
+  <div class="stat-card"><div class="stat-label">库位数量</div><div class="stat-value" style="font-size:24px">${LOCATIONS.length}</div></div>
+  <div class="stat-card"><div class="stat-label">在库批次</div><div class="stat-value" style="font-size:24px;color:var(--primary)">${BATCHES.length}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="goods" onclick="switchTab('goods')"><i data-lucide="package" style="width:16px;vertical-align:middle"></i> 商品档案</div>
+      <div class="tab" data-tab="warehouse" onclick="switchTab('warehouse')"><i data-lucide="warehouse" style="width:16px;vertical-align:middle"></i> 仓库管理</div>
+      <div class="tab" data-tab="location" onclick="switchTab('location')"><i data-lucide="grid-3x3" style="width:16px;vertical-align:middle"></i> 库位管理</div>
+      <div class="tab" data-tab="batch" onclick="switchTab('batch')"><i data-lucide="layers" style="width:16px;vertical-align:middle"></i> 批次管理</div>
+    </div>
+  </div>
+
+  <!-- 商品档案 -->
+  <div class="tab-panel" data-panel="goods">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" id="w-search" placeholder="搜索商品名称/编码" style="flex:1" oninput="renderGoods()">
+        <select class="form-select"><option>全部分类</option><option>食品饮料</option><option>运动器材</option></select>
+        <button class="btn btn-default" onclick="toast('导出商品档案','info')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="openGoodsForm()"><i data-lucide="plus"></i> 新增商品</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>编码</th><th>名称</th><th>分类</th><th>规格</th><th>单位</th>
+            <th class="text-right">采购价</th><th class="text-right">零售价</th><th class="text-right">成本价</th>
+            <th>供应商</th><th class="text-right">库存</th><th>状态</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="wg-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 仓库管理 -->
+  <div class="tab-panel" data-panel="warehouse" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索仓库名称/编码" style="flex:1">
+        <select class="form-select"><option>全部状态</option><option>启用</option><option>停用</option></select>
+        <button class="btn btn-default" onclick="toast('导出仓库列表','info')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="openWarehouseForm()"><i data-lucide="plus"></i> 新增仓库</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>编码</th><th>仓库名称</th><th>所属场馆</th><th>负责人</th><th>联系电话</th>
+            <th class="text-right">面积</th><th>状态</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="wh-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 库位管理 -->
+  <div class="tab-panel" data-panel="location" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索库位编码" style="flex:1">
+        <select class="form-select" id="loc-wh" onchange="renderLocations()">
+          <option value="">全部仓库</option>
+          ${WAREHOUSES.map(w=>`<option>${w.name}</option>`).join('')}
+        </select>
+        <button class="btn btn-primary" onclick="toast('新增库位（演示）','info')"><i data-lucide="plus"></i> 新增库位</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>库位编码</th><th>所属仓库</th><th>区域</th><th class="text-right">容量</th>
+            <th class="text-right">已用</th><th>使用率</th><th>说明</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="loc-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批次管理 -->
+  <div class="tab-panel" data-panel="batch" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" id="bt-search" placeholder="搜索批次号/商品" style="flex:1" oninput="renderBatches()">
+        <select class="form-select"><option>全部仓库</option>${WAREHOUSES.map(w=>`<option>${w.name}</option>`).join('')}</select>
+        <button class="btn btn-default" onclick="toast('导出批次','info')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="toast('批次登记将在入库时自动生成','info')"><i data-lucide="info"></i> 入库自动生成</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>批次号</th><th>商品</th><th>仓库</th><th>库位</th><th>入库单号</th>
+            <th class="text-right">入库数量</th><th class="text-right">剩余</th><th class="text-right">单价</th>
+            <th class="text-right">金额</th><th>入库时间</th><th>操作人</th>
+          </tr></thead>
+          <tbody id="bt-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderGoods();
+renderWarehouses();
+renderLocations();
+renderBatches();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

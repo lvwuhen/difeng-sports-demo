@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>商品销售 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('goods', '商品销售');
+
+/* ========== 数据 ========== */
+// 本地商品缓存，支持库存变动
+let GOODS = JSON.parse(JSON.stringify(MOCK.goods));
+
+// 销售记录（模拟生成）
+let SALES = [
+  {id:'XS20261101001', time:'2026-11-01 10:23:15', customer:'散客', phone:'-', items:[{name:'农夫山泉550ml',qty:3,price:3,amount:9}], total:9, payMethod:'微信支付', operator:'张敏', warehouse:'总部主仓库'},
+  {id:'XS20261101002', time:'2026-11-01 11:05:42', customer:'陈晓明', phone:'138****1234', items:[{name:'斯伯丁篮球7号',qty:1,price:179,amount:179},{name:'脉动运动饮料',qty:2,price:5,amount:10}], total:189, payMethod:'储值余额', operator:'张敏', warehouse:'总部主仓库'},
+  {id:'XS20261101003', time:'2026-11-01 14:30:08', customer:'散客', phone:'-', items:[{name:'红双喜DHS羽毛球',qty:1,price:85,amount:85}], total:85, payMethod:'现金', operator:'李强', warehouse:'篮球公园仓'},
+  {id:'XS20261101004', time:'2026-11-01 16:12:33', customer:'林雅婷', phone:'139****5678', items:[{name:'脉动运动饮料',qty:4,price:6,amount:24},{name:'能量棒',qty:2,price:10,amount:20}], total:44, payMethod:'微信支付', operator:'张敏', warehouse:'总部主仓库'},
+];
+
+// 购物车
+let cart = [];
+let activeTab = 'archive';
+
+/* ========== 工具 ========== */
+function getPrice(g){
+  if(g.promoPrice && g.promoPrice > 0) return g.promoPrice;
+  return g.retailPrice;
+}
+function priceTag(g){
+  const promo = g.promoPrice && g.promoPrice > 0;
+  if(promo) return `<span class="text-muted" style="text-decoration:line-through;font-size:12px">¥${g.retailPrice}</span> <span class="text-success font-bold">¥${g.promoPrice}</span>`;
+  return `<span class="font-bold">¥${g.retailPrice}</span>`;
+}
+
+/* ========== 切换Tab ========== */
+function switchTab(name){
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+window.switchTab = switchTab;
+
+/* ========== 商品档案 ========== */
+function renderGoodsArchive(){
+  const kw = document.getElementById('g-search')?.value?.trim() || '';
+  const cat = document.getElementById('g-cat')?.value || '';
+  const rows = GOODS.filter(g=>{
+    const okKw = !kw || g.name.includes(kw) || g.code.includes(kw);
+    const okCat = !cat || g.category===cat;
+    return okKw && okCat;
+  }).map(g=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${g.code}</td>
+      <td><div class="font-medium">${g.name}</div></td>
+      <td><span class="tag tag-gray">${g.category}</span></td>
+      <td class="text-muted">${g.spec}</td>
+      <td>${g.unit}</td>
+      <td class="text-right">¥${g.retailPrice}</td>
+      <td class="text-right text-muted">¥${g.memberPrice} <span class="tag tag-gray" style="font-size:10px">未启用</span></td>
+      <td class="text-right">${g.promoPrice>0?`<span class="text-success">¥${g.promoPrice}</span>`:'<span class="text-muted">-</span>'}</td>
+      <td class="text-right"><span class="${g.stock<=10?'text-red':''}">${g.stock}</span></td>
+      <td><span class="tag ${g.status==='启用'?'tag-green':'tag-gray'}">${g.status}</span></td>
+      <td class="text-right">
+        <button class="btn btn-ghost btn-sm" onclick="toast('编辑商品：${g.name}','info')"><i data-lucide="pencil" style="width:14px"></i></button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleGoodsStatus('${g.id}')"><i data-lucide="${g.status==='启用'?'ban':'check'}" style="width:14px"></i></button>
+      </td>
+    </tr>`).join('');
+  const tbody = document.getElementById('goods-rows');
+  if(tbody) tbody.innerHTML = rows || `<tr><td colspan="11" class="text-center text-muted">暂无商品</td></tr>`;
+}
+window.toggleGoodsStatus = function(id){
+  const g = GOODS.find(x=>x.id===id);
+  if(!g) return;
+  g.status = g.status==='启用'?'停用':'启用';
+  renderGoodsArchive();
+  toast(`${g.name} 已${g.status==='启用'?'启用':'停用'}`,'success');
+};
+window.searchGoods = renderGoodsArchive;
+
+/* ========== 收银台 ========== */
+function renderCart(){
+  const rows = cart.map((it,idx)=>{
+    const amt = it.qty * it.price;
+    return `<tr>
+      <td><div class="font-medium">${it.name}</div><div class="text-muted mono" style="font-size:12px">${it.code}</div></td>
+      <td class="text-right mono">${it.spec}</td>
+      <td class="text-right">
+        <input type="number" class="form-input" style="width:70px;text-align:center" value="${it.qty}" min="1" onchange="updateCartQty(${idx}, this.value)">
+      </td>
+      <td class="text-right">
+        <span onclick="editCartPrice(${idx})" style="cursor:pointer;border-bottom:1px dashed var(--primary);color:var(--primary)">¥${it.price}</span>
+      </td>
+      <td class="text-right font-bold">¥${amt.toFixed(2)}</td>
+      <td class="text-center"><button class="btn btn-ghost btn-sm" onclick="removeCart(${idx})"><i data-lucide="trash-2" style="width:14px;color:var(--error)"></i></button></td>
+    </tr>`;
+  }).join('');
+  const tbody = document.getElementById('cart-rows');
+  if(tbody) tbody.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted">购物车为空，请扫码或选择商品</td></tr>`;
+  const totalQty = cart.reduce((s,i)=>s+i.qty,0);
+  const totalAmt = cart.reduce((s,i)=>s+i.qty*i.price,0);
+  document.getElementById('cart-qty').textContent = totalQty;
+  document.getElementById('cart-amount').textContent = '¥'+totalAmt.toFixed(2);
+  document.getElementById('pay-amount').textContent = '¥'+totalAmt.toFixed(2);
+}
+
+window.scanBarcode = function(){
+  const code = document.getElementById('barcode-input').value.trim();
+  if(!code){ toast('请输入或扫描商品编码','warning'); return; }
+  addToCart(code);
+  document.getElementById('barcode-input').value='';
+  document.getElementById('barcode-input').focus();
+};
+
+window.addToCart = function(codeOrId){
+  const g = GOODS.find(x=>x.code===codeOrId || x.id===codeOrId);
+  if(!g){ toast('未找到该商品','error'); return; }
+  if(g.status!=='启用'){ toast('该商品已停用','error'); return; }
+  if(g.stock<=0){ toast(`${g.name} 库存不足`,'error'); return; }
+  const exist = cart.find(c=>c.id===g.id);
+  if(exist){
+    if(exist.qty+1 > g.stock){ toast('库存不足','error'); return; }
+    exist.qty++;
+  } else {
+    cart.push({id:g.id, code:g.code, name:g.name, spec:g.spec, unit:g.unit, qty:1, price:getPrice(g), origPrice:g.retailPrice, stock:g.stock});
+  }
+  renderCart();
+  toast(`已添加：${g.name}`,'success');
+};
+
+window.updateCartQty = function(idx, val){
+  const qty = parseInt(val)||1;
+  const it = cart[idx];
+  if(qty < 1){ cart.splice(idx,1); }
+  else if(qty > it.stock){ toast(`库存仅 ${it.stock}`,'error'); cart[idx].qty = it.stock; }
+  else { it.qty = qty; }
+  renderCart();
+};
+
+window.editCartPrice = function(idx){
+  const it = cart[idx];
+  const html = `<div class="modal" style="max-width:460px">
+    <div class="modal-header"><div class="modal-title">修改售价 - ${it.name}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">零售价</div><div class="v">¥${it.origPrice}</div></div>
+        <div class="kv-item"><div class="k">当前售价</div><div class="v">¥${it.price}</div></div>
+        <div class="kv-item"><div class="k">数量</div><div class="v">${it.qty}</div></div>
+      </div>
+      <div class="form-item"><label class="form-label">新售价（元）<span class="required">*</span></label>
+        <input type="number" class="form-input" id="np" value="${it.price}" min="0" step="0.01">
+      </div>
+      <div class="form-item mt-12"><label class="form-label">改价原因<span class="required">*</span></label>
+        <select class="form-select" id="nr">
+          <option value="">请选择</option>
+          <option>会员优惠</option><option>促销活动</option><option>破损/临期处理</option><option>熟客优惠</option><option>其他</option>
+        </select>
+      </div>
+      <div class="form-item mt-12"><label class="form-label">备注说明</label>
+        <textarea class="form-textarea" id="nr2" placeholder="可选"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="applyPriceEdit(${idx})">确认改价</button>
+    </div></div>`;
+  openModal(html);
+};
+window.applyPriceEdit = function(idx){
+  const np = parseFloat(document.getElementById('np').value);
+  const reason = document.getElementById('nr').value;
+  if(isNaN(np) || np<0){ toast('请输入有效售价','error'); return; }
+  if(!reason){ toast('请选择改价原因','error'); return; }
+  cart[idx].price = np;
+  cart[idx].priceReason = reason;
+  document.querySelector('.modal-overlay').remove();
+  renderCart();
+  toast('售价已修改，原因已记录','success');
+};
+
+window.removeCart = function(idx){
+  cart.splice(idx,1);
+  renderCart();
+};
+
+window.clearCart = function(){
+  if(cart.length===0) return;
+  confirmDialog('确定清空购物车？', ()=>{ cart=[]; renderCart(); toast('购物车已清空','info'); });
+};
+
+// 商品选择面板
+window.openGoodsPicker = function(){
+  const cats = [...new Set(GOODS.map(g=>g.category))];
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">选择商品</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="toolbar">
+        <input class="form-input" id="pk-search" placeholder="搜索商品名称/编码" style="flex:1" oninput="renderPicker()">
+        <select class="form-select" id="pk-cat" onchange="renderPicker()">
+          <option value="">全部分类</option>
+          ${cats.map(c=>`<option>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>编码</th><th>商品名称</th><th>分类</th><th>规格</th><th class="text-right">售价</th><th class="text-right">库存</th><th class="text-center">操作</th></tr></thead>
+          <tbody id="pk-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+  openModal(html);
+  window._renderPicker = renderPicker;
+  renderPicker();
+};
+function renderPicker(){
+  const kw = document.getElementById('pk-search').value.trim();
+  const cat = document.getElementById('pk-cat').value;
+  const rows = GOODS.filter(g=>g.status==='启用' && (!kw||g.name.includes(kw)||g.code.includes(kw)) && (!cat||g.category===cat))
+    .map(g=>`<tr>
+      <td class="mono" style="font-size:13px">${g.code}</td>
+      <td class="font-medium">${g.name}</td>
+      <td><span class="tag tag-gray">${g.category}</span></td>
+      <td class="text-muted">${g.spec}</td>
+      <td class="text-right">${priceTag(g)}</td>
+      <td class="text-right">${g.stock}</td>
+      <td class="text-center"><button class="btn btn-primary btn-sm" onclick="addToCart('${g.id}');renderPicker()">加入</button></td>
+    </tr>`).join('');
+  document.getElementById('pk-rows').innerHTML = rows || `<tr><td colspan="7" class="text-center text-muted">暂无可用商品</td></tr>`;
+  if(window.lucide) lucide.createIcons();
+}
+window.renderPicker = renderPicker;
+
+// 结账
+window.checkout = function(){
+  if(cart.length===0){ toast('购物车为空','warning'); return; }
+  const pay = document.getElementById('pay-method').value;
+  const total = cart.reduce((s,i)=>s+i.qty*i.price,0);
+  const html = `<div class="modal" style="max-width:520px">
+    <div class="modal-header"><div class="modal-title">确认结账</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>商品</th><th class="text-right">数量</th><th class="text-right">单价</th><th class="text-right">小计</th></tr></thead>
+          <tbody>${cart.map(i=>`<tr><td>${i.name}</td><td class="text-right">${i.qty}</td><td class="text-right">¥${i.price}</td><td class="text-right">¥${(i.qty*i.price).toFixed(2)}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="kv-grid">
+        <div class="kv-item"><div class="k">商品数量</div><div class="v">${cart.reduce((s,i)=>s+i.qty,0)} 件</div></div>
+        <div class="kv-item"><div class="k">支付方式</div><div class="v">${pay}</div></div>
+        <div class="kv-item"><div class="k">应收金额</div><div class="v font-bold text-primary" style="font-size:18px">¥${total.toFixed(2)}</div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="completeSale('${pay}',${total})">确认收款 ¥${total.toFixed(2)}</button>
+    </div></div>`;
+  openModal(html);
+};
+window.completeSale = function(pay, total){
+  // 扣减库存
+  cart.forEach(it=>{
+    const g = GOODS.find(x=>x.id===it.id);
+    if(g) g.stock = Math.max(0, g.stock - it.qty);
+  });
+  // 生成销售记录
+  const order = {
+    id:'XS'+Date.now().toString().slice(-10),
+    time:new Date().toLocaleString('zh-CN'),
+    customer: pay==='储值余额'?'会员消费':'散客',
+    phone:'-',
+    items: cart.map(i=>({name:i.name,qty:i.qty,price:i.price,amount:i.qty*i.price})),
+    total: total,
+    payMethod: pay,
+    operator:'张敏',
+    warehouse:'总部主仓库'
+  };
+  SALES.unshift(order);
+  cart = [];
+  document.querySelector('.modal-overlay').remove();
+  renderCart();
+  renderGoodsArchive();
+  const html = `<div class="modal" style="max-width:440px">
+    <div class="modal-header"><div class="modal-title">销售完成</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body" style="text-align:center;padding:24px">
+      <div style="width:64px;height:64px;border-radius:50%;background:var(--success-bg);color:var(--success);display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+        <i data-lucide="check-circle-2" style="width:36px;height:36px"></i>
+      </div>
+      <div class="font-bold" style="font-size:18px">收款成功</div>
+      <div class="text-muted mt-8">销售单号：<span class="mono">${order.id}</span></div>
+      <div class="font-bold text-primary mt-12" style="font-size:24px">¥${total.toFixed(2)}</div>
+      <div class="text-muted mt-8">支付方式：${pay} · 库存已自动扣减</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();switchTab('records')">查看销售记录</button>
+    </div></div>`;
+  openModal(html);
+  if(window.lucide) lucide.createIcons();
+};
+
+/* ========== 销售记录 ========== */
+function renderSales(){
+  const kw = document.getElementById('s-search')?.value?.trim() || '';
+  const rows = SALES.filter(s=>!kw || s.id.includes(kw) || s.customer.includes(kw)).map(s=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${s.id}</td>
+      <td>${s.time}</td>
+      <td>${s.customer}</td>
+      <td>${s.items.map(i=>i.name+'×'+i.qty).join('、')}</td>
+      <td class="text-right font-bold">¥${s.total.toFixed(2)}</td>
+      <td><span class="tag tag-blue">${s.payMethod}</span></td>
+      <td class="text-muted">${s.operator}</td>
+      <td class="text-muted">${s.warehouse}</td>
+      <td class="text-center"><button class="btn btn-ghost btn-sm" onclick="viewSale('${s.id}')"><i data-lucide="eye" style="width:14px"></i></button></td>
+    </tr>`).join('');
+  document.getElementById('sales-rows').innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted">暂无销售记录</td></tr>`;
+}
+window.viewSale = function(id){
+  const s = SALES.find(x=>x.id===id);
+  if(!s) return;
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">销售单详情</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">销售单号</div><div class="v mono">${s.id}</div></div>
+        <div class="kv-item"><div class="k">交易时间</div><div class="v">${s.time}</div></div>
+        <div class="kv-item"><div class="k">客户</div><div class="v">${s.customer}</div></div>
+        <div class="kv-item"><div class="k">支付方式</div><div class="v">${s.payMethod}</div></div>
+        <div class="kv-item"><div class="k">操作人</div><div class="v">${s.operator}</div></div>
+        <div class="kv-item"><div class="k">仓库</div><div class="v">${s.warehouse}</div></div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>商品</th><th class="text-right">数量</th><th class="text-right">单价</th><th class="text-right">金额</th></tr></thead>
+          <tbody>${s.items.map(i=>`<tr><td>${i.name}</td><td class="text-right">${i.qty}</td><td class="text-right">¥${i.price}</td><td class="text-right">¥${i.amount.toFixed(2)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td colspan="3" class="text-right font-bold">合计</td><td class="text-right font-bold text-primary">¥${s.total.toFixed(2)}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>
+  </div>`;
+  openModal(html);
+};
+window.searchSales = renderSales;
+
+/* ========== 渲染页面 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">商品销售</div>
+  <div class="page-desc">商品档案管理、前台收银、销售记录查询；三层价格体系（零售/会员/促销），收银支持扫码与改价留痕</div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="archive" onclick="switchTab('archive')"><i data-lucide="package" style="width:16px;vertical-align:middle"></i> 商品档案</div>
+      <div class="tab" data-tab="cashier" onclick="switchTab('cashier')"><i data-lucide="shopping-bag" style="width:16px;vertical-align:middle"></i> 收银台</div>
+      <div class="tab" data-tab="records" onclick="switchTab('records')"><i data-lucide="receipt-text" style="width:16px;vertical-align:middle"></i> 销售记录</div>
+    </div>
+  </div>
+
+  <!-- 商品档案 -->
+  <div class="tab-panel" data-panel="archive">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" id="g-search" placeholder="搜索商品名称/编码" style="flex:1" oninput="renderGoodsArchive()">
+        <select class="form-select" id="g-cat" onchange="renderGoodsArchive()">
+          <option value="">全部分类</option>
+          <option>饮料</option><option>球类</option><option>食品</option><option>器材</option>
+        </select>
+        <select class="form-select"><option>全部状态</option><option>启用</option><option>停用</option></select>
+        <button class="btn btn-default" onclick="toast('导出商品档案','info')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="toast('新增商品（演示）','info')"><i data-lucide="plus"></i> 新增商品</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>编码</th><th>名称</th><th>分类</th><th>规格</th><th>单位</th>
+            <th class="text-right">零售价</th><th class="text-right">会员价</th><th class="text-right">促销价</th>
+            <th class="text-right">库存</th><th>状态</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="goods-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 收银台 -->
+  <div class="tab-panel" data-panel="cashier" style="display:none">
+    <div class="card-body">
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat-card"><div class="stat-label">今日笔数</div><div class="stat-value" style="font-size:24px">${SALES.length}</div></div>
+        <div class="stat-card"><div class="stat-label">今日销售额</div><div class="stat-value" style="font-size:24px;color:var(--primary)">¥${SALES.reduce((s,x)=>s+x.total,0).toFixed(2)}</div></div>
+        <div class="stat-card"><div class="stat-label">购物车商品</div><div class="stat-value" style="font-size:24px;color:var(--warning)" id="cart-qty">0</div></div>
+        <div class="stat-card"><div class="stat-label">应收金额</div><div class="stat-value" style="font-size:24px;color:var(--success)" id="cart-amount">¥0.00</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item" style="flex:2">
+          <label class="form-label">扫码 / 输入商品编码</label>
+          <div style="display:flex;gap:8px">
+            <input class="form-input" id="barcode-input" placeholder="扫码枪输入后回车，或手动输入编码" onkeydown="if(event.key==='Enter')scanBarcode()">
+            <button class="btn btn-primary" onclick="scanBarcode()"><i data-lucide="scan-line"></i> 扫码</button>
+            <button class="btn btn-default" onclick="openGoodsPicker()"><i data-lucide="search"></i> 选择商品</button>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>商品</th><th class="text-right">规格</th><th class="text-right">数量</th>
+            <th class="text-right">售价</th><th class="text-right">小计</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="cart-rows"></tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="flex items-center justify-between" style="flex-wrap:wrap;gap:16px">
+        <div style="display:flex;gap:12px;align-items:center">
+          <label class="form-label" style="margin:0">支付方式</label>
+          <select class="form-select" id="pay-method" style="width:160px">
+            <option>微信支付</option><option>支付宝</option><option>现金</option><option>储值余额</option>
+          </select>
+          <button class="btn btn-default" onclick="clearCart()"><i data-lucide="trash-2"></i> 清空</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px">
+          <div>应收：<span class="font-bold text-primary" style="font-size:24px" id="pay-amount">¥0.00</span></div>
+          <button class="btn btn-success btn-lg" onclick="checkout()"><i data-lucide="check"></i> 收款结账</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 销售记录 -->
+  <div class="tab-panel" data-panel="records" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" id="s-search" placeholder="按订单号/客户搜索" style="flex:1" oninput="renderSales()">
+        <select class="form-select"><option>全部支付方式</option><option>微信支付</option><option>支付宝</option><option>现金</option><option>储值余额</option></select>
+        <input type="date" class="form-input" value="2026-11-01">
+        <button class="btn btn-default" onclick="toast('导出销售记录','info')"><i data-lucide="download"></i> 导出</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>销售单号</th><th>交易时间</th><th>客户</th><th>商品明细</th>
+            <th class="text-right">金额</th><th>支付方式</th><th>操作人</th><th>仓库</th><th class="text-center">详情</th>
+          </tr></thead>
+          <tbody id="sales-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderGoodsArchive();
+renderCart();
+renderSales();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

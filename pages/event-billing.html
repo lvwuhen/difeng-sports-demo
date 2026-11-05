@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>赛事账单与收款 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('event-billing', '赛事账单与收款');
+
+// ===== 赛事账单与收款数据 =====
+const BILL_DATA = {
+  'EV001': {
+    // 场地费用（按占用时段自动带出）
+    venueFees: [
+      {id:'VF1', date:'2026-11-15', court:'1号足球场', slot:'08:00-12:00', basePrice:800, adjAmount:800, reason:''},
+      {id:'VF2', date:'2026-11-15', court:'2号篮球场', slot:'13:00-17:00', basePrice:480, adjAmount:480, reason:''},
+      {id:'VF3', date:'2026-11-16', court:'1号足球场', slot:'08:00-12:00', basePrice:800, adjAmount:700, reason:'合作单位优惠'},
+      {id:'VF4', date:'2026-11-16', court:'2号篮球场', slot:'13:00-17:00', basePrice:480, adjAmount:480, reason:''},
+      {id:'VF5', date:'2026-11-20', court:'1号足球场', slot:'09:00-18:00', basePrice:1800, adjAmount:1800, reason:''},
+    ],
+    // 配套费用
+    extraFees: [
+      {id:'EF1', type:'商品费', name:'农夫山泉×100', amount:300, remark:'库存出库扣减：农夫山泉550ml ×100'},
+      {id:'EF2', type:'裁判费', name:'主裁×3人×2天', amount:3600, remark:'国家级裁判'},
+      {id:'EF3', type:'工作人员费', name:'记录台×4人×2天', amount:2400, remark:'含计时、记分'},
+      {id:'EF4', type:'器材租赁费', name:'比赛用球×20', amount:1200, remark:'斯伯丁篮球'},
+      {id:'EF5', type:'宣传物料费', name:'横幅+秩序册+奖牌', amount:5400, remark:'含奖杯制作'},
+      {id:'EF6', type:'其他杂费', name:'保险费', amount:1800, remark:'参赛人员意外险'},
+    ],
+    discount: 1500,
+    discountReason:'合作单位整体减免',
+    payments: [
+      {id:'P1', amount:15000, method:'对公转账', time:'2026-10-29 16:20', collector:'王财务', voucher:'RC20261029001'},
+    ],
+    invoices: [
+      {id:'INV1', no:'243500000001234600', type:'合并开票', amount:15000, status:'开具成功', date:'2026-10-29', items:'场地+配套费用'},
+    ],
+    status:'部分付',
+  },
+  'EV002': {
+    venueFees: [
+      {id:'VF1', date:'2026-10-10', court:'T1网球场', slot:'08:00-20:00', basePrice:1200, adjAmount:1200, reason:''},
+      {id:'VF2', date:'2026-10-11', court:'T1网球场', slot:'08:00-20:00', basePrice:1200, adjAmount:1200, reason:''},
+      {id:'VF3', date:'2026-10-12', court:'T1网球场', slot:'08:00-18:00', basePrice:1000, adjAmount:1000, reason:''},
+    ],
+    extraFees: [
+      {id:'EF1', type:'裁判费', name:'裁判长+司线', amount:4200, remark:'-'},
+      {id:'EF2', type:'宣传物料费', name:'秩序册+奖牌', amount:5000, remark:'-'},
+      {id:'EF3', type:'商品费', name:'矿泉水×80', amount:240, remark:'库存出库扣减'},
+    ],
+    discount:0, discountReason:'',
+    payments: [
+      {id:'P1', amount:18600, method:'对公转账', time:'2026-10-08 10:00', collector:'王财务', voucher:'RC20261008001'},
+    ],
+    invoices: [
+      {id:'INV1', no:'243500000001234599', type:'合并开票', amount:18600, status:'开具成功', date:'2026-10-12', items:'全部费用'},
+    ],
+    status:'已结清',
+  },
+  'EV003': {
+    venueFees: [
+      {id:'VF1', date:'2026-11-25', court:'B1羽毛球场', slot:'09:00-21:00', basePrice:720, adjAmount:720, reason:''},
+      {id:'VF2', date:'2026-11-25', court:'B2羽毛球场', slot:'09:00-21:00', basePrice:900, adjAmount:900, reason:''},
+      {id:'VF3', date:'2026-11-26', court:'B1羽毛球场', slot:'09:00-18:00', basePrice:540, adjAmount:540, reason:''},
+      {id:'VF4', date:'2026-11-26', court:'B2羽毛球场', slot:'09:00-18:00', basePrice:675, adjAmount:675, reason:''},
+    ],
+    extraFees: [],
+    discount:0, discountReason:'',
+    payments: [],
+    invoices: [],
+    status:'待付',
+  },
+};
+
+const FEE_TYPES = ['商品费','裁判费','工作人员费','器材租赁费','宣传物料费','其他杂费'];
+const PAY_METHODS = ['现金','微信支付','支付宝','对公转账','储值余额','支票'];
+
+let curEventId = 'EV001';
+
+function getEvent(id){ return MOCK.events.find(e=>e.id===id); }
+function getBill(id){ return BILL_DATA[id]; }
+
+function calcVenueTotal(b){ return b.venueFees.reduce((s,f)=>s+Number(f.adjAmount||0),0); }
+function calcExtraTotal(b){ return b.extraFees.reduce((s,f)=>s+Number(f.amount||0),0); }
+function calcBillTotal(b){ return calcVenueTotal(b)+calcExtraTotal(b)-Number(b.discount||0); }
+function calcReceived(b){ return b.payments.reduce((s,p)=>s+Number(p.amount||0),0); }
+function calcInvoiced(b){ return b.invoices.reduce((s,i)=>s+Number(i.amount||0),0); }
+
+function updateBillStatus(b){
+  const total = calcBillTotal(b);
+  const received = calcReceived(b);
+  if(received<=0) b.status='待付';
+  else if(received>=total) b.status='已结清';
+  else b.status='部分付';
+}
+
+const STATUS_TAG = {'待付':'tag-orange','部分付':'tag-blue','已结清':'tag-green'};
+
+// ===== 场地费用渲染 =====
+function renderVenueFees(){
+  const b = getBill(curEventId);
+  const rows = b.venueFees.map(f=>`
+    <tr>
+      <td>${f.date}</td>
+      <td>${f.court}</td>
+      <td>${f.slot}</td>
+      <td class="text-right text-muted">¥${f.basePrice}</td>
+      <td><input type="number" class="form-input" style="width:90px" value="${f.adjAmount}" onchange="updateVenueFee('${f.id}', this.value)"></td>
+      <td><input class="form-input" style="width:120px" value="${f.reason||''}" placeholder="${f.adjAmount!==f.basePrice?'必填':''}" onchange="updateVenueReason('${f.id}', this.value)"></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="removeVenueFee('${f.id}')"><i data-lucide="trash-2" style="width:14px"></i></button></td>
+    </tr>`).join('') || `<tr><td colspan="7" class="text-center text-muted">暂无场地费用</td></tr>`;
+  document.getElementById('venueTbody').innerHTML = rows;
+  document.getElementById('venueSubtotal').textContent = '¥'+calcVenueTotal(b).toLocaleString();
+  if(window.lucide) lucide.createIcons();
+  renderSummary();
+}
+window.updateVenueFee = function(id, val){
+  const b = getBill(curEventId);
+  const f = b.venueFees.find(x=>x.id===id);
+  if(!f) return;
+  f.adjAmount = Number(val)||0;
+  renderVenueFees();
+};
+window.updateVenueReason = function(id, val){
+  const b = getBill(curEventId);
+  const f = b.venueFees.find(x=>x.id===id);
+  if(f) f.reason = val;
+};
+window.removeVenueFee = function(id){
+  confirmDialog('确定删除该场地费用？', ()=>{
+    const b = getBill(curEventId);
+    b.venueFees = b.venueFees.filter(x=>x.id!==id);
+    renderVenueFees();
+    toast('已删除','success');
+  });
+};
+
+// ===== 配套费用渲染 =====
+function renderExtraFees(){
+  const b = getBill(curEventId);
+  const rows = b.extraFees.map(f=>`
+    <tr>
+      <td><span class="tag tag-gray">${f.type}</span></td>
+      <td>${f.name}</td>
+      <td class="text-right">¥${f.amount.toLocaleString()}</td>
+      <td style="font-size:12px;color:var(--text-3)">${f.remark||'-'}</td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="editExtraFee('${f.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="removeExtraFee('${f.id}')">删除</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="5" class="text-center text-muted">暂无配套费用</td></tr>`;
+  document.getElementById('extraTbody').innerHTML = rows;
+  document.getElementById('extraSubtotal').textContent = '¥'+calcExtraTotal(b).toLocaleString();
+  renderSummary();
+}
+window.removeExtraFee = function(id){
+  confirmDialog('确定删除该费用项？', ()=>{
+    const b = getBill(curEventId);
+    b.extraFees = b.extraFees.filter(x=>x.id!==id);
+    renderExtraFees();
+    toast('已删除','success');
+  });
+};
+
+window.openExtraFeeModal = function(id){
+  const b = getBill(curEventId);
+  const f = id ? b.extraFees.find(x=>x.id===id) : {type:'商品费', name:'', amount:0, remark:''};
+  const isGoods = f.type==='商品费';
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">${id?'编辑':'新增'}配套费用</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">费用类型<span class="required">*</span></label>
+          <select class="form-select" id="ef-type" onchange="toggleGoodsPicker()">
+            ${FEE_TYPES.map(t=>`<option ${f.type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">金额（元）<span class="required">*</span></label><input type="number" class="form-input" id="ef-amount" value="${f.amount}"></div>
+      </div>
+      <div class="form-item"><label class="form-label">费用名称/说明<span class="required">*</span></label><input class="form-input" id="ef-name" value="${f.name}"></div>
+      <div id="goodsPicker" style="${isGoods?'':'display:none'}">
+        <div class="form-item"><label class="form-label">关联商品（自动出库扣减库存）</label>
+          <select class="form-select" id="ef-goods">
+            <option value="">选择商品</option>
+            ${MOCK.goods.map(g=>`<option value="${g.id}">${g.name}（库存 ${g.stock}）</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">数量</label><input type="number" class="form-input" id="ef-qty" value="1" min="1"></div>
+      </div>
+      <div class="form-item"><label class="form-label">备注</label><input class="form-input" id="ef-remark" value="${f.remark||''}"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveExtraFee('${id||''}')">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.editExtraFee = function(id){ window.openExtraFeeModal(id); };
+window.toggleGoodsPicker = function(){
+  document.getElementById('goodsPicker').style.display = document.getElementById('ef-type').value==='商品费'?'block':'none';
+};
+window.saveExtraFee = function(id){
+  const b = getBill(curEventId);
+  const type = document.getElementById('ef-type').value;
+  const name = document.getElementById('ef-name').value.trim();
+  const amount = Number(document.getElementById('ef-amount').value)||0;
+  const remark = document.getElementById('ef-remark').value.trim();
+  if(!name){ toast('请填写费用名称','error'); return; }
+  if(amount<=0){ toast('金额需大于0','error'); return; }
+  let finalRemark = remark;
+  if(type==='商品费'){
+    const gid = document.getElementById('ef-goods').value;
+    const qty = Number(document.getElementById('ef-qty').value)||1;
+    if(gid){
+      const g = MOCK.goods.find(x=>x.id===gid);
+      if(g.stock<qty){ toast(`${g.name} 库存不足（剩余 ${g.stock}）`,'error'); return; }
+      g.stock -= qty;
+      finalRemark = `库存出库扣减：${g.name} ×${qty}` + (remark?`；${remark}`:'');
+      toast(`${g.name} 已出库 ${qty} 件，库存剩余 ${g.stock}`,'success');
+    }
+  }
+  if(id){
+    const f = b.extraFees.find(x=>x.id===id);
+    Object.assign(f, {type, name, amount, remark:finalRemark});
+  } else {
+    b.extraFees.push({id:'EF'+Date.now(), type, name, amount, remark:finalRemark});
+  }
+  document.querySelector('.modal-overlay').remove();
+  renderExtraFees();
+  toast('保存成功','success');
+};
+
+// ===== 账单汇总 =====
+function renderSummary(){
+  const b = getBill(curEventId);
+  const venue = calcVenueTotal(b);
+  const extra = calcExtraTotal(b);
+  const discount = Number(b.discount||0);
+  const total = venue+extra-discount;
+  const received = calcReceived(b);
+  const invoiced = calcInvoiced(b);
+  const unpaid = Math.max(0, total-received);
+  updateBillStatus(b);
+  document.getElementById('sumVenue').textContent = '¥'+venue.toLocaleString();
+  document.getElementById('sumExtra').textContent = '¥'+extra.toLocaleString();
+  document.getElementById('sumDiscount').textContent = '- ¥'+discount.toLocaleString();
+  document.getElementById('sumTotal').textContent = '¥'+total.toLocaleString();
+  document.getElementById('sumReceived').textContent = '¥'+received.toLocaleString();
+  document.getElementById('sumInvoiced').textContent = '¥'+invoiced.toLocaleString();
+  document.getElementById('sumUnpaid').textContent = '¥'+unpaid.toLocaleString();
+  document.getElementById('billStatus').innerHTML = `<span class="tag ${STATUS_TAG[b.status]}">${b.status}</span>`;
+  const st2 = document.getElementById('sumTotal2');
+  if(st2) st2.textContent = '¥'+total.toLocaleString();
+}
+
+window.applyDiscount = function(){
+  const b = getBill(curEventId);
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">账单折扣与减免</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">场地费合计</div><div class="v">¥${calcVenueTotal(b).toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">配套费合计</div><div class="v">¥${calcExtraTotal(b).toLocaleString()}</div></div>
+      </div>
+      <div class="form-item"><label class="form-label">减免金额（元）</label><input type="number" class="form-input" id="d-amt" value="${b.discount||0}" min="0"></div>
+      <div class="form-item"><label class="form-label">减免原因<span class="required">*</span></label>
+        <select class="form-select" id="d-reason">
+          <option value="">请选择</option><option>合作单位优惠</option><option>赛事赞助抵扣</option><option>金额抹零</option><option>其他</option>
+        </select>
+      </div>
+      <div class="form-item"><label class="form-label">备注说明</label><textarea class="form-textarea" id="d-remark"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveDiscount()">确认</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.saveDiscount = function(){
+  const amt = Number(document.getElementById('d-amt').value)||0;
+  const reason = document.getElementById('d-reason').value;
+  if(!reason){ toast('请选择减免原因','error'); return; }
+  const b = getBill(curEventId);
+  b.discount = amt; b.discountReason = reason;
+  document.querySelector('.modal-overlay').remove();
+  renderSummary();
+  toast('减免已应用','success');
+};
+
+// ===== 收款登记 =====
+function renderPayments(){
+  const b = getBill(curEventId);
+  const rows = b.payments.map(p=>`
+    <tr>
+      <td class="mono" style="font-size:12px">${p.voucher}</td>
+      <td class="text-right font-medium">¥${p.amount.toLocaleString()}</td>
+      <td>${p.method}</td>
+      <td style="font-size:12px">${p.time}</td>
+      <td>${p.collector}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="removePayment('${p.id}')">删除</button></td>
+    </tr>`).join('') || `<tr><td colspan="6" class="text-center text-muted">暂无收款记录</td></tr>`;
+  document.getElementById('payTbody').innerHTML = rows;
+  renderSummary();
+}
+
+window.openPaymentModal = function(){
+  const b = getBill(curEventId);
+  const total = calcBillTotal(b);
+  const received = calcReceived(b);
+  const invoiced = calcInvoiced(b);
+  const unpaid = Math.max(0, total-received);
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">登记收款</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">账单总额</div><div class="v">¥${total.toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">已收款</div><div class="v">¥${received.toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">待收金额</div><div class="v text-primary">¥${unpaid.toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">已开票金额</div><div class="v">¥${invoiced.toLocaleString()}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">收款金额（元）<span class="required">*</span></label><input type="number" class="form-input" id="p-amount" value="${unpaid}"></div>
+        <div class="form-item"><label class="form-label">收款方式</label>
+          <select class="form-select" id="p-method">${PAY_METHODS.map(m=>`<option>${m}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">收款时间</label><input type="datetime-local" class="form-input" id="p-time" value="${new Date().toISOString().slice(0,16)}"></div>
+        <div class="form-item"><label class="form-label">收款人</label><input class="form-input" id="p-collector" value="王财务"></div>
+      </div>
+      <div class="form-item"><label class="form-label">凭证号</label><input class="form-input" id="p-voucher" value="RC${Date.now().toString().slice(-10)}"></div>
+      <div class="form-item" id="diff-box" style="display:none"><label class="form-label">差异原因<span class="required">*</span></label>
+        <select class="form-select" id="p-diff"><option value="">请选择</option><option>提前付款</option><option>尾款分期</option><option>部分退款冲抵</option><option>其他</option></select>
+      </div>
+      <div style="background:var(--warning-bg);color:var(--warning);padding:8px 12px;border-radius:6px;font-size:12px;margin-top:12px">
+        <i data-lucide="alert-triangle" style="width:14px;vertical-align:-2px"></i>
+        收款金额不得低于已开票金额（¥${invoiced.toLocaleString()}）
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="savePayment()">确认收款</button>
+    </div>
+  </div>`;
+  openModal(html);
+  if(window.lucide) lucide.createIcons();
+  document.getElementById('p-amount').oninput = checkDiff;
+  checkDiff();
+};
+function checkDiff(){
+  const b = getBill(curEventId);
+  const total = calcBillTotal(b);
+  const received = calcReceived(b);
+  const amt = Number(document.getElementById('p-amount').value)||0;
+  const unpaid = Math.max(0,total-received);
+  const diff = amt !== unpaid;
+  document.getElementById('diff-box').style.display = diff ? 'block' : 'none';
+}
+window.savePayment = function(){
+  const b = getBill(curEventId);
+  const amount = Number(document.getElementById('p-amount').value)||0;
+  const invoiced = calcInvoiced(b);
+  if(amount<=0){ toast('收款金额需大于0','error'); return; }
+  // 已收款累计 + 本次 不得低于已开票
+  if(calcReceived(b)+amount < invoiced){ toast(`收款后累计不得低于已开票金额 ¥${invoiced}`,'error'); return; }
+  const total = calcBillTotal(b);
+  const unpaid = Math.max(0,total-calcReceived(b));
+  if(amount!==unpaid){
+    const diff = document.getElementById('p-diff').value;
+    if(!diff){ toast('金额与待收不一致，请填写差异原因','error'); return; }
+  }
+  b.payments.push({
+    id:'P'+Date.now(),
+    amount,
+    method: document.getElementById('p-method').value,
+    time: document.getElementById('p-time').value.replace('T',' '),
+    collector: document.getElementById('p-collector').value,
+    voucher: document.getElementById('p-voucher').value,
+  });
+  document.querySelector('.modal-overlay').remove();
+  renderPayments();
+  if(calcReceived(b)>=total) toast('收款完成，账单已自动结清','success');
+  else toast('收款登记成功','success');
+};
+window.removePayment = function(id){
+  confirmDialog('确定删除该收款记录？', ()=>{
+    const b = getBill(curEventId);
+    b.payments = b.payments.filter(x=>x.id!==id);
+    renderPayments();
+    toast('已删除','success');
+  });
+};
+
+// ===== 发票 =====
+function renderInvoices(){
+  const b = getBill(curEventId);
+  const rows = b.invoices.map(i=>`
+    <tr>
+      <td class="mono" style="font-size:12px">${i.no}</td>
+      <td><span class="tag ${i.type==='合并开票'?'tag-blue':'tag-purple'}">${i.type}</span></td>
+      <td style="font-size:12px">${i.items}</td>
+      <td class="text-right font-medium">¥${i.amount.toLocaleString()}</td>
+      <td><span class="tag ${i.status==='开具成功'?'tag-green':'tag-orange'}">${i.status}</span></td>
+      <td>${i.date}</td>
+    </tr>`).join('') || `<tr><td colspan="6" class="text-center text-muted">暂无发票</td></tr>`;
+  document.getElementById('invTbody').innerHTML = rows;
+  renderSummary();
+}
+
+window.openInvoiceModal = function(){
+  const b = getBill(curEventId);
+  const received = calcReceived(b);
+  const invoiced = calcInvoiced(b);
+  const available = received - invoiced;
+  const venue = calcVenueTotal(b);
+  const extra = calcExtraTotal(b);
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">发起赛事发票</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">已收款</div><div class="v">¥${received.toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">已开票</div><div class="v">¥${invoiced.toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">可开票金额</div><div class="v text-primary">¥${available.toLocaleString()}</div></div>
+        <div class="kv-item"><div class="k">发票类型</div><div class="v"><select class="form-select" id="inv-ftype"><option>电子普通发票</option><option>增值税专用发票</option></select></div></div>
+      </div>
+      <div class="form-item"><label class="form-label">开票方式<span class="required">*</span></label>
+        <div style="display:flex;gap:16px;margin-top:8px">
+          <label style="display:inline-flex;align-items:center;gap:6px"><input type="radio" name="imode" value="merge" checked onchange="toggleInvMode()"> 合并开票（全部费用一张）</label>
+          <label style="display:inline-flex;align-items:center;gap:6px"><input type="radio" name="imode" value="split" onchange="toggleInvMode()"> 按费用项目分开开票</label>
+        </div>
+      </div>
+      <div id="inv-merge" style="margin-top:12px">
+        <div class="form-item"><label class="form-label">开票金额（不超过可开票金额）</label><input type="number" class="form-input" id="inv-amt" value="${available}" max="${available}"></div>
+      </div>
+      <div id="inv-split" style="display:none;margin-top:12px">
+        <table class="data-table">
+          <thead><tr><th>费用项目</th><th>金额</th><th>是否开票</th><th>开票金额</th></tr></thead>
+          <tbody>
+            <tr><td>场地费</td><td>¥${venue.toLocaleString()}</td><td><input type="checkbox" checked></td><td><input type="number" class="form-input" style="width:100px" value="${venue}"></td></tr>
+            ${b.extraFees.map(f=>`<tr><td>${f.type}：${f.name}</td><td>¥${f.amount.toLocaleString()}</td><td><input type="checkbox" checked></td><td><input type="number" class="form-input" style="width:100px" value="${f.amount}"></td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-item mt-12"><label class="form-label">抬头/税号</label>
+        <div class="form-row">
+          <div class="form-item"><input class="form-input" id="inv-title" value="地丰置业有限公司" placeholder="发票抬头"></div>
+          <div class="form-item"><input class="form-input" id="inv-taxno" value="91350200MA0000000X" placeholder="税号"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="submitInvoice()">提交开票</button>
+    </div>
+  </div>`;
+  openModal(html);
+  if(window.lucide) lucide.createIcons();
+};
+window.toggleInvMode = function(){
+  const mode = document.querySelector('input[name="imode"]:checked').value;
+  document.getElementById('inv-merge').style.display = mode==='merge'?'block':'none';
+  document.getElementById('inv-split').style.display = mode==='split'?'block':'none';
+};
+window.submitInvoice = function(){
+  const b = getBill(curEventId);
+  const available = calcReceived(b)-calcInvoiced(b);
+  const mode = document.querySelector('input[name="imode"]:checked').value;
+  let amount = 0, items = '';
+  if(mode==='merge'){
+    amount = Number(document.getElementById('inv-amt').value)||0;
+    items = '场地+配套费用';
+  } else {
+    const rows = document.querySelectorAll('#inv-split tbody tr');
+    rows.forEach(r=>{
+      if(r.querySelector('input[type=checkbox]').checked){
+        amount += Number(r.querySelector('input[type=number]').value)||0;
+      }
+    });
+    items = '按费用项目分开开票';
+  }
+  if(amount<=0){ toast('开票金额需大于0','error'); return; }
+  if(amount>available){ toast(`开票金额不得超过可开票金额 ¥${available.toLocaleString()}`,'error'); return; }
+  b.invoices.push({
+    id:'INV'+Date.now(),
+    no:'24350000000'+Math.floor(Math.random()*90000000+10000000),
+    type: mode==='merge'?'合并开票':'分开开票',
+    amount, status:'开具成功',
+    date: new Date().toISOString().slice(0,10),
+    items,
+  });
+  document.querySelector('.modal-overlay').remove();
+  renderInvoices();
+  toast('发票开具成功','success');
+};
+
+// ===== 赛事取消 =====
+window.cancelEventBill = function(){
+  confirmDialog('取消赛事将：释放所有占用场地、生成退款记录、将已开发票加入待红冲清单。确认继续？', ()=>{
+    const e = getEvent(curEventId);
+    const b = getBill(curEventId);
+    const received = calcReceived(b);
+    b.status = '已取消';
+    const html = `<div class="modal">
+      <div class="modal-header"><div class="modal-title">赛事取消处理结果</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+      <div class="modal-body">
+        <div style="background:var(--success-bg);padding:12px;border-radius:6px;margin-bottom:12px">
+          <i data-lucide="check-circle" style="color:var(--success);vertical-align:-3px"></i> 已释放 ${b.venueFees.length} 个场地占用时段
+        </div>
+        ${received>0?`
+        <div style="background:var(--warning-bg);padding:12px;border-radius:6px;margin-bottom:12px">
+          <i data-lucide="alert-triangle" style="color:var(--warning);vertical-align:-3px"></i> 已生成退款单：¥${received.toLocaleString()}（请在退款模块审核）
+        </div>`:''}
+        ${b.invoices.length>0?`
+        <div style="background:var(--error-bg);padding:12px;border-radius:6px">
+          <i data-lucide="file-minus" style="color:var(--error);vertical-align:-3px"></i> 已开发票 ${b.invoices.length} 张加入待红冲清单
+        </div>`:''}
+      </div>
+      <div class="modal-footer"><button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">确定</button></div>
+    </div>`;
+    document.querySelector('.modal-overlay').remove();
+    openModal(html);
+    if(window.lucide) lucide.createIcons();
+    renderSummary();
+  });
+};
+
+// ===== 切换赛事 =====
+window.switchEvent = function(id){
+  curEventId = id;
+  const e = getEvent(id);
+  document.getElementById('curEventName').textContent = e.name;
+  renderVenueFees();
+  renderExtraFees();
+  renderPayments();
+  renderInvoices();
+};
+
+// ===== 页面结构 =====
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">赛事账单与收款</div>
+  <div class="page-desc">管理赛事场地费与配套费用账单、分次收款登记与赛事发票开具</div>
+</div>
+
+<div class="toolbar">
+  <label class="form-label" style="margin:0">选择赛事：</label>
+  <select class="form-select" onchange="switchEvent(this.value)">
+    ${MOCK.events.map(e=>`<option value="${e.id}" ${e.id===curEventId?'selected':''}>${e.name}</option>`).join('')}
+  </select>
+  <span class="text-muted" id="curEventName">${getEvent(curEventId).name}</span>
+  <span id="billStatus" style="margin-left:8px"></span>
+  <div class="spacer"></div>
+  <button class="btn btn-default" style="color:var(--error)" onclick="cancelEventBill()"><i data-lucide="x-circle"></i> 取消赛事</button>
+</div>
+
+<!-- 场地费用 -->
+<div class="card">
+  <div class="card-header"><div class="card-title"><i data-lucide="map-pin" style="width:16px;vertical-align:-3px"></i> 场地费用</div>
+    <div class="text-muted">已根据赛事占用时段自动带出租赁费，可手动调整并记录原因</div>
+  </div>
+  <div class="card-body no-pad">
+    <table class="data-table">
+      <thead><tr><th>日期</th><th>场地</th><th>时段</th><th class="text-right">标准价</th><th>调整后金额</th><th>调整原因</th><th></th></tr></thead>
+      <tbody id="venueTbody"></tbody>
+      <tfoot><tr style="background:#fafafa;font-weight:600"><td colspan="4" class="text-right">场地费合计</td><td class="text-right text-primary" id="venueSubtotal">¥0</td><td colspan="2"></td></tr></tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- 配套费用 -->
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><div class="card-title"><i data-lucide="list-checks" style="width:16px;vertical-align:-3px"></i> 配套费用明细</div>
+    <button class="btn btn-primary btn-sm" onclick="openExtraFeeModal()"><i data-lucide="plus"></i> 新增费用</button>
+  </div>
+  <div class="card-body no-pad">
+    <table class="data-table">
+      <thead><tr><th>类型</th><th>名称</th><th class="text-right">金额</th><th>备注</th><th style="width:140px">操作</th></tr></thead>
+      <tbody id="extraTbody"></tbody>
+      <tfoot><tr style="background:#fafafa;font-weight:600"><td colspan="2" class="text-right">配套费合计</td><td class="text-right text-primary" id="extraSubtotal">¥0</td><td colspan="2"></td></tr></tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- 账单汇总 -->
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-top:16px">
+  <div class="stat-card"><div class="stat-label">账单总额</div><div class="stat-value text-primary" style="font-size:22px" id="sumTotal">¥0</div></div>
+  <div class="stat-card"><div class="stat-label">已收款</div><div class="stat-value text-success" style="font-size:22px" id="sumReceived">¥0</div></div>
+  <div class="stat-card"><div class="stat-label">已开票</div><div class="stat-value" style="font-size:22px;color:var(--purple)" id="sumInvoiced">¥0</div></div>
+  <div class="stat-card"><div class="stat-label">待收金额</div><div class="stat-value text-warning" style="font-size:22px" id="sumUnpaid">¥0</div></div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><div class="card-title">费用账单汇总</div>
+    <button class="btn btn-default btn-sm" onclick="applyDiscount()"><i data-lucide="tag"></i> 折扣/减免</button>
+  </div>
+  <div class="card-body">
+    <div class="list-row"><span class="text-muted">场地费</span><span id="sumVenue">¥0</span></div>
+    <div class="list-row"><span class="text-muted">配套费</span><span id="sumExtra">¥0</span></div>
+    <div class="list-row"><span class="text-muted">减免</span><span class="text-success" id="sumDiscount">- ¥0</span></div>
+    <div class="list-row" style="border-top:2px solid var(--border);font-size:16px"><span class="font-bold">账单合计</span><span class="font-bold text-primary" id="sumTotal2">¥0</span></div>
+  </div>
+</div>
+
+<!-- 收款记录 -->
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><div class="card-title"><i data-lucide="banknote" style="width:16px;vertical-align:-3px"></i> 账单收款</div>
+    <button class="btn btn-primary btn-sm" onclick="openPaymentModal()"><i data-lucide="plus"></i> 登记收款</button>
+  </div>
+  <div class="card-body no-pad">
+    <table class="data-table">
+      <thead><tr><th>凭证号</th><th class="text-right">金额</th><th>方式</th><th>时间</th><th>收款人</th><th style="width:80px">操作</th></tr></thead>
+      <tbody id="payTbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 发票 -->
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><div class="card-title"><i data-lucide="file-invoice" style="width:16px;vertical-align:-3px"></i> 赛事发票</div>
+    <button class="btn btn-primary btn-sm" onclick="openInvoiceModal()"><i data-lucide="plus"></i> 发起开票</button>
+  </div>
+  <div class="card-body no-pad">
+    <table class="data-table">
+      <thead><tr><th>发票号</th><th>开票方式</th><th>费用项目</th><th class="text-right">金额</th><th>状态</th><th>日期</th></tr></thead>
+      <tbody id="invTbody"></tbody>
+    </table>
+  </div>
+</div>
+`;
+
+renderVenueFees();
+renderExtraFees();
+renderPayments();
+renderInvoices();
+renderSummary();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

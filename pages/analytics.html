@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>经营与场地分析 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('analytics', '经营与场地分析');
+
+/* ========== 工具 ========== */
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function wan(n){ return (Number(n) / 10000).toFixed(2) + ' 万'; }
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+
+/* ========== 基础配置 ========== */
+const VENUES = [
+  {key:'', label:'全部场馆', ratio:1},
+  {key:'总部', label:'地丰体育中心（总部）', ratio:0.49},
+  {key:'篮球公园', label:'地丰篮球公园', ratio:0.26},
+  {key:'网球中心', label:'地丰网球中心', ratio:0.10},
+  {key:'羽毛球馆', label:'地丰羽毛球馆', ratio:0.15},
+];
+const BIZ_TYPES = [
+  {key:'', label:'全部业务', factor:1},
+  {key:'场地预约', label:'场地预约', factor:0.58},
+  {key:'会员充值', label:'会员充值', factor:0.17},
+  {key:'商品销售', label:'商品销售', factor:0.13},
+  {key:'物品租赁', label:'物品租赁', factor:0.07},
+  {key:'赛事收入', label:'赛事收入', factor:0.05},
+];
+const DIM_BASE = {
+  '日':   {revenue:26750,   orders:128,  customers:96,   mom:8.2,  label:'按日'},
+  '周':   {revenue:178900,  orders:862,  customers:640,  mom:6.4,  label:'按周'},
+  '月':   {revenue:386500,  orders:1740, customers:1180, mom:12.5, label:'按月'},
+  '季':   {revenue:1168000, orders:5140, customers:3420, mom:15.8, label:'按季'},
+  '年':   {revenue:4236000, orders:19260,customers:12800,mom:18.6, label:'按年'},
+};
+const TREND_SRC = {
+  '日': MOCK.dailyRevenue.map(d => ({label:d.date, value:d.revenue})),
+  '周': [
+    {label:'09/07', value:138600}, {label:'09/14', value:149200}, {label:'09/21', value:156300},
+    {label:'09/28', value:162800}, {label:'10/05', value:171400}, {label:'10/12', value:179600},
+    {label:'10/19', value:184200}, {label:'10/26', value:178900}
+  ],
+  '月': MOCK_EXT.analyticsTrend.map(d => ({label:d.month, value:d.revenue})),
+  '季': [
+    {label:'2025Q3', value:948000}, {label:'2025Q4', value:1062000}, {label:'2026Q1', value:1028000},
+    {label:'2026Q2', value:1096000}, {label:'2026Q3', value:1112000}, {label:'2026Q4', value:1168000}
+  ],
+  '年': [
+    {label:'2023', value:3150000}, {label:'2024', value:3620000},
+    {label:'2025', value:3980000}, {label:'2026', value:4236000}
+  ]
+};
+
+/* ========== 状态 ========== */
+let courtSort = {key:'usage', dir:'desc'};
+let activeModal = null;
+
+function currentFilters(){
+  const venue = document.getElementById('an-venue')?.value || '';
+  const dim = document.getElementById('an-dim')?.value || '日';
+  const biz = document.getElementById('an-biz')?.value || '';
+  return {venue, dim, biz};
+}
+function venueRatio(key){
+  const v = VENUES.find(x => x.key === key);
+  return v ? v.ratio : 1;
+}
+function bizFactor(key){
+  const b = BIZ_TYPES.find(x => x.key === key);
+  return b ? b.factor : 1;
+}
+function totalScale(f){
+  return (f.venue ? venueRatio(f.venue) : 1) * bizFactor(f.biz);
+}
+function customFactor(){
+  const from = document.getElementById('an-from')?.value || '2026-10-01';
+  const to = document.getElementById('an-to')?.value || '2026-10-31';
+  const days = Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000) + 1);
+  return {days, factor: Math.min(2, Math.max(0.1, days / 30))};
+}
+
+function getMetrics(){
+  const f = currentFilters();
+  const base = f.dim === '自定义'
+    ? {revenue:386500, orders:1740, customers:1180, mom:12.5, label:'自定义区间'}
+    : (DIM_BASE[f.dim] || DIM_BASE['日']);
+  let factor = 1;
+  if(f.dim === '自定义'){ factor = customFactor().factor; }
+  const scale = totalScale(f) * factor;
+  const revenue = Math.round(base.revenue * scale);
+  const orders = Math.round(base.orders * scale);
+  const customers = Math.round(base.customers * (f.venue ? venueRatio(f.venue) : 1) * factor);
+  const avgPrice = orders ? Math.round(revenue / orders) : 0;
+  const vOff = {'':0,'总部':1.2,'篮球公园':2.4,'网球中心':-1.8,'羽毛球馆':0.6}[f.venue] || 0;
+  return {
+    revenue, orders, customers, avgPrice,
+    revenueMoM: (base.mom + vOff).toFixed(1),
+    ordersMoM: (base.mom * 0.7 + vOff).toFixed(1),
+    customersMoM: (base.mom * 0.5 + vOff).toFixed(1),
+    avgPriceMoM: (base.mom * 0.4 - vOff * 0.5).toFixed(1),
+    dimLabel: base.label
+  };
+}
+
+function getTrend(){
+  const f = currentFilters();
+  const scale = totalScale(f);
+  if(f.dim === '自定义'){
+    const {days, factor} = customFactor();
+    const from = new Date(document.getElementById('an-from')?.value || '2026-10-01');
+    const buckets = 6;
+    const slice = Math.max(1, Math.ceil(days / buckets));
+    return Array.from({length:buckets}).map((_, i) => {
+      const d = new Date(from.getTime() + i * slice * 86400000);
+      const md = String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0');
+      const base = 386500 * factor / buckets;
+      const wave = [0.86, 0.94, 1.02, 1.12, 1.06, 0.98][i];
+      return {label:md, value:Math.round(base * wave * scale)};
+    });
+  }
+  const src = TREND_SRC[f.dim] || TREND_SRC['日'];
+  return src.map(d => ({label:d.label, value:Math.round(d.value * scale)}));
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+<style>
+  .an-donut{width:160px;height:160px;border-radius:50%;position:relative;margin:0 auto 18px}
+  .an-donut::after{content:'';position:absolute;inset:26px;border-radius:50%;background:#fff}
+  .an-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2}
+  .an-legend{display:flex;flex-direction:column;gap:8px}
+  .an-legend-row{display:flex;align-items:center;gap:8px;font-size:13px}
+  .an-legend-row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .an-legend-row .nm{flex:1;color:var(--text-2)}
+  .an-chart-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--text-4);margin-top:6px}
+  .an-peak{display:flex;align-items:flex-end;gap:6px;height:180px;padding:10px 0}
+  .an-peak .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .an-peak .col .v{font-size:11px;color:var(--text-3)}
+  .an-board-card{background:#fff;border:1px solid var(--border-light);border-radius:var(--radius);padding:16px;cursor:pointer;transition:all .15s}
+  .an-board-card:hover{border-color:var(--primary);box-shadow:var(--shadow-md)}
+  .an-board-card .nm{font-weight:600;display:flex;align-items:center;justify-content:space-between}
+  .an-board-card .amt{font-size:24px;font-weight:700;margin:6px 0}
+  .an-mini{display:flex;gap:10px;font-size:12px;color:var(--text-3);flex-wrap:wrap}
+  .an-split{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:10px;background:var(--border-light)}
+  .an-split span{display:block;height:100%}
+  .an-sortable th{cursor:pointer;user-select:none}
+  .an-sortable th:hover{color:var(--primary)}
+  .an-dim-date{display:none}
+</style>
+<div class="page-header">
+  <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+    <div>
+      <div class="page-title">经营与场地分析</div>
+      <div class="page-desc">收入、渠道、场地使用率与峰谷时段的综合分析 · 数据口径：已支付且已核销订单，退款按原单冲减</div>
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-default" onclick="exportReport()"><i data-lucide="download"></i>导出报表</button>
+      <button class="btn btn-default" onclick="savePersonalView()"><i data-lucide="bookmark"></i>保存为个人视图</button>
+      <button class="btn btn-primary" onclick="openDrillBoard()"><i data-lucide="arrow-down-right"></i>按场地下钻</button>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-body" style="padding:16px 20px">
+    <div class="toolbar" style="margin-bottom:0">
+      <div class="filter-group">
+        <span class="text-muted" style="font-size:13px">场馆</span>
+        <select class="form-select" id="an-venue" onchange="renderAll()">
+          ${VENUES.map(v => `<option value="${v.key}">${v.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="text-muted" style="font-size:13px">时间维度</span>
+        <select class="form-select" id="an-dim" onchange="onDimChange()">
+          ${['日','周','月','季','年','自定义'].map(d => `<option value="${d}">${d}</option>`).join('')}
+        </select>
+      </div>
+      <div class="filter-group an-dim-date" id="an-custom-box" style="gap:6px">
+        <input class="form-input" type="date" id="an-from" value="2026-10-01" style="min-width:130px" onchange="renderAll()">
+        <span class="text-muted">至</span>
+        <input class="form-input" type="date" id="an-to" value="2026-10-31" style="min-width:130px" onchange="renderAll()">
+      </div>
+      <div class="filter-group">
+        <span class="text-muted" style="font-size:13px">业务类型</span>
+        <select class="form-select" id="an-biz" onchange="renderAll()">
+          ${BIZ_TYPES.map(b => `<option value="${b.key}">${b.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="spacer"></div>
+      <span class="tag tag-gray" id="an-filter-summary">全场馆 · 按日</span>
+    </div>
+  </div>
+</div>
+
+<div class="stats-grid" id="an-stats"></div>
+
+<div style="display:grid;grid-template-columns:1.6fr 1fr;gap:16px" class="mb-16">
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">营收趋势 <span class="text-muted" style="font-size:12px;font-weight:400" id="an-trend-sub"></span></div>
+      <div class="flex gap-8">
+        <button class="btn btn-ghost btn-sm" onclick="toast('已切换为金额视图','info')">金额</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('订单量视图在报表中心提供','info')">订单量</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="bar-chart" id="an-trend" style="height:230px"></div>
+      <div class="an-chart-axis"><span>点击柱体可查看当日/当周明细</span><span>单位：元</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header"><div class="card-title">渠道收入占比</div><span class="tag tag-blue" id="an-channel-total"></span></div>
+    <div class="card-body" id="an-channel"></div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1.2fr;gap:16px" class="mb-16">
+  <div class="card">
+    <div class="card-header"><div class="card-title">场地使用率排行</div><span class="tag tag-gray">Top 6</span></div>
+    <div class="card-body" id="an-usage"></div>
+  </div>
+  <div class="card">
+    <div class="card-header"><div class="card-title">峰谷时段分布</div><span class="text-muted" style="font-size:12px">柱高 = 时段客流密度</span></div>
+    <div class="card-body">
+      <div class="an-peak" id="an-peak"></div>
+      <div class="divider" style="margin:8px 0"></div>
+      <div class="flex justify-between" style="font-size:12px;color:var(--text-3)">
+        <span>高峰 18:00-20:00 · 建议加派前台</span>
+        <span>低谷 06:00-08:00 · 可推早场优惠</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-header">
+    <div class="card-title">场地收入明细</div>
+    <div class="flex gap-8 items-center">
+      <span class="text-muted" style="font-size:12px" id="an-court-count"></span>
+      <button class="btn btn-ghost btn-sm" onclick="exportReport('场地收入明细')"><i data-lucide="file-down"></i>导出明细</button>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table class="data-table an-sortable">
+        <thead><tr>
+          <th>场地</th>
+          <th>类型</th>
+          <th onclick="sortCourt('usage')">使用率 <span id="an-sort-usage">↓</span></th>
+          <th class="text-right" onclick="sortCourt('revenue')">收入 <span id="an-sort-revenue"></span></th>
+          <th>高峰时段</th>
+          <th>操作</th>
+        </tr></thead>
+        <tbody id="an-court-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-header">
+    <div class="card-title">当日收入看板</div>
+    <div class="flex gap-8 items-center">
+      <span class="tag tag-green"><span class="dot" style="background:var(--success)"></span>实时更新</span>
+      <button class="btn btn-ghost btn-sm" onclick="exportReport('当日收入看板')">导出台账</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px" id="an-board"></div>
+    <div class="divider"></div>
+    <div class="flex justify-between" style="font-size:12px;color:var(--text-3);flex-wrap:wrap;gap:8px">
+      <span>口径：当日 00:00 至当前时刻，含线上/线下、现金与储值；退款单独列示不冲抵收入。</span>
+      <span>点击任意场馆卡片可下钻查看场地与业务类型构成</span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="display:flex;gap:14px;align-items:flex-start">
+    <span class="stat-icon blue" style="flex-shrink:0"><i data-lucide="info"></i></span>
+    <div>
+      <div class="font-medium mb-8">指标说明</div>
+      <div class="text-muted" style="font-size:13px;line-height:1.8">
+        营业收入按权责发生制确认，仅统计已完成服务且已核销的订单；退款在发生期间冲减，不做跨期调整。
+        场地使用率 = 已售时段数 / 可售时段数；峰谷密度按每小时核销客流计算并归一化展示。
+        本页所有筛选条件会同时作用于指标卡、趋势图、渠道结构与场地明细，下钻结果继承当前筛选。
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+/* ========== 场地/渠道基础数据 ========== */
+const COURT_DATA = [
+  {court:'2号篮球场',  venue:'总部',     type:'篮球',   usage:82.5, revenue:4820, peak:'18:00-21:00'},
+  {court:'1号足球场',  venue:'总部',     type:'足球',   usage:68.2, revenue:6350, peak:'19:00-21:00'},
+  {court:'A1篮球场',   venue:'篮球公园', type:'篮球',   usage:48.5, revenue:3820, peak:'19:00-22:00'},
+  {court:'B1羽毛球场', venue:'羽毛球馆', type:'羽毛球', usage:56.4, revenue:2940, peak:'14:00-17:00'},
+  {court:'B2羽毛球场', venue:'羽毛球馆', type:'羽毛球', usage:41.2, revenue:2160, peak:'18:00-21:00'},
+  {court:'3号网球场',  venue:'网球中心', type:'网球',   usage:18.5, revenue:1680, peak:'09:00-11:00'},
+  {court:'T1网球场',   venue:'网球中心', type:'网球',   usage:21.4, revenue:1240, peak:'16:00-18:00'}
+];
+const CHANNELS = [
+  {name:'小程序', color:'#1677ff', base:45},
+  {name:'线下',   color:'#10b981', base:28},
+  {name:'美团',   color:'#f59e0b', base:18},
+  {name:'抖音',   color:'#8b5cf6', base:9}
+];
+let lastTrend = [];
+
+function onDimChange(){
+  const dim = document.getElementById('an-dim')?.value || '日';
+  const box = document.getElementById('an-custom-box');
+  if(box) box.style.display = dim === '自定义' ? 'flex' : 'none';
+  renderAll();
+}
+
+function renderAll(){
+  const f = currentFilters();
+  const vLabel = VENUES.find(v => v.key === f.venue)?.label || '全部场馆';
+  const bLabel = BIZ_TYPES.find(b => b.key === f.biz)?.label || '全部业务';
+  const sm = document.getElementById('an-filter-summary');
+  if(sm) sm.textContent = `${vLabel} · ${f.dim}${f.dim === '自定义' ? '' : ''} · ${bLabel}`;
+  renderStats();
+  renderTrend();
+  renderChannel();
+  renderUsage();
+  renderPeak();
+  renderCourtTable();
+  renderBoard();
+  refreshIcons();
+}
+
+/* ========== 指标卡 ========== */
+function renderStats(){
+  const m = getMetrics();
+  const el = document.getElementById('an-stats');
+  if(!el) return;
+  const trendHtml = (val, label) => {
+    const up = Number(val) >= 0;
+    return `<div class="stat-trend ${up ? 'up' : 'down'}">
+      <i data-lucide="${up ? 'trending-up' : 'trending-down'}" style="width:14px"></i>
+      环比 ${up ? '+' : ''}${val}%
+      <span class="text-muted" style="margin-left:6px">同比 ${up ? '+' : ''}${(Number(val) + 4.6).toFixed(1)}%</span>
+    </div>`;
+  };
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">营业收入 <span class="stat-icon blue"><i data-lucide="circle-dollar-sign"></i></span></div>
+      <div class="stat-value">¥${money(m.revenue)}</div>
+      ${trendHtml(m.revenueMoM)}
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">订单数 <span class="stat-icon green"><i data-lucide="receipt"></i></span></div>
+      <div class="stat-value">${m.orders.toLocaleString()}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      ${trendHtml(m.ordersMoM)}
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">客流（客户数） <span class="stat-icon orange"><i data-lucide="users"></i></span></div>
+      <div class="stat-value">${m.customers.toLocaleString()}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 人</span></div>
+      ${trendHtml(m.customersMoM)}
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">客单价 <span class="stat-icon purple"><i data-lucide="wallet"></i></span></div>
+      <div class="stat-value">¥${m.avgPrice}</div>
+      ${trendHtml(m.avgPriceMoM)}
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 营收趋势 ========== */
+function renderTrend(){
+  const data = getTrend();
+  lastTrend = data;
+  const max = Math.max(...data.map(d => d.value), 1);
+  const el = document.getElementById('an-trend');
+  const sub = document.getElementById('an-trend-sub');
+  if(sub) sub.textContent = '（' + (currentFilters().dim === '自定义' ? '自定义区间' : currentFilters().dim) + '）';
+  if(!el) return;
+  el.innerHTML = data.map((d, i) => {
+    const h = Math.max(6, Math.round(d.value / max * 100));
+    return `<div class="bar" style="cursor:pointer" onclick="openTrendDrill(${i})" title="¥${money(d.value)}">
+      <div style="font-size:11px;color:var(--text-3)">${(d.value / 10000).toFixed(1)}万</div>
+      <div class="bar-fill" style="height:${h}%;background:${i === data.length - 1 ? 'linear-gradient(180deg,#06b6d4,#1677ff)' : 'linear-gradient(180deg,#1677ff,#4096ff)'}"></div>
+      <div class="bar-label">${d.label}</div>
+    </div>`;
+  }).join('');
+  refreshIcons();
+}
+
+/* ========== 渠道环形图 ========== */
+function renderChannel(){
+  const f = currentFilters();
+  const total = getMetrics().revenue;
+  let shares = CHANNELS.map(c => ({...c}));
+  if(f.biz === '商品销售'){
+    shares = [
+      {name:'小程序', color:'#1677ff', base:38}, {name:'线下', color:'#10b981', base:42},
+      {name:'美团', color:'#f59e0b', base:12}, {name:'抖音', color:'#8b5cf6', base:8}
+    ];
+  }else if(f.biz === '赛事收入'){
+    shares = [
+      {name:'小程序', color:'#1677ff', base:52}, {name:'线下', color:'#10b981', base:40},
+      {name:'美团', color:'#f59e0b', base:5}, {name:'抖音', color:'#8b5cf6', base:3}
+    ];
+  }
+  const sum = shares.reduce((s, c) => s + c.base, 0);
+  let cumulative = 0;
+  const gradient = shares.map(c => {
+    const pct = c.base / sum * 100;
+    const seg = `${c.color} ${cumulative}% ${cumulative + pct}%`;
+    cumulative += pct;
+    return seg;
+  }).join(', ');
+  const legend = shares.map(c => {
+    const pct = c.base / sum * 100;
+    return `<div class="an-legend-row">
+      <span class="dot" style="background:${c.color}"></span>
+      <span class="nm">${c.name}</span>
+      <span class="font-medium">¥${money(total * pct / 100)}</span>
+      <span class="text-muted" style="width:44px;text-align:right">${pct.toFixed(1)}%</span>
+    </div>`;
+  }).join('');
+  document.getElementById('an-channel-total').textContent = '合计 ¥' + money(total);
+  document.getElementById('an-channel').innerHTML = `
+    <div class="an-donut" style="background:conic-gradient(${gradient})">
+      <div class="an-donut-center">
+        <div style="font-size:11px;color:var(--text-3)">渠道收入</div>
+        <div style="font-size:20px;font-weight:700">${(total / 10000).toFixed(1)}万</div>
+      </div>
+    </div>
+    <div class="an-legend">${legend}</div>`;
+}
+
+/* ========== 场地使用率排行 ========== */
+function courtRows(){
+  const f = currentFilters();
+  let list = COURT_DATA.filter(c => !f.venue || c.venue === f.venue);
+  const bf = bizFactor(f.biz);
+  list = list.map(c => ({...c, revenue: Math.round(c.revenue * bf)}));
+  return list.sort((a, b) => {
+    const av = a[courtSort.key], bv = b[courtSort.key];
+    return courtSort.dir === 'desc' ? bv - av : av - bv;
+  });
+}
+
+function renderUsage(){
+  const list = [...COURT_DATA].filter(c => !currentFilters().venue || c.venue === currentFilters().venue)
+    .sort((a, b) => b.usage - a.usage).slice(0, 6);
+  const el = document.getElementById('an-usage');
+  if(!el) return;
+  el.innerHTML = list.length ? list.map(c => {
+    const color = c.usage >= 70 ? 'var(--success)' : c.usage >= 40 ? 'var(--primary)' : 'var(--warning)';
+    return `<div style="cursor:pointer" onclick="openCourtDrill('${c.court}')">
+      <div class="flex justify-between items-center" style="font-size:13px;margin-bottom:6px">
+        <span class="font-medium">${c.court} <span class="text-muted" style="font-weight:400">· ${c.venue}</span></span>
+        <span style="color:${color};font-weight:600">${c.usage}%</span>
+      </div>
+      <div class="progress" style="margin-bottom:14px"><div class="progress-bar" style="width:${c.usage}%;background:${color}"></div></div>
+    </div>`;
+  }).join('') : `<div class="empty"><div class="empty-icon"><i data-lucide="map-pin-off"></i></div><div class="empty-text">当前场馆暂无场地数据</div></div>`;
+  refreshIcons();
+}
+
+/* ========== 峰谷时段 ========== */
+function renderPeak(){
+  const f = currentFilters();
+  const scale = (f.venue ? venueRatio(f.venue) : 1) * bizFactor(f.biz);
+  const data = MOCK_EXT.peakDistribution.map(p => ({...p, density: Math.min(100, Math.round(p.density * (f.venue ? 1 : 1) * (f.biz ? scale : 1)))}));
+  const max = Math.max(...data.map(d => d.density), 1);
+  const el = document.getElementById('an-peak');
+  if(!el) return;
+  el.innerHTML = data.map(d => {
+    const h = Math.max(4, Math.round(d.density / max * 100));
+    const color = d.density >= 70 ? 'linear-gradient(180deg,#ef4444,#f59e0b)' : d.density >= 40 ? 'linear-gradient(180deg,#1677ff,#06b6d4)' : 'linear-gradient(180deg,#9ca3af,#d1d5db)';
+    return `<div class="col" title="${d.slot} 客流密度 ${d.density}">
+      <div class="v">${d.density}</div>
+      <div style="width:100%;max-width:34px;height:${h}%;background:${color};border-radius:4px 4px 0 0;transition:height .3s"></div>
+      <div class="bar-label">${d.slot}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ========== 场地收入表 ========== */
+function sortCourt(key){
+  if(courtSort.key === key){ courtSort.dir = courtSort.dir === 'desc' ? 'asc' : 'desc'; }
+  else { courtSort = {key, dir:'desc'}; }
+  const su = document.getElementById('an-sort-usage');
+  const sr = document.getElementById('an-sort-revenue');
+  if(su) su.textContent = key === 'usage' ? (courtSort.dir === 'desc' ? '↓' : '↑') : '';
+  if(sr) sr.textContent = key === 'revenue' ? (courtSort.dir === 'desc' ? '↓' : '↑') : '';
+  renderCourtTable();
+}
+
+function renderCourtTable(){
+  const list = courtRows();
+  const tb = document.getElementById('an-court-rows');
+  const cnt = document.getElementById('an-court-count');
+  if(cnt) cnt.textContent = `共 ${list.length} 个场地`;
+  if(!tb) return;
+  tb.innerHTML = list.length ? list.map(c => {
+    const color = c.usage >= 70 ? 'var(--success)' : c.usage >= 40 ? 'var(--primary)' : 'var(--warning)';
+    return `<tr>
+      <td class="font-medium">${c.court}<div class="text-muted" style="font-size:12px">${c.venue}</div></td>
+      <td><span class="tag ${c.type === '篮球' ? 'tag-orange' : c.type === '足球' ? 'tag-green' : c.type === '网球' ? 'tag-cyan' : 'tag-purple'}">${c.type}</span></td>
+      <td style="min-width:160px">
+        <div class="flex items-center gap-8">
+          <div class="progress flex-1"><div class="progress-bar" style="width:${c.usage}%;background:${color}"></div></div>
+          <span style="font-size:13px;color:${color};min-width:44px;text-align:right">${c.usage}%</span>
+        </div>
+      </td>
+      <td class="text-right font-medium">¥${money(c.revenue)}</td>
+      <td><span class="tag tag-gray">${c.peak}</span></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openCourtDrill('${c.court}')">下钻</button></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="6"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">当前筛选条件下暂无场地数据</div></div></td></tr>`;
+  refreshIcons();
+}
+
+/* ========== 当日收入看板 ========== */
+const BOARD_DATA = [
+  {venue:'总部', revenue:18650, orders:68, verify:61, refund:240, cash:3200, online:15450,
+   biz:[{n:'场地预约', v:62},{n:'会员充值', v:16},{n:'商品销售', v:14},{n:'其他', v:8}]},
+  {venue:'篮球公园', revenue:9820, orders:32, verify:29, refund:120, cash:1200, online:8620,
+   biz:[{n:'场地预约', v:58},{n:'会员充值', v:12},{n:'商品销售', v:22},{n:'其他', v:8}]},
+  {venue:'网球中心', revenue:3680, orders:15, verify:13, refund:0, cash:400, online:3280,
+   biz:[{n:'场地预约', v:70},{n:'会员充值', v:8},{n:'商品销售', v:10},{n:'其他', v:12}]},
+  {venue:'羽毛球馆', revenue:5940, orders:23, verify:21, refund:60, cash:900, online:5040,
+   biz:[{n:'场地预约', v:64},{n:'会员充值', v:14},{n:'商品销售', v:16},{n:'其他', v:6}]}
+];
+
+function renderBoard(){
+  const f = currentFilters();
+  let list = BOARD_DATA.filter(b => !f.venue || b.venue === f.venue);
+  if(f.biz){
+    const bf = bizFactor(f.biz);
+    list = list.map(b => ({
+      ...b,
+      revenue: Math.round(b.revenue * bf),
+      orders: Math.max(1, Math.round(b.orders * bf)),
+      verify: Math.round(b.verify * bf),
+      refund: Math.round(b.refund * bf),
+      cash: Math.round(b.cash * bf),
+      online: Math.round(b.online * bf)
+    }));
+  }
+  const el = document.getElementById('an-board');
+  if(!el) return;
+  el.innerHTML = list.length ? list.map(b => {
+    const cashPct = Math.round(b.cash / b.revenue * 100);
+    const onlinePct = 100 - cashPct;
+    return `<div class="an-board-card" onclick="openVenueDrill('${b.venue}')">
+      <div class="nm"><span>${b.venue}</span><span class="tag tag-blue">${b.orders} 单</span></div>
+      <div class="amt">¥${money(b.revenue)}</div>
+      <div class="an-mini">
+        <span>核销 <b class="text-success">${b.verify}</b></span>
+        <span>退款 <b class="text-error">¥${b.refund}</b></span>
+        <span>客单 <b>¥${Math.round(b.revenue / b.orders)}</b></span>
+      </div>
+      <div class="an-split">
+        <span style="width:${onlinePct}%;background:#1677ff"></span>
+        <span style="width:${cashPct}%;background:#10b981"></span>
+      </div>
+      <div class="flex justify-between" style="font-size:11px;color:var(--text-3);margin-top:4px">
+        <span>在线 ${onlinePct}%</span><span>现金 ${cashPct}%</span>
+      </div>
+      <div class="divider" style="margin:10px 0"></div>
+      <div style="font-size:11.5px;color:var(--text-3);line-height:1.9">
+        ${b.biz.map(x => `<span style="margin-right:10px">${x.n} <b style="color:var(--text-2)">${x.v}%</b></span>`).join('')}
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty" style="grid-column:1/-1"><div class="empty-icon"><i data-lucide="store"></i></div><div class="empty-text">当前筛选条件下暂无收入数据</div></div>`;
+}
+
+/* ========== 下钻弹窗 ========== */
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+
+function openVenueDrill(venue){
+  closeActiveModal();
+  const b = BOARD_DATA.find(x => x.venue === venue);
+  if(!b) return;
+  const courts = COURT_DATA.filter(c => c.venue === venue);
+  const cashPct = Math.round(b.cash / b.revenue * 100);
+  const f = currentFilters();
+  const bizRows = b.biz.map(x => {
+    const color = {'场地预约':'var(--primary)','会员充值':'var(--purple)','商品销售':'var(--success)','其他':'var(--text-4)'}[x.n] || 'var(--text-4)';
+    return `<div style="margin-bottom:12px">
+      <div class="flex justify-between" style="font-size:13px;margin-bottom:4px"><span>${x.n}</span><span class="font-medium">${x.v}% · ¥${money(b.revenue * x.v / 100)}</span></div>
+      <div class="progress"><div class="progress-bar" style="width:${x.v}%;background:${color}"></div></div>
+    </div>`;
+  }).join('');
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">${venue} · 当日经营下钻</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kv-item"><div class="k">营业收入</div><div class="v font-bold" style="color:var(--primary)">¥${money(b.revenue)}</div></div>
+        <div class="kv-item"><div class="k">订单数</div><div class="v">${b.orders} 单</div></div>
+        <div class="kv-item"><div class="k">核销笔数</div><div class="v text-success">${b.verify} 笔</div></div>
+        <div class="kv-item"><div class="k">退款金额</div><div class="v text-error">¥${money(b.refund)}</div></div>
+        <div class="kv-item"><div class="k">现金收款</div><div class="v">¥${money(b.cash)}（${cashPct}%）</div></div>
+        <div class="kv-item"><div class="k">在线收款</div><div class="v">¥${money(b.online)}（${100 - cashPct}%）</div></div>
+        <div class="kv-item"><div class="k">客单价</div><div class="v">¥${Math.round(b.revenue / b.orders)}</div></div>
+        <div class="kv-item"><div class="k">筛选口径</div><div class="v" style="font-size:13px">${f.dim} · ${BIZ_TYPES.find(x => x.key === f.biz)?.label || '全部业务'}</div></div>
+      </div>
+      <div class="font-medium mb-12">业务类型构成</div>
+      ${bizRows}
+      <div class="divider"></div>
+      <div class="font-medium mb-12">场地明细</div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>场地</th><th>类型</th><th>使用率</th><th class="text-right">收入</th><th>高峰时段</th></tr></thead>
+          <tbody>
+            ${courts.length ? courts.map(c => `<tr>
+              <td class="font-medium">${c.court}</td>
+              <td><span class="tag tag-gray">${c.type}</span></td>
+              <td>${c.usage}%</td>
+              <td class="text-right">¥${money(c.revenue)}</td>
+              <td>${c.peak}</td>
+            </tr>`).join('') : `<tr><td colspan="5" class="text-muted text-center">该场馆暂无场地级数据</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="exportReport('${venue}下钻明细')">导出该场馆</button>
+    </div>
+  </div>`);
+}
+
+function openCourtDrill(court){
+  closeActiveModal();
+  const c = COURT_DATA.find(x => x.court === court);
+  if(!c) return;
+  const f = currentFilters();
+  const revenue = Math.round(c.revenue * bizFactor(f.biz));
+  const hours = ['06-08','08-10','10-12','12-14','14-16','16-18','18-20','20-22','22-23'];
+  const base = Math.round(c.usage / 10);
+  const bars = hours.map((h, i) => {
+    const v = Math.max(2, Math.round(base * [0.4,0.6,0.8,0.5,0.9,1,1.2,0.9,0.3][i]));
+    return `<div class="col" title="${h}">
+      <div class="v">${v}</div>
+      <div style="width:100%;max-width:26px;height:${Math.min(100, v / 12 * 100)}%;background:${v >= 9 ? 'var(--warning)' : 'var(--primary)'};border-radius:3px 3px 0 0"></div>
+      <div class="bar-label">${h}</div>
+    </div>`;
+  }).join('');
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">${c.court} · 场地经营下钻</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">所属场馆</div><div class="v">${c.venue}</div></div>
+        <div class="kv-item"><div class="k">场地类型</div><div class="v">${c.type}</div></div>
+        <div class="kv-item"><div class="k">使用率</div><div class="v" style="color:var(--primary)">${c.usage}%</div></div>
+        <div class="kv-item"><div class="k">收入（当前筛选）</div><div class="v font-bold">¥${money(revenue)}</div></div>
+        <div class="kv-item"><div class="k">高峰时段</div><div class="v">${c.peak}</div></div>
+        <div class="kv-item"><div class="k">可售时段 / 已售</div><div class="v">17 / ${Math.round(17 * c.usage / 100)}</div></div>
+      </div>
+      <div class="font-medium mb-12">时段客流分布</div>
+      <div class="an-peak" style="height:160px">${bars}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="exportReport('${c.court}场地明细')">导出场地明细</button>
+    </div>
+  </div>`);
+}
+
+function openTrendDrill(i){
+  closeActiveModal();
+  const d = lastTrend[i];
+  if(!d) return;
+  const orders = Math.round(d.value / 209);
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">${d.label} · 营收明细</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">营业收入</div><div class="v font-bold">¥${money(d.value)}</div></div>
+        <div class="kv-item"><div class="k">估算订单数</div><div class="v">${orders} 单</div></div>
+        <div class="kv-item"><div class="k">统计维度</div><div class="v">${currentFilters().dim}</div></div>
+        <div class="kv-item"><div class="k">数据状态</div><div class="v"><span class="tag tag-green">已核销</span></div></div>
+      </div>
+      <div class="font-medium mb-12">渠道构成（按占比折算）</div>
+      ${CHANNELS.map(c => `<div class="list-row">
+        <span class="dot" style="background:${c.color}"></span>
+        <span class="flex-1">${c.name}</span>
+        <span class="text-muted" style="font-size:12px">${c.base}%</span>
+        <span class="font-medium">¥${money(d.value * c.base / 100)}</span>
+      </div>`).join('')}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="exportReport('${d.label}营收明细')">导出</button>
+    </div>
+  </div>`);
+}
+
+function openDrillBoard(){
+  closeActiveModal();
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">按场地下钻 · 当日收入</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>场馆</th><th class="text-right">收入</th><th class="text-right">订单</th><th class="text-right">核销</th><th class="text-right">退款</th><th>在线占比</th><th>操作</th></tr></thead>
+          <tbody>
+            ${BOARD_DATA.map(b => `<tr>
+              <td class="font-medium">${b.venue}</td>
+              <td class="text-right">¥${money(b.revenue)}</td>
+              <td class="text-right">${b.orders}</td>
+              <td class="text-right text-success">${b.verify}</td>
+              <td class="text-right text-error">¥${money(b.refund)}</td>
+              <td>${Math.round(b.online / b.revenue * 100)}%</td>
+              <td><button class="btn btn-ghost btn-sm" onclick="openVenueDrill('${b.venue}')">下钻</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="text-muted mt-12" style="font-size:12px">下钻结果继承顶部场馆/时间/业务类型筛选（当前 ${currentFilters().dim}）。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="exportReport('按场地下钻')">导出</button>
+    </div>
+  </div>`);
+}
+
+/* ========== 导出 / 个人视图 ========== */
+function exportReport(scope){
+  const f = currentFilters();
+  const vLabel = VENUES.find(v => v.key === f.venue)?.label || '全部场馆';
+  const bLabel = BIZ_TYPES.find(b => b.key === f.biz)?.label || '全部业务';
+  toast(`已生成「${scope || '经营分析报表'}」导出任务：${vLabel} · ${f.dim} · ${bLabel}，请在下载中心查看`, 'success');
+}
+
+function savePersonalView(){
+  const f = currentFilters();
+  try{
+    localStorage.setItem('df_analytics_view', JSON.stringify(f));
+  }catch(e){}
+  toast('已保存为个人视图，可在下次进入时一键恢复', 'success');
+  if(window.API && window.API.delay) { /* 保留扩展入口 */ }
+}
+
+/* ========== 初始化 ========== */
+document.getElementById('an-custom-box').style.display = 'none';
+renderAll();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

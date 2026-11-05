@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>商品套餐同步 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('thirdparty-goods', '商品套餐同步');
+
+/* ========== 工具 ========== */
+var GOODS_PAGE = 1;
+var GOODS_PAGE_SIZE = 8;
+var activeModal = null;
+var TODAY = '2026-11-05';
+var VENUE_OPTIONS = ['总部', '篮球公园', '网球中心', '羽毛球馆'];
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function money(n){ return (Number(n) || 0).toFixed(2); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function nowDate(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2, '0'); };
+  return TODAY.slice(0, 4) + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function val(id){ var el = document.getElementById(id); return el ? el.value : ''; }
+
+/* ========== 数据 ========== */
+var PRODUCT_META = {
+  '篮球半场2小时套餐': {spec:'半场 / 2小时', court:'A1篮球场、A2篮球场', validFrom:'2026-11-01', validUntil:'2027-10-31', rules:'需提前1天在线预约；每单限订1个半场；周末及节假日通用，不与其他优惠叠加', sold:86},
+  '羽毛球1小时体验券': {spec:'1小时 / 片', court:'B1羽毛球场', validFrom:'2026-10-01', validUntil:'2027-09-30', rules:'工作日 09:00-22:00 可用；每人限用1张；需提前2小时预约', sold:326},
+  '网球私教体验课': {spec:'1对1 / 60分钟', court:'T1网球场', validFrom:'2026-10-15', validUntil:'2027-04-30', rules:'含教练费与场地费；需提前24小时预约；每人限体验1次', sold:42},
+  '篮球馆月卡': {spec:'30天不限次', court:'A1篮球场、A2篮球场', validFrom:'2026-11-01', validUntil:'2027-12-31', rules:'自购买之日起30天内有效；仅限本人使用；高峰时段需预约', sold:18}
+};
+
+var GOODS = MOCK_EXT.platformGoods.map(function(g){
+  var meta = PRODUCT_META[g.name] || {
+    spec:'标准套餐', court:'场馆通用场地', validFrom:'2026-10-01', validUntil:'2027-09-30',
+    rules:'需提前预约使用；不可与其他优惠叠加', sold:0
+  };
+  return {
+    id:g.id, platform:g.platform, name:g.name, price:g.price, stock:g.stock,
+    venue:g.venue, status:g.status, updateTime:g.updateTime,
+    spec:meta.spec, court:meta.court, validFrom:meta.validFrom, validUntil:meta.validUntil,
+    rules:meta.rules, sold:meta.sold, venues:[g.venue], shelf:'上架'
+  };
+});
+
+var EXTRA_GOODS = [
+  {id:'PG005', platform:'美团', name:'羽毛球2小时畅打券', price:69.9, stock:120, venue:'羽毛球馆', status:'已同步', updateTime:'2026-10-26', spec:'2小时 / 片', court:'B1羽毛球场、B2羽毛球场', validFrom:'2026-10-01', validUntil:'2027-09-30', rules:'工作日 09:00-22:00 可用；周末需补差价20元；每人限购2张', sold:142, venues:['羽毛球馆'], shelf:'上架'},
+  {id:'PG006', platform:'抖音', name:'篮球夜场3小时套餐', price:199, stock:40, venue:'篮球公园', status:'待同步', updateTime:'2026-10-30', spec:'全场 / 3小时', court:'A1篮球场、A2篮球场', validFrom:'2026-11-01', validUntil:'2027-10-31', rules:'仅限18:00-22:00使用；需提前1天预约；每单限1个全场', sold:0, venues:['篮球公园'], shelf:'上架'},
+  {id:'PG007', platform:'美团', name:'网球场地2小时券', price:160, stock:60, venue:'网球中心', status:'已同步', updateTime:'2026-10-25', spec:'2小时 / 片', court:'T1网球场', validFrom:'2026-10-01', validUntil:'2027-09-30', rules:'工作日全天可用；周末 14:00 后需补差价30元；含球拍租借1副', sold:96, venues:['网球中心'], shelf:'上架'},
+  {id:'PG008', platform:'抖音', name:'羽毛球私教体验课', price:129, stock:25, venue:'羽毛球馆', status:'同步失败', updateTime:'2026-10-29', spec:'1对1 / 60分钟', court:'B2羽毛球场', validFrom:'2026-10-15', validUntil:'2027-04-30', rules:'含教练费与场地费；需提前24小时预约；每人限体验1次', sold:0, venues:['羽毛球馆'], shelf:'上架'},
+  {id:'PG009', platform:'美团', name:'篮球馆周末畅打券', price:88, stock:150, venue:'篮球公园', status:'已同步', updateTime:'2026-10-24', spec:'2小时 / 半场', court:'A1篮球场、A2篮球场', validFrom:'2026-10-01', validUntil:'2027-09-30', rules:'仅限周六、周日 09:00-18:00 使用；每人限购3张', sold:210, venues:['篮球公园'], shelf:'上架'},
+  {id:'PG010', platform:'抖音', name:'网球月卡（工作日）', price:699, stock:20, venue:'网球中心', status:'同步失败', updateTime:'2026-10-28', spec:'30天 / 工作日', court:'T1网球场', validFrom:'2026-11-01', validUntil:'2027-12-31', rules:'仅限工作日使用；需提前1天预约；实名认证后生效', sold:0, venues:['网球中心'], shelf:'上架'},
+  {id:'PG011', platform:'美团', name:'羽毛球馆月卡', price:599, stock:30, venue:'羽毛球馆', status:'待同步', updateTime:'2026-10-30', spec:'30天不限次', court:'B1羽毛球场、B2羽毛球场', validFrom:'2026-11-01', validUntil:'2027-12-31', rules:'自购买之日起30天有效；仅限本人使用；高峰时段需预约', sold:0, venues:['羽毛球馆'], shelf:'上架'},
+  {id:'PG012', platform:'抖音', name:'篮球训练营体验课', price:99, stock:80, venue:'篮球公园', status:'已同步', updateTime:'2026-10-23', spec:'1课时 / 90分钟', court:'A2篮球场', validFrom:'2026-10-01', validUntil:'2027-03-31', rules:'适合6-12岁青少年；需家长陪同签到；每人限体验1次', sold:64, venues:['篮球公园'], shelf:'上架'},
+  {id:'PG013', platform:'美团', name:'羽毛球场地3小时券', price:108, stock:90, venue:'羽毛球馆', status:'同步失败', updateTime:'2026-10-27', spec:'3小时 / 片', court:'B1羽毛球场', validFrom:'2026-10-01', validUntil:'2027-09-30', rules:'工作日全天可用；周末 12:00 后不可用；需提前1天预约', sold:0, venues:['羽毛球馆'], shelf:'上架'},
+  {id:'PG014', platform:'抖音', name:'网球双打2小时套餐', price:220, stock:35, venue:'网球中心', status:'已同步', updateTime:'2026-10-22', spec:'2小时 / 双打', court:'T1网球场', validFrom:'2026-10-01', validUntil:'2027-09-30', rules:'每单限4人使用；需提前1天预约；含场地费与用球', sold:52, venues:['网球中心'], shelf:'上架'}
+];
+
+GOODS = GOODS.concat(EXTRA_GOODS);
+
+/* ========== 统计 ========== */
+function renderStats(){
+  var el = document.getElementById('tg-stats');
+  if(!el) return;
+  var synced = GOODS.filter(function(g){ return g.status === '已同步'; }).length;
+  var pending = GOODS.filter(function(g){ return g.status === '待同步'; }).length;
+  var failed = GOODS.filter(function(g){ return g.status === '同步失败'; }).length;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">已同步商品数 <span class="stat-icon green"><i data-lucide="check-circle-2"></i></span></div>
+      <div class="stat-value text-success">${synced}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 个</span></div>
+      <div class="stat-trend up"><i data-lucide="refresh-cw" style="width:14px"></i>本地与平台商品信息一致</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">待同步 <span class="stat-icon orange"><i data-lucide="clock-3"></i></span></div>
+      <div class="stat-value" style="color:var(--warning)">${pending}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 个</span></div>
+      <div class="stat-trend"><i data-lucide="upload" style="width:14px;color:var(--text-3)"></i>本地已变更，需同步至平台</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">同步失败 <span class="stat-icon red"><i data-lucide="x-circle"></i></span></div>
+      <div class="stat-value text-error">${failed}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 个</span></div>
+      <div class="stat-trend down"><i data-lucide="alert-triangle" style="width:14px"></i>请检查平台商品资质与参数</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 筛选 / 分页 ========== */
+function goodsFiltered(){
+  var platform = val('tg-platform');
+  var status = val('tg-status');
+  var kw = val('tg-kw').trim();
+  return GOODS.filter(function(g){
+    if(platform && g.platform !== platform) return false;
+    if(status && g.status !== status) return false;
+    if(kw && !(g.id.indexOf(kw) > -1 || g.name.indexOf(kw) > -1 || g.venues.join(',').indexOf(kw) > -1 || g.court.indexOf(kw) > -1)) return false;
+    return true;
+  });
+}
+
+function goodsActions(g){
+  var btns = '';
+  if(g.status === '待同步'){
+    btns += `<button class="btn btn-primary btn-sm" onclick="syncGoods('${g.id}')"><i data-lucide="upload" style="width:13px"></i>同步至平台</button>`;
+  } else if(g.status === '同步失败'){
+    btns += `<button class="btn btn-default btn-sm" onclick="syncGoods('${g.id}')"><i data-lucide="rotate-ccw" style="width:13px"></i>重新同步</button>`;
+  }
+  btns += `<button class="btn btn-default btn-sm" onclick="openGoodsModal('${g.id}')"><i data-lucide="pencil" style="width:13px"></i>编辑</button>`;
+  if(g.shelf === '已下架'){
+    btns += `<button class="btn btn-ghost btn-sm" disabled>已下架</button>`;
+  } else {
+    btns += `<button class="btn btn-ghost btn-sm" style="color:var(--error)" onclick="offShelf('${g.id}')"><i data-lucide="arrow-down-circle" style="width:13px"></i>下架</button>`;
+  }
+  return btns;
+}
+
+function renderTable(){
+  var list = goodsFiltered();
+  var pages = Math.max(1, Math.ceil(list.length / GOODS_PAGE_SIZE));
+  if(GOODS_PAGE > pages) GOODS_PAGE = pages;
+  var start = (GOODS_PAGE - 1) * GOODS_PAGE_SIZE;
+  var rows = list.slice(start, start + GOODS_PAGE_SIZE).map(function(g){
+    var statusTag = g.status === '已同步' ? 'tag-green' : (g.status === '待同步' ? 'tag-orange' : 'tag-red');
+    var shelfTag = g.shelf === '已下架' ? ' <span class="tag tag-gray">已下架</span>' : '';
+    return `<tr>
+      <td class="mono" style="font-size:13px">${g.id}</td>
+      <td><span class="tag ${g.platform === '美团' ? 'tag-orange' : 'tag-purple'}">${g.platform}</span></td>
+      <td style="min-width:180px"><div class="font-medium" style="font-size:13px">${esc(g.name)}${shelfTag}</div><div class="text-muted" style="font-size:12px">${esc(g.spec)} · 已售 ${g.sold}</div></td>
+      <td class="text-right">¥${money(g.price)}</td>
+      <td class="text-right">${g.stock}</td>
+      <td style="font-size:12px;color:var(--text-2);min-width:150px">${esc(g.venues.join('、'))}<div class="text-muted">${esc(g.court)}</div></td>
+      <td style="font-size:12px;white-space:nowrap">${g.validFrom}<br>至 ${g.validUntil}</td>
+      <td style="font-size:12px;color:var(--text-2);max-width:220px">${esc(g.rules)}</td>
+      <td><span class="tag ${statusTag}">${g.status}</span></td>
+      <td style="font-size:12px;color:var(--text-3);white-space:nowrap">${g.updateTime || '—'}</td>
+      <td class="actions" style="flex-wrap:wrap">${goodsActions(g)}</td>
+    </tr>`;
+  }).join('');
+  var body = document.getElementById('tg-rows');
+  if(body){
+    body.innerHTML = rows || `<tr><td colspan="11"><div class="empty"><div class="empty-icon"><i data-lucide="search-x"></i></div><div class="empty-text">当前筛选条件下暂无商品</div></div></td></tr>`;
+  }
+  var cnt = document.getElementById('tg-count');
+  if(cnt) cnt.textContent = '筛选结果 ' + list.length + ' 个商品';
+
+  var pager = document.getElementById('tg-pager');
+  if(pager){
+    var btns = '';
+    for(var i = 1; i <= pages; i++){
+      btns += '<button class="page-btn ' + (i === GOODS_PAGE ? 'active' : '') + '" onclick="gotoGoodsPage(' + i + ')">' + i + '</button>';
+    }
+    pager.innerHTML = '<div class="pagination-info">共 ' + list.length + ' 个商品 · 第 ' + GOODS_PAGE + '/' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+      '<button class="page-btn" ' + (GOODS_PAGE <= 1 ? 'disabled' : '') + ' onclick="gotoGoodsPage(' + (GOODS_PAGE - 1) + ')"><i data-lucide="chevron-left" style="width:14px"></i></button>' +
+      btns +
+      '<button class="page-btn" ' + (GOODS_PAGE >= pages ? 'disabled' : '') + ' onclick="gotoGoodsPage(' + (GOODS_PAGE + 1) + ')"><i data-lucide="chevron-right" style="width:14px"></i></button>' +
+      '</div>';
+  }
+  refreshIcons();
+}
+
+function gotoGoodsPage(n){ GOODS_PAGE = n; renderTable(); }
+function applyGoodsFilters(){ GOODS_PAGE = 1; renderTable(); }
+function renderAll(){ renderStats(); renderTable(); }
+
+/* ========== 同步 / 下架 ========== */
+function syncGoods(id){
+  var g = GOODS.find(function(x){ return x.id === id; });
+  if(!g) return;
+  if(g.status === '已同步'){ toast('该商品已同步，无需重复操作', 'info'); return; }
+  g.status = '已同步';
+  g.updateTime = nowDate();
+  renderAll();
+  toast('商品「' + g.name + '」已同步至' + g.platform + '，两侧信息一致', 'success');
+}
+
+function offShelf(id){
+  var g = GOODS.find(function(x){ return x.id === id; });
+  if(!g) return;
+  if(g.shelf === '已下架'){ toast('该商品已下架', 'info'); return; }
+  confirmDialog('确认下架「' + g.name + '」？下架后将停止在' + g.platform + '平台售卖。', function(){
+    g.shelf = '已下架';
+    renderAll();
+    toast('商品「' + g.name + '」已下架，平台侧停止售卖', 'success');
+  });
+}
+
+/* ========== 新建 / 编辑 ========== */
+function openGoodsModal(id){
+  var g = id ? GOODS.find(function(x){ return x.id === id; }) : null;
+  var isEdit = !!g;
+  var data = g || {platform:'美团', name:'', spec:'', price:'', stock:'', validFrom:'2026-11-01', validUntil:'2027-10-31', rules:'', venues:[], court:''};
+  var venueBoxes = VENUE_OPTIONS.map(function(v){
+    var checked = data.venues.indexOf(v) > -1 ? ' checked' : '';
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:#fff">
+      <input type="checkbox" name="gm-venues" value="${v}"${checked} style="width:15px;height:15px" />${v}
+    </label>`;
+  }).join('');
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">${isEdit ? '编辑商品/套餐' : '新建商品/套餐'}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">商品/套餐名称 <span class="required">*</span></label>
+          <input class="form-input" id="gm-name" value="${esc(data.name)}" placeholder="如：篮球半场2小时套餐" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">同步平台 <span class="required">*</span></label>
+          <select class="form-select" id="gm-platform">
+            <option value="美团"${data.platform === '美团' ? ' selected' : ''}>美团</option>
+            <option value="抖音"${data.platform === '抖音' ? ' selected' : ''}>抖音</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">规格 <span class="required">*</span></label>
+          <input class="form-input" id="gm-spec" value="${esc(data.spec)}" placeholder="如：半场 / 2小时" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">价格（元） <span class="required">*</span></label>
+          <input class="form-input" id="gm-price" type="number" min="0" step="0.01" value="${data.price}" placeholder="0.00" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">库存 <span class="required">*</span></label>
+          <input class="form-input" id="gm-stock" type="number" min="0" step="1" value="${data.stock}" placeholder="0" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">有效期开始 <span class="required">*</span></label>
+          <input class="form-input" id="gm-validFrom" type="date" value="${data.validFrom}" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">有效期结束 <span class="required">*</span></label>
+          <input class="form-input" id="gm-validUntil" type="date" value="${data.validUntil}" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">适用场地 <span class="required">*</span></label>
+          <input class="form-input" id="gm-court" value="${esc(data.court)}" placeholder="如：A1篮球场、A2篮球场" />
+        </div>
+      </div>
+      <div class="form-item" style="margin-bottom:16px">
+        <label class="form-label">适用场馆（多选） <span class="required">*</span></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${venueBoxes}</div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">使用规则 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="gm-rules" placeholder="填写预约要求、可用时段、限购规则等">${esc(data.rules)}</textarea>
+      </div>
+      <div class="form-hint">保存后商品状态置为「待同步」，需手动同步至平台；平台侧变更将通过回调同步回本地。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveGoods(${isEdit ? "'" + g.id + "'" : "''"})">${isEdit ? '保存修改' : '创建商品'}</button>
+    </div>
+  </div>`);
+}
+
+function saveGoods(id){
+  var name = val('gm-name').trim();
+  var platform = val('gm-platform');
+  var spec = val('gm-spec').trim();
+  var price = parseFloat(val('gm-price'));
+  var stock = parseInt(val('gm-stock'), 10);
+  var from = val('gm-validFrom');
+  var until = val('gm-validUntil');
+  var court = val('gm-court').trim();
+  var rules = val('gm-rules').trim();
+  var venues = Array.prototype.slice.call(document.querySelectorAll('input[name="gm-venues"]:checked')).map(function(x){ return x.value; });
+
+  if(!name){ toast('请填写商品/套餐名称', 'error'); return; }
+  if(!spec){ toast('请填写规格', 'error'); return; }
+  if(!(price > 0)){ toast('请输入大于 0 的价格', 'error'); return; }
+  if(!(stock >= 0)){ toast('请输入不小于 0 的库存', 'error'); return; }
+  if(!from || !until){ toast('请选择完整的有效期', 'error'); return; }
+  if(until < from){ toast('有效期结束日期不能早于开始日期', 'error'); return; }
+  if(!venues.length){ toast('请至少选择一个适用场馆', 'error'); return; }
+  if(!court){ toast('请填写适用场地', 'error'); return; }
+  if(!rules){ toast('请填写使用规则', 'error'); return; }
+
+  if(id){
+    var g = GOODS.find(function(x){ return x.id === id; });
+    if(!g) return;
+    g.name = name;
+    g.platform = platform;
+    g.spec = spec;
+    g.price = price;
+    g.stock = stock;
+    g.validFrom = from;
+    g.validUntil = until;
+    g.court = court;
+    g.venues = venues;
+    g.venue = venues[0];
+    g.rules = rules;
+    g.status = '待同步';
+    g.updateTime = nowDate();
+    closeActiveModal();
+    renderAll();
+    toast('商品「' + name + '」已保存，状态置为待同步，请同步至平台', 'success');
+  } else {
+    var maxNum = GOODS.reduce(function(m, x){
+      var n = parseInt(x.id.replace(/\D/g, ''), 10) || 0;
+      return n > m ? n : m;
+    }, 0);
+    var newId = 'PG' + String(maxNum + 1).padStart(3, '0');
+    GOODS.unshift({
+      id:newId, platform:platform, name:name, price:price, stock:stock, venue:venues[0],
+      status:'待同步', updateTime:nowDate(), spec:spec, court:court, validFrom:from, validUntil:until,
+      rules:rules, sold:0, venues:venues, shelf:'上架'
+    });
+    closeActiveModal();
+    renderAll();
+    toast('商品「' + name + '」创建成功，待同步至' + platform, 'success');
+  }
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">商品套餐同步</div>
+        <div class="page-desc">维护美团、抖音渠道商品与套餐，统一价格、库存、适用场馆及有效期，并同步至平台侧</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="renderAll();toast('商品列表已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+        <button class="btn btn-primary" onclick="openGoodsModal('')"><i data-lucide="plus"></i>新建商品/套餐</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="tg-stats"></div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">平台商品列表</div>
+      <span class="text-muted" id="tg-count" style="font-size:13px"></span>
+    </div>
+    <div class="card-body">
+      <div class="toolbar">
+        <select class="form-select" id="tg-platform" onchange="applyGoodsFilters()">
+          <option value="">全部平台</option>
+          <option value="美团">美团</option>
+          <option value="抖音">抖音</option>
+        </select>
+        <select class="form-select" id="tg-status" onchange="applyGoodsFilters()">
+          <option value="">全部同步状态</option>
+          <option value="已同步">已同步</option>
+          <option value="待同步">待同步</option>
+          <option value="同步失败">同步失败</option>
+        </select>
+        <input class="form-input" id="tg-kw" placeholder="搜索商品ID / 名称 / 场馆 / 场地" oninput="applyGoodsFilters()" style="min-width:260px" />
+        <div class="spacer"></div>
+        <span class="text-muted" style="font-size:12px">共 ${GOODS.length} 个渠道商品</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>商品ID</th>
+              <th>平台</th>
+              <th>商品/套餐名称</th>
+              <th class="text-right">价格</th>
+              <th class="text-right">库存</th>
+              <th>适用场馆与场地</th>
+              <th>有效期</th>
+              <th>使用规则</th>
+              <th>同步状态</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="tg-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="tg-pager"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">同步说明</div>
+      <span class="tag tag-cyan">双向同步</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="arrow-up-right"></i></span>
+        <div><div class="font-medium" style="font-size:13px">本地 → 平台</div><div class="text-muted" style="font-size:12px">新建或编辑商品后状态置为待同步，需手动同步至平台；同步失败可按失败原因重试。</div></div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon green" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="arrow-down-left"></i></span>
+        <div><div class="font-medium" style="font-size:13px">平台 → 本地</div><div class="text-muted" style="font-size:12px">平台侧商品变更会回传本地，保持两侧一致；库存、价格、有效期以平台回传结果为最新。</div></div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="shield-alert"></i></span>
+        <div><div class="font-medium" style="font-size:13px">下架同步</div><div class="text-muted" style="font-size:12px">本地下架后同步通知平台停止售卖，已售出的券码仍可在有效期内正常核销。</div></div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>对外系统接口 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('api-integration', '对外系统接口');
+
+/* ========== 工具 ========== */
+var TODAY = '2026-11-05';
+var activeModal = null;
+var curCategory = '全部';
+var curView = 'card';
+var testingIds = {};
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function nowStr(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2, '0'); };
+  return TODAY + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function fmt(n){ return Number(n).toLocaleString('zh-CN'); }
+function esc(s){
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* ========== 数据 ========== */
+var DAILY = {
+  AI01:{calls:9840, fails:6},
+  AI02:{calls:1216, fails:5},
+  AI03:{calls:3860, fails:8},
+  AI04:{calls:1620, fails:13},
+  AI05:{calls:1180, fails:34},
+  AI06:{calls:620, fails:1},
+  AI07:{calls:306, fails:1}
+};
+
+// 本地演示：抖音开放平台联调中发现核销回传验签异常
+var INTERFACES = MOCK_EXT.apiIntegrations.map(function(it){
+  var copy = Object.assign({}, it);
+  if(copy.id === 'AI05'){
+    copy.status = '异常';
+    copy.statusNote = '核销回传验签失败（E5001）';
+  }
+  return copy;
+});
+
+var STATUS_STYLE = {'已联通':'tag-green', '联调中':'tag-orange', '异常':'tag-red'};
+var TYPE_STYLE = {'银行':'tag-blue', '发票':'tag-purple', '财务':'tag-cyan', '第三方':'tag-orange', '基础':'tag-gray'};
+var TYPE_ICON = {'银行':'credit-card', '发票':'file-invoice', '财务':'building-2', '第三方':'store', '基础':'globe'};
+var CATEGORIES = ['全部', '银行', '发票', '财务', '第三方', '基础'];
+
+var API_SPECS = {
+  AI01:{vendor:'兴业银行兴E付', items:[
+    {name:'聚合收款下单', method:'POST', path:'/v1/pay/unifiedorder', desc:'扫码/小程序发起聚合支付，返回支付参数与二维码链接'},
+    {name:'支付结果通知', method:'POST 回调', path:'/v1/pay/notify', desc:'接收支付成功/失败结果，验签后更新订单与收款流水'},
+    {name:'退款申请', method:'POST', path:'/v1/refund/apply', desc:'按原订单发起全额或部分退款，支持原路退回'},
+    {name:'退款结果通知', method:'POST 回调', path:'/v1/refund/notify', desc:'退款结果异步通知，更新退款单与订单状态'},
+    {name:'交易查询', method:'GET', path:'/v1/trade/query', desc:'按订单号查询交易状态，用于对账与异常补偿'},
+    {name:'收款流水下载', method:'GET', path:'/v1/bill/download', desc:'按日下载收款流水明细，供财务对账核销'}
+  ]},
+  AI02:{vendor:'百旺电子发票平台', items:[
+    {name:'发票开具', method:'POST', path:'/invoice/issue', desc:'按订单与购方信息开具电子发票，返回发票号与文件地址'},
+    {name:'红冲申请', method:'POST', path:'/invoice/red', desc:'对已开具发票发起红冲，关联原发票号与红冲原因'},
+    {name:'状态查询', method:'GET', path:'/invoice/status', desc:'查询开票/红冲处理状态，用于补偿与对账'},
+    {name:'文件下载', method:'GET', path:'/invoice/download', desc:'下载 PDF/OFD 发票文件，供客户下载与归档'},
+    {name:'购方信息校验', method:'POST', path:'/buyer/check', desc:'校验购方名称与税号一致性，校验不过不发起开票'}
+  ]},
+  AI03:{vendor:'用友 NCC', items:[
+    {name:'客商同步', method:'POST', path:'/api/customer/sync', desc:'客商主数据同步，含编码、名称、税号、银行账户'},
+    {name:'应收单', method:'POST', path:'/api/ar/push', desc:'按业务单据推送应收单，幂等键为业务单据号'},
+    {name:'收款单', method:'POST', path:'/api/receipt/push', desc:'推送收款单并回写财务单据号'},
+    {name:'付款单', method:'POST', path:'/api/payment/push', desc:'推送供应商付款单，关联应付单与合同'},
+    {name:'状态回写', method:'POST 回调', path:'/api/status/callback', desc:'接收财务单据审核/作废状态，回写业务单据'},
+    {name:'对账数据', method:'GET', path:'/api/reconcile/query', desc:'按期间拉取财务对账数据，支持差异比对'}
+  ]},
+  AI04:{vendor:'美团开放平台', items:[
+    {name:'商品套餐同步', method:'POST', path:'/api/goods/sync', desc:'同步场馆商品套餐、价格、库存与售卖状态'},
+    {name:'订单接入', method:'POST 回调', path:'/api/order/receive', desc:'接收美团订单，落单并锁定对应场地或商品'},
+    {name:'券码核销', method:'POST', path:'/api/coupon/verify', desc:'提交券码核销，返回核销结果与凭证'},
+    {name:'核销回传', method:'POST 回调', path:'/api/verify/callback', desc:'核销结果回传美团，失败自动重试'},
+    {name:'退款', method:'POST', path:'/api/refund/apply', desc:'按平台订单发起退款，同步退款状态'}
+  ]},
+  AI05:{vendor:'抖音开放平台', items:[
+    {name:'商品套餐同步', method:'POST', path:'/api/goods/sync', desc:'同步团购套餐、门店与可售库存'},
+    {name:'订单接入', method:'POST 回调', path:'/api/order/receive', desc:'接收抖音团购订单并生成预约单'},
+    {name:'券码核销', method:'POST', path:'/api/coupon/verify', desc:'提交券码核销，返回核销流水号'},
+    {name:'核销回传', method:'POST 回调', path:'/api/verify/callback', desc:'核销结果回传抖音，需验签后确认'},
+    {name:'退款', method:'POST', path:'/api/refund/apply', desc:'发起团购退款，接收退款状态变更'}
+  ]},
+  AI06:{vendor:'微信平台', items:[
+    {name:'小程序登录', method:'GET', path:'/sns/jscode2session', desc:'用登录 code 换取 openid / session_key'},
+    {name:'用户信息授权', method:'GET', path:'/sns/userinfo', desc:'获取用户昵称、头像等授权信息'},
+    {name:'订阅消息', method:'POST', path:'/cgi-bin/message/subscribe/send', desc:'按模板发送预约成功、开场提醒等订阅消息'}
+  ]},
+  AI07:{vendor:'短信服务商', items:[
+    {name:'短信下发', method:'POST', path:'/sms/send', desc:'按模板下发验证码、预约确认、退款通知'},
+    {name:'状态回执', method:'POST 回调', path:'/sms/receipt', desc:'接收发送状态回执，统计送达与失败'}
+  ]}
+};
+
+/* ========== 统计 ========== */
+function renderStats(){
+  var linked = INTERFACES.filter(function(x){ return x.status === '已联通'; }).length;
+  var testing = INTERFACES.filter(function(x){ return x.status === '联调中'; }).length;
+  var abnormal = INTERFACES.filter(function(x){ return x.status === '异常'; }).length;
+  var calls = 0, fails = 0;
+  INTERFACES.forEach(function(x){
+    var d = DAILY[x.id] || {calls:0, fails:0};
+    calls += d.calls;
+    fails += d.fails;
+  });
+  var rate = calls ? ((calls - fails) / calls * 100).toFixed(2) : '0.00';
+  var el = document.getElementById('api-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">已联通接口数 <span class="stat-icon green"><i data-lucide="plug"></i></span></div>
+      <div class="stat-value">${linked}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 个</span></div>
+      <div class="stat-trend"><i data-lucide="check-circle-2" style="width:14px;color:var(--success)"></i>共 ${INTERFACES.length} 个接口，${abnormal} 个异常待处理</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">联调中 <span class="stat-icon orange"><i data-lucide="loader-2"></i></span></div>
+      <div class="stat-value">${testing}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 个</span></div>
+      <div class="stat-trend"><i data-lucide="wrench" style="width:14px;color:var(--warning)"></i>美团联调中，抖音验签异常待修复</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">今日调用量 <span class="stat-icon blue"><i data-lucide="activity"></i></span></div>
+      <div class="stat-value">${fmt(calls)}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 次</span></div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>统计日期 ${TODAY}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">成功率 <span class="stat-icon cyan"><i data-lucide="percent"></i></span></div>
+      <div class="stat-value">${rate}%</div>
+      <div class="stat-trend up"><i data-lucide="check-circle-2" style="width:14px"></i>成功 ${fmt(calls - fails)} 次 / 共 ${fmt(calls)} 次</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 筛选 / 视图 ========== */
+function filteredInterfaces(){
+  var kwEl = document.getElementById('api-kw');
+  var stEl = document.getElementById('api-status');
+  var kw = (kwEl ? kwEl.value : '').trim().toLowerCase();
+  var st = stEl ? stEl.value : '';
+  return INTERFACES.filter(function(it){
+    if(curCategory !== '全部' && it.type !== curCategory) return false;
+    if(st && it.status !== st) return false;
+    if(kw){
+      var hit = it.name.toLowerCase().indexOf(kw) >= 0
+        || it.content.toLowerCase().indexOf(kw) >= 0
+        || it.endpoint.toLowerCase().indexOf(kw) >= 0
+        || it.id.toLowerCase().indexOf(kw) >= 0;
+      if(!hit) return false;
+    }
+    return true;
+  });
+}
+
+function renderCategoryBar(){
+  var el = document.getElementById('api-cats');
+  if(!el) return;
+  el.innerHTML = CATEGORIES.map(function(c){
+    var count = c === '全部' ? INTERFACES.length : INTERFACES.filter(function(x){ return x.type === c; }).length;
+    return `<button class="btn btn-sm ${c === curCategory ? 'btn-primary' : 'btn-default'}" onclick="setCategory('${c}')">${c}（${count}）</button>`;
+  }).join('');
+}
+
+function setCategory(c){
+  curCategory = c;
+  renderCategoryBar();
+  renderList();
+}
+
+function switchView(v){
+  curView = v;
+  var cardView = document.getElementById('view-card');
+  var tableView = document.getElementById('view-table');
+  var tabCard = document.getElementById('tab-card');
+  var tabTable = document.getElementById('tab-table');
+  if(cardView) cardView.style.display = v === 'card' ? '' : 'none';
+  if(tableView) tableView.style.display = v === 'table' ? '' : 'none';
+  if(tabCard) tabCard.classList.toggle('active', v === 'card');
+  if(tabTable) tabTable.classList.toggle('active', v === 'table');
+  refreshIcons();
+}
+
+function testButton(it, small){
+  if(testingIds[it.id]){
+    return `<button class="btn btn-default${small ? ' btn-sm' : ''}" disabled><i data-lucide="loader-2"></i>测试中…</button>`;
+  }
+  return `<button class="btn btn-default${small ? ' btn-sm' : ''}" onclick="testConnection('${it.id}')"><i data-lucide="plug-zap"></i>连通性测试</button>`;
+}
+
+function renderList(){
+  var list = filteredInterfaces();
+
+  /* 卡片视图 */
+  var grid = document.getElementById('api-grid');
+  if(grid){
+    if(!list.length){
+      grid.innerHTML = `<div class="card" style="grid-column:1/-1"><div class="empty">
+        <div class="empty-icon"><i data-lucide="plug"></i></div>
+        <div class="empty-text">当前筛选条件下暂无对外接口</div>
+      </div></div>`;
+    } else {
+      grid.innerHTML = list.map(function(it){
+        return `<div class="card">
+          <div class="card-body" style="display:flex;flex-direction:column;height:100%">
+            <div class="flex justify-between" style="gap:12px;align-items:flex-start">
+              <div class="flex gap-12" style="align-items:center">
+                <span class="stat-icon blue"><i data-lucide="${TYPE_ICON[it.type] || 'plug'}"></i></span>
+                <div>
+                  <div class="font-bold" style="font-size:15px">${it.name}</div>
+                  <div class="flex gap-8 mt-8" style="flex-wrap:wrap">
+                    <span class="tag ${TYPE_STYLE[it.type]}">${it.type}</span>
+                    <span class="tag ${STATUS_STYLE[it.status]}">${it.status}</span>
+                  </div>
+                </div>
+              </div>
+              <span class="mono text-muted" style="font-size:12px">${it.id}</span>
+            </div>
+            <div class="text-muted mt-12" style="font-size:13px;line-height:1.6;min-height:42px">${it.content}</div>
+            ${it.statusNote ? `<div class="text-error" style="font-size:12px;margin-top:6px"><i data-lucide="alert-triangle" style="width:12px;height:12px;vertical-align:middle"></i> ${it.statusNote}</div>` : ''}
+            <div class="divider" style="margin:12px 0"></div>
+            <div style="font-size:12px;color:var(--text-3)">接入地址</div>
+            <div class="mono" style="font-size:12px;color:var(--text-2);word-break:break-all;margin-top:2px">${it.endpoint}</div>
+            <div class="kv-grid mt-12" style="gap:8px 16px">
+              <div class="kv-item"><div class="k">鉴权方式</div><div class="v" style="font-size:13px">${it.auth}</div></div>
+              <div class="kv-item"><div class="k">最近测试</div><div class="v" style="font-size:13px">${it.lastTest || '—'}</div></div>
+            </div>
+            <div class="flex gap-8 mt-16" style="flex-wrap:wrap;margin-top:auto;padding-top:16px">
+              <button class="btn btn-primary btn-sm" onclick="viewDetail('${it.id}')"><i data-lucide="eye"></i>查看详情</button>
+              ${testButton(it, true)}
+              <button class="btn btn-ghost btn-sm" onclick="viewLogs('${it.id}')"><i data-lucide="scroll-text"></i>查看日志</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  /* 表格视图 */
+  var rows = document.getElementById('api-rows');
+  if(rows){
+    if(!list.length){
+      rows.innerHTML = `<tr><td colspan="7"><div class="empty">
+        <div class="empty-icon"><i data-lucide="plug"></i></div>
+        <div class="empty-text">当前筛选条件下暂无对外接口</div>
+      </div></td></tr>`;
+    } else {
+      rows.innerHTML = list.map(function(it){
+        return `<tr>
+          <td>
+            <div class="font-medium" style="font-size:13px">${it.name}</div>
+            <div class="mono text-muted" style="font-size:12px;margin-top:2px">${it.id}</div>
+          </td>
+          <td><span class="tag ${TYPE_STYLE[it.type]}">${it.type}</span></td>
+          <td><span class="tag ${STATUS_STYLE[it.status]}">${it.status}</span></td>
+          <td class="mono" style="font-size:12px;word-break:break-all">${it.endpoint}</td>
+          <td style="font-size:13px">${it.auth}</td>
+          <td style="font-size:13px;white-space:nowrap">${it.lastTest || '—'}</td>
+          <td>
+            <div class="actions" style="flex-wrap:wrap">
+              <button class="btn btn-default btn-sm" onclick="viewDetail('${it.id}')">查看详情</button>
+              ${testButton(it, true)}
+              <button class="btn btn-ghost btn-sm" onclick="viewLogs('${it.id}')">查看日志</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  var cnt = document.getElementById('api-count');
+  if(cnt) cnt.textContent = `当前筛选 ${list.length} 个接口`;
+  refreshIcons();
+}
+
+/* ========== 连通性测试 ========== */
+function testConnection(id){
+  var it = INTERFACES.filter(function(x){ return x.id === id; })[0];
+  if(!it || testingIds[id]) return;
+  testingIds[id] = true;
+  renderList();
+  setTimeout(function(){
+    delete testingIds[id];
+    it.lastTest = nowStr();
+    if(it.status === '异常'){
+      toast(`「${it.name}」连通性测试失败：验签未通过（E5001），请检查证书配置`, 'error');
+    } else {
+      toast(`「${it.name}」连通性测试成功，最近测试时间已更新`, 'success');
+    }
+    renderList();
+  }, 1000);
+}
+
+/* ========== 查看详情 ========== */
+function viewDetail(id){
+  var it = INTERFACES.filter(function(x){ return x.id === id; })[0];
+  if(!it) return;
+  var spec = API_SPECS[id];
+  var items = (spec ? spec.items : []).map(function(x, i){
+    return `<tr>
+      <td style="width:44px">${i + 1}</td>
+      <td class="font-medium" style="font-size:13px;white-space:nowrap">${x.name}</td>
+      <td><span class="tag tag-gray">${x.method}</span></td>
+      <td class="mono" style="font-size:12px;white-space:nowrap">${x.path}</td>
+      <td class="text-muted" style="font-size:13px">${x.desc}</td>
+    </tr>`;
+  }).join('');
+
+  activeModal = openModal(`<div class="modal modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">接口详情 · ${it.name}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">接口编号</div><div class="v mono">${it.id}</div></div>
+        <div class="kv-item"><div class="k">接口类型 / 状态</div><div class="v"><span class="tag ${TYPE_STYLE[it.type]}">${it.type}</span> <span class="tag ${STATUS_STYLE[it.status]}">${it.status}</span></div></div>
+        <div class="kv-item"><div class="k">接入地址</div><div class="v mono" style="font-size:13px;word-break:break-all">${it.endpoint}</div></div>
+        <div class="kv-item"><div class="k">鉴权方式</div><div class="v">${it.auth}</div></div>
+        <div class="kv-item"><div class="k">最近测试时间</div><div class="v">${it.lastTest || '—'}</div></div>
+        <div class="kv-item"><div class="k">方案说明</div><div class="v" style="font-size:13px">${spec ? spec.vendor : it.name}</div></div>
+      </div>
+      <div class="flex justify-between items-center mb-8">
+        <div class="font-medium">接口清单</div>
+        <span class="text-muted" style="font-size:12px">共 ${spec ? spec.items.length : 0} 个接口 · 全部接口均走 HTTPS + 报文签名</span>
+      </div>
+      <div class="table-wrap" style="border:1px solid var(--border-light);border-radius:8px">
+        <table class="data-table">
+          <thead><tr><th>序号</th><th>接口名称</th><th>方式</th><th>接口路径</th><th>说明</th></tr></thead>
+          <tbody>${items}</tbody>
+        </table>
+      </div>
+      <div class="text-muted mt-12" style="font-size:12px">
+        <i data-lucide="info" style="width:13px;height:13px;vertical-align:middle"></i>
+        接入地址为对方系统网关地址，实际请求路径以接口清单为准；敏感字段（税号、账号、手机号）已加密或脱敏传输。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="closeActiveModal();testConnection('${it.id}')"><i data-lucide="plug-zap"></i>连通性测试</button>
+    </div>
+  </div>`);
+}
+
+/* ========== 查看日志 ========== */
+function viewLogs(id){
+  var it = INTERFACES.filter(function(x){ return x.id === id; })[0];
+  if(!it) return;
+  var spec = API_SPECS[id];
+  var times = ['2026-11-05 10:42:18', '2026-11-05 09:35:07', '2026-11-04 20:12:56', '2026-11-04 15:08:31', '2026-11-04 08:20:09'];
+  var costs = [382, 1240, 860, 2310, 540];
+  var prefix = it.type === '发票' ? 'INV' : it.type === '财务' ? 'AR' : it.type === '银行' ? 'PAY' : it.type === '第三方' ? (it.name.indexOf('美团') >= 0 ? 'MT' : 'DY') : 'MSG';
+  var logs = (spec ? spec.items : []).slice(0, 5).map(function(x, i){
+    var bad = it.status === '异常' && i === 2;
+    return {
+      time: times[i],
+      name: x.name,
+      doc: prefix + '2026110500' + (i + 1),
+      cost: costs[i],
+      code: bad ? 'E5001' : '200',
+      bad: bad
+    };
+  });
+  var rows = logs.map(function(l){
+    return `<tr>
+      <td style="font-size:13px;white-space:nowrap">${l.time}</td>
+      <td class="font-medium" style="font-size:13px">${l.name}</td>
+      <td class="mono" style="font-size:12px">${l.doc}</td>
+      <td class="text-right">${l.cost}</td>
+      <td class="mono ${l.bad ? 'text-error' : 'text-success'}">${l.code}</td>
+      <td><span class="tag ${l.bad ? 'tag-red' : 'tag-green'}">${l.bad ? '失败' : '成功'}</span></td>
+    </tr>`;
+  }).join('');
+
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">调用日志 · ${it.name}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="flex justify-between items-center mb-12">
+        <div class="text-muted" style="font-size:13px">最近 5 条调用记录（请求/响应报文已留痕并脱敏）</div>
+        <span class="tag ${STATUS_STYLE[it.status]}">${it.status}</span>
+      </div>
+      <div class="table-wrap" style="border:1px solid var(--border-light);border-radius:8px">
+        <table class="data-table">
+          <thead><tr><th>调用时间</th><th>接口</th><th>关联单号</th><th class="text-right">耗时(ms)</th><th>返回码</th><th>结果</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="text-muted mt-12" style="font-size:12px">
+        完整调用日志见「业财一体化 - 接口日志」，日志长期保留，敏感字段已脱敏。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+    </div>
+  </div>`);
+}
+
+/* ========== 刷新 / 导出 ========== */
+function refreshAll(){
+  renderStats();
+  renderList();
+  toast('接口状态与今日统计已刷新', 'info');
+}
+function exportList(){
+  toast('接口清单已导出为 Excel（含接入地址、鉴权方式与最近测试时间）', 'success');
+}
+function resetFilters(){
+  curCategory = '全部';
+  var kw = document.getElementById('api-kw');
+  var st = document.getElementById('api-status');
+  if(kw) kw.value = '';
+  if(st) st.value = '';
+  renderCategoryBar();
+  renderList();
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">对外系统接口</div>
+        <div class="page-desc">银行、发票、财务、第三方与基础能力接口统一接入，支持连通性测试与调用日志追踪</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="refreshAll()"><i data-lucide="refresh-cw"></i>刷新</button>
+        <button class="btn btn-primary" onclick="exportList()"><i data-lucide="download"></i>导出接口清单</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="api-stats"></div>
+
+  <div class="card mb-16">
+    <div class="card-body" style="padding-bottom:0">
+      <div class="toolbar" style="margin-bottom:12px">
+        <div class="flex gap-8" id="api-cats" style="flex-wrap:wrap"></div>
+        <div class="spacer"></div>
+        <select class="form-select" id="api-status" onchange="renderList()" style="min-width:130px">
+          <option value="">全部状态</option>
+          <option value="已联通">已联通</option>
+          <option value="联调中">联调中</option>
+          <option value="异常">异常</option>
+        </select>
+        <input class="form-input" id="api-kw" placeholder="搜索接口名称 / 地址 / 编号" oninput="renderList()" style="min-width:220px" />
+        <button class="btn btn-ghost btn-sm" onclick="resetFilters()">重置</button>
+        <span class="text-muted" id="api-count" style="font-size:13px"></span>
+      </div>
+      <div class="tabs">
+        <div class="tab active" id="tab-card" onclick="switchView('card')"><i data-lucide="layout-grid" style="width:15px;height:15px;vertical-align:middle"></i> 卡片视图</div>
+        <div class="tab" id="tab-table" onclick="switchView('table')"><i data-lucide="list" style="width:15px;height:15px;vertical-align:middle"></i> 表格视图</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-card">
+    <div id="api-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px"></div>
+  </div>
+
+  <div id="view-table" style="display:none">
+    <div class="card">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>接口名称</th>
+              <th>类型</th>
+              <th>状态</th>
+              <th>接入地址</th>
+              <th>鉴权方式</th>
+              <th>最近测试</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="api-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-20">
+    <div class="card-header">
+      <div class="card-title">接口安全说明</div>
+      <span class="tag tag-green">已按统一接入规范执行</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="lock"></i></span>
+        <div>
+          <div class="font-medium">HTTPS 全链路加密</div>
+          <div class="text-muted" style="font-size:13px">所有对外接口仅通过 HTTPS 443 端口访问，禁止 HTTP 明文；证书到期前 30 天预警并提前更换。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon purple" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="fingerprint"></i></span>
+        <div>
+          <div class="font-medium">报文签名与验签</div>
+          <div class="text-muted" style="font-size:13px">请求与回调报文均携带签名，接收方必须验签通过后才处理业务；签名算法与密钥按渠道独立配置，定期轮换。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon green" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="eye-off"></i></span>
+        <div>
+          <div class="font-medium">敏感字段加密</div>
+          <div class="text-muted" style="font-size:13px">税号、银行账号、手机号等敏感字段传输加密、存储脱敏，日志中只保留掩码值，按角色授权解密查看。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="shield-check"></i></span>
+        <div>
+          <div class="font-medium">白名单与频次限制</div>
+          <div class="text-muted" style="font-size:13px">按渠道配置 IP 白名单与接口级 QPS / 单日调用上限，超限自动拒绝并记录告警，防止恶意刷接口。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon cyan" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="scroll-text"></i></span>
+        <div>
+          <div class="font-medium">统一接口日志</div>
+          <div class="text-muted" style="font-size:13px">请求、响应、耗时、返回码全量留痕，日志长期保留不做过期清理，支持按单据号与渠道追溯。</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="font-medium mb-8">三类异常处理机制</div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="refresh-cw"></i></span>
+        <div>
+          <div class="font-medium">网络类异常：自动重试</div>
+          <div class="text-muted" style="font-size:13px">连接超时、连接重置、5xx 等网络类错误按指数退避自动重试（1/2/4 分钟），最多 3 次，重试结果同样记录日志。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="wrench"></i></span>
+        <div>
+          <div class="font-medium">业务类异常：人工处理</div>
+          <div class="text-muted" style="font-size:13px">购方信息校验不通过、单据状态不合法等业务类错误不自动重试，进入异常列表由财务或业务人员修正后重推。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon red" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="alert-octagon"></i></span>
+        <div>
+          <div class="font-medium">数据类异常：阻断并告警</div>
+          <div class="text-muted" style="font-size:13px">金额不平、主键冲突、必填字段缺失等数据类错误直接阻断后续处理，立即告警至接口负责人，修复后按幂等键重放。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderCategoryBar();
+renderStats();
+renderList();
+</script>
+</body>
+</html>

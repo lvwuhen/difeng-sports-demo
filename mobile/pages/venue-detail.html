@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 场馆详情</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="light">
+<div class="app" style="padding-top:0">
+  <div class="navbar transparent">
+    <button class="nav-back" onclick="M.go('venues.html')">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+    </button>
+    <div class="nav-title">场馆详情</div>
+    <button class="nav-act" id="shareBtn" style="font-size:12px">分享</button>
+  </div>
+
+  <div class="scroll">
+    <div id="hero" style="position:relative;padding:104px 18px 26px;color:#fff;border-radius:0 0 24px 24px;overflow:hidden;background:linear-gradient(145deg,#0b63e5,#1677ff 50%,#0ea5e9)">
+      <div style="position:absolute;width:200px;height:200px;border-radius:50%;right:-70px;top:-60px;background:rgba(255,255,255,.12)"></div>
+      <div style="position:relative;z-index:1">
+        <div class="eh-type" id="heroTag">运营中</div>
+        <h1 style="font-size:22px;font-weight:700;line-height:1.35;margin-top:10px" id="heroName"></h1>
+        <div class="eh-meta" style="margin-top:10px" id="heroMeta"></div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:-14px;position:relative;z-index:2">
+      <div class="card">
+        <div class="kv-row"><span class="k">地址</span><span class="v" id="addr"></span></div>
+        <div class="kv-row"><span class="k">营业时间</span><span class="v" id="openTime"></span></div>
+        <div class="kv-row"><span class="k">联系电话</span><span class="v" id="phone"></span></div>
+        <div class="kv-row"><span class="k">场地数量</span><span class="v" id="courtNum"></span></div>
+        <div class="row gap8" style="margin-top:10px">
+          <button class="btn btn-line btn-md flex1" id="callBtn">联系场馆</button>
+          <button class="btn btn-ghost btn-md flex1" id="navBtn">导航前往</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>场馆介绍</div>
+      </div>
+      <div class="card">
+        <p class="sub" id="desc" style="font-size:13px;line-height:1.75;color:var(--m-text-2)"></p>
+        <div class="facility" id="facility" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--m-line)"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>选择场地</div>
+        <span class="sub" id="courtTip"></span>
+      </div>
+      <div id="courtList"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>价目表</div>
+        <span class="sub">按小时计价 · 30 分钟起订</span>
+      </div>
+      <div class="card flush">
+        <table class="price-table" id="priceTable"></table>
+        <div style="padding:10px 14px;border-top:1px solid var(--m-line)" class="tiny">
+          价格表仅用于对外告知；跨时段预约按各时段单价累加，VIP 场在原价基础上加价 30 元/小时。
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>场馆公告</div>
+      </div>
+      <div class="card" id="notice" style="font-size:13px;line-height:1.7;color:var(--m-text-2)"></div>
+    </div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var qid = new URLSearchParams(location.search).get('id') || 'V001';
+  var v = M.venue(qid) || M.VENUES[0];
+  var courts = M.COURTS.filter(function(c){ return c.venueId === v.id; });
+
+  M.$('#heroName').textContent = v.name;
+  M.$('#heroMeta').innerHTML = '<span style="display:flex;align-items:center;gap:4px">' + M.icon('pin', 14) + v.district + ' · ' + v.distance + '</span>' +
+    '<span style="display:flex;align-items:center;gap:4px">' + M.icon('clock', 14) + v.openTime + '</span>';
+  M.$('#addr').textContent = v.address;
+  M.$('#openTime').textContent = v.openTime + '（全年无休）';
+  M.$('#phone').textContent = v.phone;
+  M.$('#courtNum').textContent = courts.length + ' 片（场馆共 ' + v.courts + ' 片）';
+  M.$('#desc').textContent = v.desc;
+  M.$('#notice').textContent = v.notice;
+  M.$('#facility').innerHTML = v.tags.map(function(t){
+    return '<span>' + M.icon('check', 13) + t + '</span>';
+  }).join('');
+
+  M.$('#courtList').innerHTML = courts.map(function(c){
+    var low = M.price(c, M.today(), 10 * 60) * 2;
+    var maintain = c.status === '维修';
+    return '<div class="court-card">' +
+      '<div class="court-top">' +
+        '<div class="flex1">' +
+          '<div class="court-name">' + c.name +
+            (c.attr === 'VIP' ? '<span class="tag tag-purple">VIP</span>' : '') +
+            (maintain ? '<span class="tag tag-gray">维护中</span>' : '') +
+          '</div>' +
+          '<div class="court-meta">' +
+            '<span>' + c.type + '</span><span>' + c.area + '</span><span>可容纳 ' + c.capacity + ' 人</span><span>按小时</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="court-foot">' +
+        '<div class="court-price">¥<strong>' + low + '</strong> / 小时起 <span class="tiny">· 低峰价</span></div>' +
+        (maintain
+          ? '<button class="btn btn-md" disabled style="background:#f1f3f7;color:#9aa3b2">暂不可约</button>'
+          : '<a class="btn btn-primary btn-md" href="booking.html?court=' + c.id + '">选择场地</a>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  var types = {};
+  courts.forEach(function(c){ types[c.type] = c; });
+  var rows = Object.keys(types).map(function(t){
+    var c = types[t];
+    var p = M.PRICING[t] || M.PRICING['篮球'];
+    return '<tr><td>' + t + '（普通场）</td><td>¥' + p.low + '</td><td>¥' + p.peak + '</td><td>¥' + p.weekend + '</td></tr>' +
+      (c.attr === 'VIP' ? '<tr><td>' + t + '（VIP 场）</td><td>¥' + (p.low + 30) + '</td><td>¥' + (p.peak + 30) + '</td><td>¥' + (p.weekend + 30) + '</td></tr>' : '');
+  }).join('');
+  M.$('#priceTable').innerHTML = '<tr><th>场地类型</th><th>低峰</th><th>高峰</th><th>周末</th></tr>' + rows;
+
+  M.$('#courtTip').textContent = '共 ' + courts.length + ' 片可展示场地';
+  M.$('#callBtn').addEventListener('click', function(){
+    M.modal({ title:'联系场馆', text:'场馆联系电话<br><b style="color:#141b26;font-size:16px">' + v.phone + '</b><br>服务时间 ' + v.openTime, confirmText:'知道了', cancelText:false });
+  });
+  M.$('#navBtn').addEventListener('click', function(){ M.toast('已复制场馆地址，可在微信中发起导航'); });
+  M.$('#shareBtn').addEventListener('click', function(){ M.toast('已生成场馆分享卡片（演示）'); });
+
+  M.init({});
+})();
+</script>
+</body>
+</html>

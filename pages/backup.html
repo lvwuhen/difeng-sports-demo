@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据备份与灾备 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('backup', '数据备份与灾备');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var backupPage = 1;
+var backupPageSize = 8;
+var STRATEGY = {
+  cycle:'每日',
+  time:'02:00',
+  scope:['业务库','文件数据'],
+  keep:7,
+  offsite:true
+};
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function pad(n){ return n < 10 ? '0' + n : String(n); }
+function nowStr(){
+  var d = new Date();
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+/* ========== 数据 ========== */
+var BACKUPS = MOCK_EXT.backups.map(function(b){ return Object.assign({}, b); });
+
+/* ========== 统计 ========== */
+function renderStats(){
+  var el = document.getElementById('backup-stats');
+  if(!el) return;
+  var latest = BACKUPS[0];
+  var success = BACKUPS.filter(function(b){ return b.result === '成功'; }).length;
+  var failed = BACKUPS.filter(function(b){ return b.result === '失败'; }).length;
+  var rate = (success + failed) ? Math.round(success / (success + failed) * 1000) / 10 : 0;
+  var space = 0;
+  BACKUPS.forEach(function(b){
+    var n = parseFloat(b.size);
+    if(!isNaN(n)) space += n;
+  });
+  var latestTag = latest
+    ? (latest.result === '成功' ? '<span class="tag tag-green">成功</span>' : latest.result === '失败' ? '<span class="tag tag-red">失败</span>' : '<span class="tag tag-orange">进行中</span>')
+    : '<span class="tag tag-gray">无记录</span>';
+  el.innerHTML =
+    '<div class="stat-card"><div class="stat-label"><span>最近备份状态</span>' +
+      '<span class="stat-icon ' + (latest && latest.result === '失败' ? 'red' : 'green') + '" style="width:34px;height:34px"><i data-lucide="database" style="width:17px;height:17px"></i></span></div>' +
+      '<div class="stat-value" style="font-size:22px">' + latestTag + '</div>' +
+      '<div class="stat-trend">' + (latest ? esc(latest.start) + ' · ' + esc(latest.type) : '暂无备份') + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label"><span>备份成功率</span>' +
+      '<span class="stat-icon cyan" style="width:34px;height:34px"><i data-lucide="check-circle" style="width:17px;height:17px"></i></span></div>' +
+      '<div class="stat-value">' + rate + '<span style="font-size:14px;color:var(--text-3);font-weight:400;margin-left:2px">%</span></div>' +
+      '<div class="stat-trend up">成功 ' + success + ' 次 / 失败 ' + failed + ' 次</div></div>' +
+    '<div class="stat-card"><div class="stat-label"><span>可用备份包</span>' +
+      '<span class="stat-icon blue" style="width:34px;height:34px"><i data-lucide="archive" style="width:17px;height:17px"></i></span></div>' +
+      '<div class="stat-value">' + success + '<span style="font-size:14px;color:var(--text-3);font-weight:400;margin-left:4px">个</span></div>' +
+      '<div class="stat-trend">保留策略：' + STRATEGY.keep + ' 份</div></div>' +
+    '<div class="stat-card"><div class="stat-label"><span>占用空间</span>' +
+      '<span class="stat-icon purple" style="width:34px;height:34px"><i data-lucide="hard-drive" style="width:17px;height:17px"></i></span></div>' +
+      '<div class="stat-value">' + space.toFixed(1) + '<span style="font-size:14px;color:var(--text-3);font-weight:400;margin-left:4px">GB</span></div>' +
+      '<div class="stat-trend">本地 + 异地副本合计</div></div>';
+  refreshIcons();
+}
+
+/* ========== 策略 ========== */
+function renderStrategy(){
+  var el = document.getElementById('strategy-box');
+  if(!el) return;
+  var items = [
+    {k:'自动备份周期', v:STRATEGY.cycle + ' ' + STRATEGY.time, icon:'calendar-clock'},
+    {k:'备份范围', v:STRATEGY.scope.join(' + '), icon:'layers'},
+    {k:'保留份数', v:STRATEGY.keep + ' 份（超出后自动清理最旧备份）', icon:'copy'},
+    {k:'异地备份', v:STRATEGY.offsite ? '已开启（本地 + 异地双副本）' : '未开启（仅本地存储）', icon:'cloud'}
+  ];
+  el.innerHTML = '<div class="kv-grid">' + items.map(function(i){
+    return '<div class="kv-item" style="flex-direction:row;align-items:center;gap:10px;padding:12px;border:1px solid var(--border-light);border-radius:8px">' +
+      '<span class="stat-icon blue" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="' + i.icon + '" style="width:16px;height:16px"></i></span>' +
+      '<div><div class="k">' + esc(i.k) + '</div><div class="v" style="font-size:13px">' + esc(i.v) + '</div></div>' +
+    '</div>';
+  }).join('') + '</div>';
+  refreshIcons();
+}
+function openStrategyForm(){
+  activeModal = openModal('<div class="modal">' +
+    '<div class="modal-header"><div class="modal-title">编辑备份策略</div><div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">自动备份周期 <span class="required">*</span></label>' +
+          '<select class="form-select" id="bk-cycle"><option value="每日"' + (STRATEGY.cycle === '每日' ? ' selected' : '') + '>每日</option>' +
+          '<option value="每周"' + (STRATEGY.cycle === '每周' ? ' selected' : '') + '>每周</option></select></div>' +
+        '<div class="form-item"><label class="form-label">执行时间 <span class="required">*</span></label>' +
+          '<input class="form-input" type="time" id="bk-time" value="' + esc(STRATEGY.time) + '" /></div>' +
+      '</div>' +
+      '<div class="form-item mb-16"><label class="form-label">备份范围 <span class="required">*</span></label>' +
+        '<div style="padding:10px 12px;border:1px solid var(--border);border-radius:6px">' +
+          '<label style="display:inline-flex;align-items:center;gap:6px;margin-right:20px;font-size:13px;color:var(--text-2);cursor:pointer">' +
+            '<input type="checkbox" name="bk-scope" value="业务库"' + (STRATEGY.scope.indexOf('业务库') >= 0 ? ' checked' : '') + ' />业务库（场馆、订单、会员、财务等数据）</label>' +
+          '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer">' +
+            '<input type="checkbox" name="bk-scope" value="文件数据"' + (STRATEGY.scope.indexOf('文件数据') >= 0 ? ' checked' : '') + ' />文件数据（图片、票据、导出文件）</label>' +
+        '</div></div>' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">保留份数 <span class="required">*</span></label>' +
+          '<input class="form-input" id="bk-keep" type="number" min="1" max="30" value="' + STRATEGY.keep + '" />' +
+          '<div class="form-hint">建议不少于 7 份，覆盖近一周可恢复点。</div></div>' +
+        '<div class="form-item"><label class="form-label">异地备份</label>' +
+          '<div class="flex items-center gap-8" style="height:38px">' +
+            '<label class="switch"><input type="checkbox" id="bk-offsite"' + (STRATEGY.offsite ? ' checked' : '') + '><span class="switch-slider"></span></label>' +
+            '<span class="text-muted" style="font-size:13px">开启后同时写入异地存储</span></div></div>' +
+      '</div>' +
+      '<div class="card" style="background:var(--primary-bg);border-color:var(--primary)"><div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2)">' +
+        '策略保存后按新周期执行，下一次自动备份时间将重新计算；手动备份不受周期限制。' +
+      '</div></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="saveStrategy()">保存策略</button></div>' +
+  '</div>');
+}
+function saveStrategy(){
+  var cycle = document.getElementById('bk-cycle').value;
+  var time = trimVal('bk-time');
+  var scope = Array.prototype.slice.call(document.querySelectorAll('input[name="bk-scope"]:checked')).map(function(x){ return x.value; });
+  var keep = parseInt(trimVal('bk-keep'), 10);
+  var offsite = document.getElementById('bk-offsite').checked;
+  if(!time){ toast('请设置执行时间', 'error'); return; }
+  if(!scope.length){ toast('请至少选择一个备份范围', 'error'); return; }
+  if(isNaN(keep) || keep < 1 || keep > 30){ toast('保留份数需在 1-30 之间', 'error'); return; }
+  STRATEGY = {cycle:cycle, time:time, scope:scope, keep:keep, offsite:offsite};
+  closeActiveModal();
+  renderStrategy();
+  renderStats();
+  toast('备份策略已保存：' + cycle + ' ' + time + ' 执行，' + scope.join('+') + '，保留 ' + keep + ' 份', 'success');
+}
+
+/* ========== 备份记录 ========== */
+function resultTag(result){
+  if(result === '成功') return '<span class="tag tag-green">成功</span>';
+  if(result === '失败') return '<span class="tag tag-red">失败</span>';
+  return '<span class="tag tag-orange">进行中</span>';
+}
+function renderBackupTable(){
+  var el = document.getElementById('backup-table');
+  if(!el) return;
+  var pages = Math.max(1, Math.ceil(BACKUPS.length / backupPageSize));
+  if(backupPage > pages) backupPage = pages;
+  var start = (backupPage - 1) * backupPageSize;
+  var list = BACKUPS.slice(start, start + backupPageSize);
+  var rows = list.map(function(b){
+    return '<tr>' +
+      '<td class="mono" style="font-size:13px">' + esc(b.id) + '</td>' +
+      '<td><span class="tag ' + (b.type === '手动备份' ? 'tag-purple' : 'tag-blue') + '">' + esc(b.type) + '</span></td>' +
+      '<td>' + esc(b.scope) + '</td>' +
+      '<td class="mono" style="font-size:12px">' + esc(b.start) + '</td>' +
+      '<td class="mono" style="font-size:12px">' + esc(b.end) + '</td>' +
+      '<td>' + esc(b.size) + '</td>' +
+      '<td>' + resultTag(b.result) + '</td>' +
+      '<td>' + esc(b.target) + '</td>' +
+      '<td class="actions">' +
+        '<button class="btn btn-ghost btn-sm" ' + (b.result !== '成功' ? 'disabled' : '') + ' onclick="downloadBackup(\'' + esc(b.id) + '\')">下载</button>' +
+        '<button class="btn btn-default btn-sm" ' + (b.result !== '成功' ? 'disabled' : '') + ' onclick="openRestoreForm(\'' + esc(b.id) + '\')">恢复</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+  var body = rows || '<tr><td colspan="9"><div class="empty"><div class="empty-icon">💾</div><div class="empty-text">暂无备份记录</div></div></td></tr>';
+  var pageBtns = '';
+  for(var i = 1; i <= pages; i++){
+    pageBtns += '<button class="page-btn ' + (i === backupPage ? 'active' : '') + '" onclick="goBackupPage(' + i + ')">' + i + '</button>';
+  }
+  el.innerHTML = '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th>任务ID</th><th>类型</th><th>备份范围</th><th>开始时间</th><th>结束时间</th><th>文件大小</th><th>执行结果</th><th>存储位置</th><th>操作</th>' +
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    '<div class="pagination"><div class="pagination-info">共 ' + BACKUPS.length + ' 条备份记录，当前第 ' + backupPage + ' / ' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+        '<button class="page-btn" ' + (backupPage === 1 ? 'disabled' : '') + ' onclick="goBackupPage(' + (backupPage - 1) + ')">上一页</button>' +
+        pageBtns +
+        '<button class="page-btn" ' + (backupPage === pages ? 'disabled' : '') + ' onclick="goBackupPage(' + (backupPage + 1) + ')">下一页</button>' +
+      '</div></div>';
+}
+function goBackupPage(p){
+  var pages = Math.max(1, Math.ceil(BACKUPS.length / backupPageSize));
+  if(p < 1 || p > pages) return;
+  backupPage = p;
+  renderBackupTable();
+}
+
+/* ========== 立即备份 ========== */
+function startBackup(){
+  var id = 'BK' + String(Date.now()).slice(-10);
+  var scope = STRATEGY.scope.join('+');
+  var record = {
+    id:id, type:'手动备份', scope:scope, start:nowStr(), end:'—',
+    size:'—', result:'进行中', target:STRATEGY.offsite ? '本地+异地' : '本地'
+  };
+  BACKUPS.unshift(record);
+  backupPage = 1;
+  renderBackupTable();
+  renderStats();
+  toast('备份任务已提交，正在执行…', 'info');
+  setTimeout(function(){
+    var target = BACKUPS.filter(function(b){ return b.id === id; })[0];
+    if(!target) return;
+    target.result = '成功';
+    target.end = nowStr();
+    target.size = '8.7GB';
+    renderBackupTable();
+    renderStats();
+    toast('手动备份完成：' + id + '（8.7GB），存储位置 ' + target.target, 'success');
+  }, 1500);
+}
+
+/* ========== 下载 / 恢复 ========== */
+function downloadBackup(id){
+  var b = BACKUPS.filter(function(x){ return x.id === id; })[0];
+  if(!b) return;
+  toast('已开始下载备份包 ' + b.id + '（' + b.size + '），下载行为已记录审计日志', 'success');
+}
+function openRestoreForm(preId){
+  var options = BACKUPS.filter(function(b){ return b.result === '成功'; }).map(function(b){
+    return '<option value="' + esc(b.id) + '"' + (b.id === preId ? ' selected' : '') + '>' + esc(b.id) + ' · ' + esc(b.start) + ' · ' + esc(b.size) + '</option>';
+  }).join('');
+  activeModal = openModal('<div class="modal">' +
+    '<div class="modal-header"><div class="modal-title">恢复备份</div><div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="card mb-16" style="background:var(--error-bg);border-color:var(--error)"><div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">' +
+        '<div class="flex items-center gap-8 mb-8" style="color:var(--error);font-weight:600"><i data-lucide="alert-triangle" style="width:16px;height:16px"></i>二次确认</div>' +
+        '恢复操作将使用备份包覆盖当前业务数据，覆盖后当前数据不可找回。系统会在恢复前自动创建一次临时备份，恢复过程约 10-30 分钟，期间系统暂停使用。' +
+      '</div></div>' +
+      '<div class="form-item mb-16"><label class="form-label">选择备份包 <span class="required">*</span></label>' +
+        '<select class="form-select" id="restore-pack">' + options + '</select>' +
+        '<div class="form-hint">仅可选择执行结果为「成功」的备份包。</div></div>' +
+      '<div class="form-item mb-16"><label class="form-label">操作人 <span class="required">*</span></label>' +
+        '<input class="form-input" id="restore-user" value="管理员" placeholder="请输入执行恢复的操作人" /></div>' +
+      '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-2);cursor:pointer">' +
+        '<input type="checkbox" id="restore-confirm" style="margin-top:3px" />' +
+        '<span>我已知晓恢复会覆盖当前业务数据，并确认在业务停止时段执行。</span></label>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-danger" onclick="confirmRestore()">确认恢复</button></div>' +
+  '</div>');
+  refreshIcons();
+}
+function confirmRestore(){
+  var pack = document.getElementById('restore-pack').value;
+  var user = trimVal('restore-user');
+  var checked = document.getElementById('restore-confirm').checked;
+  if(!pack){ toast('请选择备份包', 'error'); return; }
+  if(!user){ toast('请填写操作人', 'error'); return; }
+  if(!checked){ toast('请勾选二次确认后再执行恢复', 'warning'); return; }
+  closeActiveModal();
+  MOCK.systemLog.unshift({
+    id:'L' + (9100 + MOCK.systemLog.length), time:nowStr(), user:user, terminal:'PC-00',
+    action:'数据恢复', object:pack, detail:'使用备份包 ' + pack + ' 恢复业务数据，恢复前已自动创建临时备份'
+  });
+  toast('已提交恢复任务：备份包 ' + pack + '，操作人 ' + user + '，恢复记录已写入操作日志', 'success');
+}
+
+/* ========== 页面渲染 ========== */
+document.getElementById('page-content').innerHTML =
+  '<div class="page-header"><div class="page-title">数据备份与灾备</div>' +
+    '<div class="page-desc">提供可备份、可恢复、可告警的应用层能力，支持自动周期备份与手动备份，保障业务数据安全。</div></div>' +
+
+  '<div class="stats-grid" id="backup-stats"></div>' +
+
+  '<div class="card mb-16">' +
+    '<div class="card-header"><div class="card-title">备份策略配置</div>' +
+      '<div class="flex items-center gap-8">' +
+        '<button class="btn btn-default btn-sm" onclick="openStrategyForm()"><i data-lucide="settings" style="width:14px"></i>编辑策略</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="startBackup()"><i data-lucide="play" style="width:14px"></i>立即备份</button>' +
+        '<button class="btn btn-default btn-sm" onclick="openRestoreForm()"><i data-lucide="rotate-ccw" style="width:14px"></i>恢复备份</button>' +
+      '</div></div>' +
+    '<div class="card-body"><div id="strategy-box"></div>' +
+      '<div class="form-hint" style="margin-top:10px">自动备份按周期在设定时间执行；手动备份可在升级、迁移、批量导入等高风险操作前临时发起。</div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div class="card mb-16">' +
+    '<div class="card-header"><div class="card-title">备份记录</div>' +
+      '<span class="tag tag-blue">自动 / 手动</span></div>' +
+    '<div class="card-body"><div id="backup-table"></div></div>' +
+  '</div>' +
+
+  '<div class="card mb-16">' +
+    '<div class="card-header"><div class="card-title">备份失败告警</div><span class="tag tag-orange">双通道通知</span></div>' +
+    '<div class="card-body" style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+      '<div class="list-row">' +
+        '<span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="bell" style="width:15px;height:15px"></i></span>' +
+        '<div><div class="font-medium" style="color:var(--text-1)">系统通知</div>' +
+          '<div>备份任务失败时立即推送站内消息至系统管理员与运维负责人，工作台「备份异常」标记持续显示直至恢复成功。</div></div>' +
+      '</div>' +
+      '<div class="list-row">' +
+        '<span class="stat-icon red" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="message-square" style="width:15px;height:15px"></i></span>' +
+        '<div><div class="font-medium" style="color:var(--text-1)">短信通知</div>' +
+          '<div>连续 2 次备份失败或连续 3 天无成功备份时，升级短信通知至运维负责人；异地备份失败同样触发告警。</div></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div class="card" style="border-color:var(--primary);background:var(--primary-bg)">' +
+    '<div class="card-header" style="border-bottom-color:rgba(22,119,255,.15)"><div class="card-title">责任边界说明</div>' +
+      '<span class="tag tag-blue">应用层能力</span></div>' +
+    '<div class="card-body" style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+      '· 本次软件开发在应用层提供「可备份、可恢复、可告警」：备份策略配置、手动/自动备份、恢复流程、失败通知均由系统实现；<br>' +
+      '· 操作系统快照、磁盘阵列冗余、异地机房同步等属于基础设施层能力，由机房与运维团队负责，不在本次软件开发范围；<br>' +
+      '· 恢复演练建议每季度一次，演练记录纳入运维档案；备份文件保留份数与异地副本策略需与基础设施层保持一致。' +
+    '</div>' +
+  '</div>';
+
+renderStats();
+renderStrategy();
+renderBackupTable();
+refreshIcons();
+</script>
+</body>
+</html>

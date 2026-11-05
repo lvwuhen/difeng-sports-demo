@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>订单接入与核销 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('thirdparty-order', '订单接入与核销');
+
+/* ========== 工具 ========== */
+var TODAY = '2026-11-05';
+var ORDER_PAGE_SIZE = 8;
+var AN_PAGE_SIZE = 8;
+var orderPage = 1;
+var anPage = 1;
+var activeTab = 'orders';
+var activeModal = null;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function money(n){ return (Number(n) || 0).toFixed(2); }
+function val(id){ var el = document.getElementById(id); return el ? el.value : ''; }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function nowStr(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2, '0'); };
+  return TODAY + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* ========== 数据 ========== */
+var PRODUCT_VENUE = {
+  '篮球半场2小时套餐':'篮球公园 · A1篮球场',
+  '羽毛球1小时体验券':'羽毛球馆 · B1羽毛球场',
+  '网球私教体验课':'网球中心 · T1网球场',
+  '篮球馆月卡':'篮球公园 · A1/A2篮球场',
+  '羽毛球2小时畅打券':'羽毛球馆 · B1/B2羽毛球场'
+};
+
+function sysNoOf(o){ return 'ORD' + o.platformNo.replace(/^[A-Z]+/, ''); }
+
+function buildOrder(o){
+  var refund = o.status === '已退款' ? {
+    no:'RF' + o.platformNo.slice(2),
+    amount:o.amount,
+    time:o.buyTime.slice(0, 10) + ' 10:20',
+    reason:'用户未使用申请退款',
+    status:'退款成功',
+    way:'平台原路退回'
+  } : null;
+  return {
+    id:o.id, platform:o.platform, platformNo:o.platformNo, product:o.product,
+    buyer:o.buyer, phone:o.phone, amount:o.amount, buyTime:o.buyTime,
+    validUntil:o.validUntil, status:o.status, verifyTime:o.verifyTime || '',
+    sysNo:sysNoOf(o), venue:PRODUCT_VENUE[o.product] || '总部 · 综合场地',
+    coupon:o.platformNo, refundInfo:refund
+  };
+}
+
+var ORDERS = MOCK_EXT.channelOrders.map(buildOrder);
+
+var EXTRA_ORDERS = [
+  {id:'CO005', platform:'美团', platformNo:'MT202611050005', product:'羽毛球1小时体验券', buyer:'陈女士', phone:'135****0005', amount:39.9, buyTime:'2026-11-05 09:20', validUntil:'2026-12-05', status:'待核销', verifyTime:''},
+  {id:'CO006', platform:'抖音', platformNo:'DY202611050006', product:'网球私教体验课', buyer:'周先生', phone:'137****0006', amount:199, buyTime:'2026-11-05 10:05', validUntil:'2026-12-05', status:'待核销', verifyTime:''},
+  {id:'CO007', platform:'美团', platformNo:'MT202611050007', product:'篮球半场2小时套餐', buyer:'吴先生', phone:'139****0007', amount:158, buyTime:'2026-11-05 11:30', validUntil:'2026-12-05', status:'已核销', verifyTime:'2026-11-05 12:10'},
+  {id:'CO008', platform:'抖音', platformNo:'DY202611050008', product:'篮球馆月卡', buyer:'郑女士', phone:'136****0008', amount:899, buyTime:'2026-11-05 08:10', validUntil:'2027-11-04', status:'已核销', verifyTime:'2026-11-05 08:40'},
+  {id:'CO009', platform:'美团', platformNo:'MT202610310009', product:'羽毛球2小时畅打券', buyer:'孙先生', phone:'138****0009', amount:69.9, buyTime:'2026-10-31 18:20', validUntil:'2026-11-30', status:'待核销', verifyTime:''},
+  {id:'CO010', platform:'抖音', platformNo:'DY202610260010', product:'网球私教体验课', buyer:'刘女士', phone:'137****0010', amount:199, buyTime:'2026-10-26 19:00', validUntil:'2026-11-25', status:'已核销', verifyTime:'2026-10-27 10:20'},
+  {id:'CO011', platform:'美团', platformNo:'MT202610250011', product:'篮球半场2小时套餐', buyer:'黄先生', phone:'135****0011', amount:158, buyTime:'2026-10-25 10:00', validUntil:'2025-12-31', status:'已退款', verifyTime:''},
+  {id:'CO012', platform:'抖音', platformNo:'DY202610240012', product:'羽毛球1小时体验券', buyer:'徐女士', phone:'136****0012', amount:39.9, buyTime:'2026-10-24 15:40', validUntil:'2026-11-23', status:'核销失败', verifyTime:'2026-10-24 18:05'},
+  {id:'CO013', platform:'美团', platformNo:'MT202610220013', product:'羽毛球2小时畅打券', buyer:'马先生', phone:'139****0013', amount:69.9, buyTime:'2026-10-22 20:30', validUntil:'2026-11-21', status:'已核销', verifyTime:'2026-10-23 09:00'},
+  {id:'CO014', platform:'抖音', platformNo:'DY202611050014', product:'网球私教体验课', buyer:'朱女士', phone:'138****0014', amount:199, buyTime:'2026-11-05 14:10', validUntil:'2026-12-05', status:'待核销', verifyTime:''},
+  {id:'CO015', platform:'美团', platformNo:'MT202610150015', product:'羽毛球1小时体验券', buyer:'胡先生', phone:'137****0015', amount:39.9, buyTime:'2026-10-15 16:20', validUntil:'2026-10-31', status:'待核销', verifyTime:''}
+];
+
+ORDERS = ORDERS.concat(EXTRA_ORDERS.map(buildOrder));
+ORDERS.sort(function(a, b){ return b.buyTime.localeCompare(a.buyTime); });
+
+var ANOMALIES = [
+  {id:'AN001', type:'状态不一致', orderNo:'MT202610300002', platform:'美团', desc:'平台侧显示已核销，本地仍为待核销，回调延迟超过 30 分钟', suggestion:'以本地核销记录为准并触发状态回传', status:'待处理', time:'2026-10-30 09:12', handler:'', handleTime:'', method:'', note:''},
+  {id:'AN002', type:'核销失败', orderNo:'MT202610270004', platform:'美团', desc:'核销接口返回“订单已过期”，但平台该商品仍在售卖', suggestion:'核对券有效期并联系平台下架该商品', status:'待处理', time:'2026-10-27 18:32', handler:'', handleTime:'', method:'', note:''},
+  {id:'AN003', type:'接口调用失败', orderNo:'DY202610240012', platform:'抖音', desc:'核销回调平台接口超时（code E5001），连续重试 3 次失败', suggestion:'在接口日志中重试回调，必要时人工补录核销', status:'待处理', time:'2026-10-24 18:06', handler:'', handleTime:'', method:'', note:''},
+  {id:'AN004', type:'金额不符', orderNo:'MT202610310009', platform:'美团', desc:'平台流水 69.90 元，本地记录 69.90 元，平台补贴 5 元未回传', suggestion:'按平台结算金额调整渠道应收，差异计入平台补贴', status:'待处理', time:'2026-10-31 19:00', handler:'', handleTime:'', method:'', note:''},
+  {id:'AN005', type:'状态不一致', orderNo:'DY202610280003', platform:'抖音', desc:'平台已退款，本地仍显示核销失败，状态未同步', suggestion:'同步退款状态并关闭异常', status:'已修正', time:'2026-10-29 09:20', handler:'张前台', handleTime:'2026-10-29 10:05', method:'以平台为准修正系统', note:'已按平台退款结果同步本地状态'},
+  {id:'AN006', type:'核销失败', orderNo:'MT202610220013', platform:'美团', desc:'重复扫码触发两次核销请求，第二次被平台拒绝', suggestion:'以首次核销为准，平台侧撤销重复请求', status:'已修正', time:'2026-10-23 09:10', handler:'李运营', handleTime:'2026-10-23 09:30', method:'重新发起核销', note:'确认首次核销成功，已撤销重复请求'},
+  {id:'AN007', type:'接口调用失败', orderNo:'DY202611050006', platform:'抖音', desc:'下单回调接收失败（超时），订单补拉已成功', suggestion:'校验补拉订单信息并回写平台', status:'待处理', time:'2026-11-05 10:08', handler:'', handleTime:'', method:'', note:''},
+  {id:'AN008', type:'金额不符', orderNo:'MT202610250011', platform:'美团', desc:'退款金额 158 元，本地退款记录 142.20 元，手续费差 15.80 元', suggestion:'核对平台退款明细并按净额入账', status:'已修正', time:'2026-10-25 11:00', handler:'王财务', handleTime:'2026-10-25 14:20', method:'以平台为准修正系统', note:'已按平台退款净额重算渠道应收'},
+  {id:'AN009', type:'状态不一致', orderNo:'MT202610270004', platform:'美团', desc:'平台侧状态“已完成”，本地“核销失败”，入场记录缺失', suggestion:'人工核对入场记录后修正本地状态', status:'待处理', time:'2026-11-05 09:00', handler:'', handleTime:'', method:'', note:''}
+];
+
+var STATUS_TAG = {'待核销':'tag-orange', '已核销':'tag-green', '已退款':'tag-gray', '核销失败':'tag-red'};
+var AN_STATUS_TAG = {'待处理':'tag-orange', '已修正':'tag-green'};
+var AN_TYPE_TAG = {'状态不一致':'tag-purple', '核销失败':'tag-red', '接口调用失败':'tag-blue', '金额不符':'tag-orange'};
+
+/* ========== 统计 ========== */
+function renderStats(){
+  var el = document.getElementById('co-stats');
+  if(!el) return;
+  var todayCount = ORDERS.filter(function(o){ return o.buyTime.slice(0, 10) === TODAY; }).length;
+  var pending = ORDERS.filter(function(o){ return o.status === '待核销'; }).length;
+  var verified = ORDERS.filter(function(o){ return o.status === '已核销'; }).length;
+  var anPending = ANOMALIES.filter(function(a){ return a.status === '待处理'; }).length;
+  var failed = ORDERS.filter(function(o){ return o.status === '核销失败'; }).length;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">今日渠道订单数 <span class="stat-icon blue"><i data-lucide="shopping-bag"></i></span></div>
+      <div class="stat-value">${todayCount}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>${TODAY} 美团 / 抖音接入</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">待核销 <span class="stat-icon orange"><i data-lucide="qr-code"></i></span></div>
+      <div class="stat-value" style="color:var(--warning)">${pending}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      <div class="stat-trend"><i data-lucide="clock-3" style="width:14px;color:var(--text-3)"></i>等待顾客到店扫码核销</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">已核销 <span class="stat-icon green"><i data-lucide="check-circle-2"></i></span></div>
+      <div class="stat-value text-success">${verified}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      <div class="stat-trend up"><i data-lucide="arrow-up-right" style="width:14px"></i>核销结果已回写平台</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">异常订单 <span class="stat-icon red"><i data-lucide="alert-triangle"></i></span></div>
+      <div class="stat-value text-error">${anPending}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      <div class="stat-trend down"><i data-lucide="wrench" style="width:14px"></i>核销失败 ${failed} 单待处理</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 订单筛选 / 列表 ========== */
+function orderFiltered(){
+  var platform = val('co-platform');
+  var status = val('co-status');
+  var kw = val('co-kw').trim();
+  return ORDERS.filter(function(o){
+    if(platform && o.platform !== platform) return false;
+    if(status && o.status !== status) return false;
+    if(kw && !(o.sysNo.indexOf(kw) > -1 || o.platformNo.indexOf(kw) > -1 || o.product.indexOf(kw) > -1 || o.buyer.indexOf(kw) > -1 || o.phone.indexOf(kw) > -1)) return false;
+    return true;
+  });
+}
+
+function orderActions(o){
+  var btns = '';
+  if(o.status === '待核销'){
+    btns += `<button class="btn btn-success btn-sm" onclick="openScan('${o.id}')"><i data-lucide="scan-line" style="width:13px"></i>扫码核销</button>`;
+  } else if(o.status === '核销失败'){
+    btns += `<button class="btn btn-default btn-sm" onclick="goAnomaly('${o.platformNo}')"><i data-lucide="wrench" style="width:13px"></i>处理异常</button>`;
+  }
+  btns += `<button class="btn btn-default btn-sm" onclick="openOrderDetail('${o.id}')"><i data-lucide="eye" style="width:13px"></i>详情</button>`;
+  return btns;
+}
+
+function renderOrderTable(){
+  var list = orderFiltered();
+  var pages = Math.max(1, Math.ceil(list.length / ORDER_PAGE_SIZE));
+  if(orderPage > pages) orderPage = pages;
+  var start = (orderPage - 1) * ORDER_PAGE_SIZE;
+  var rows = list.slice(start, start + ORDER_PAGE_SIZE).map(function(o){
+    return `<tr>
+      <td class="mono" style="font-size:12px">${o.sysNo}</td>
+      <td><span class="tag ${o.platform === '美团' ? 'tag-orange' : 'tag-purple'}">${o.platform}</span></td>
+      <td class="mono" style="font-size:12px">${o.platformNo}</td>
+      <td style="min-width:160px"><div class="font-medium" style="font-size:13px">${esc(o.product)}</div><div class="text-muted" style="font-size:12px">${esc(o.venue)}</div></td>
+      <td style="font-size:13px">${esc(o.buyer)}</td>
+      <td class="mono" style="font-size:12px">${o.phone}</td>
+      <td class="text-right">¥${money(o.amount)}</td>
+      <td style="font-size:12px;white-space:nowrap">${o.buyTime}</td>
+      <td style="font-size:12px;white-space:nowrap">${o.validUntil}${o.status === '待核销' && o.validUntil < TODAY ? ' <span class="tag tag-red">已过期</span>' : ''}</td>
+      <td><span class="tag ${STATUS_TAG[o.status] || 'tag-gray'}">${o.status}</span></td>
+      <td style="font-size:12px;color:var(--text-3);white-space:nowrap">${o.verifyTime || '—'}</td>
+      <td class="actions" style="flex-wrap:wrap">${orderActions(o)}</td>
+    </tr>`;
+  }).join('');
+  var body = document.getElementById('co-rows');
+  if(body){
+    body.innerHTML = rows || `<tr><td colspan="12"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">当前筛选条件下暂无渠道订单</div></div></td></tr>`;
+  }
+  var cnt = document.getElementById('co-count');
+  if(cnt) cnt.textContent = '筛选结果 ' + list.length + ' 单';
+  var pager = document.getElementById('co-pager');
+  if(pager){
+    var btns = '';
+    for(var i = 1; i <= pages; i++){
+      btns += '<button class="page-btn ' + (i === orderPage ? 'active' : '') + '" onclick="gotoOrderPage(' + i + ')">' + i + '</button>';
+    }
+    pager.innerHTML = '<div class="pagination-info">共 ' + list.length + ' 单 · 第 ' + orderPage + '/' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+      '<button class="page-btn" ' + (orderPage <= 1 ? 'disabled' : '') + ' onclick="gotoOrderPage(' + (orderPage - 1) + ')"><i data-lucide="chevron-left" style="width:14px"></i></button>' +
+      btns +
+      '<button class="page-btn" ' + (orderPage >= pages ? 'disabled' : '') + ' onclick="gotoOrderPage(' + (orderPage + 1) + ')"><i data-lucide="chevron-right" style="width:14px"></i></button>' +
+      '</div>';
+  }
+  refreshIcons();
+}
+
+function gotoOrderPage(n){ orderPage = n; renderOrderTable(); }
+function applyOrderFilters(){ orderPage = 1; renderOrderTable(); }
+
+/* ========== 扫码核销 ========== */
+function openScan(orderId){
+  var o = orderId ? ORDERS.find(function(x){ return x.id === orderId; }) : null;
+  if(o){
+    if(o.status === '已核销'){ toast('订单 ' + o.sysNo + ' 已核销，请勿重复核销', 'error'); return; }
+    if(o.status === '已退款'){ toast('订单 ' + o.sysNo + ' 已退款，无法核销', 'error'); return; }
+    if(o.status === '核销失败'){ toast('订单 ' + o.sysNo + ' 核销失败，请先在异常订单中人工核对修正', 'error'); return; }
+  }
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">扫码核销</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      ${o ? `<div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">系统单号</div><div class="v mono" style="font-size:13px">${o.sysNo}</div></div>
+        <div class="kv-item"><div class="k">平台 / 平台订单号</div><div class="v" style="font-size:13px">${o.platform} · <span class="mono">${o.platformNo}</span></div></div>
+        <div class="kv-item"><div class="k">商品/套餐</div><div class="v" style="font-size:13px">${esc(o.product)}</div></div>
+        <div class="kv-item"><div class="k">有效期</div><div class="v" style="font-size:13px">${o.validUntil}</div></div>
+      </div>` : `<div class="text-muted" style="font-size:13px;margin-bottom:16px">将顾客券码对准扫码框，或手动输入券码 / 平台订单号进行核销。</div>`}
+      <div style="border:2px dashed var(--border);border-radius:12px;background:#fafafa;padding:24px;text-align:center;margin-bottom:16px">
+        <i data-lucide="qr-code" style="width:48px;height:48px;color:var(--primary)"></i>
+        <div class="font-medium" style="margin-top:8px">模拟扫码区域</div>
+        <div class="text-muted" style="font-size:12px">请将券码二维码置于框内（演示环境可直接输入券码）</div>
+      </div>
+      <div class="form-item" style="margin-bottom:0">
+        <label class="form-label">券码 / 平台订单号 <span class="required">*</span></label>
+        <input class="form-input" id="scan-code" value="${o ? o.coupon : ''}" placeholder="请输入券码或平台订单号" onkeydown="if(event.key==='Enter')submitScan('${o ? o.id : ''}')" />
+        <div class="form-hint">系统将校验订单状态与有效期，核销成功后状态实时回写平台；重复核销会被拦截。</div>
+      </div>
+      <div class="mt-8">
+        <button class="btn btn-default btn-sm" onclick="fillScanCode()"><i data-lucide="keyboard" style="width:13px"></i>填入示例券码</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-success" onclick="submitScan('${o ? o.id : ''}')"><i data-lucide="check"></i>确认核销</button>
+    </div>
+  </div>`);
+}
+
+function fillScanCode(){
+  var el = document.getElementById('scan-code');
+  if(!el) return;
+  var sample = ORDERS.find(function(o){ return o.status === '待核销'; });
+  el.value = sample ? sample.coupon : '';
+  el.focus();
+  toast('已填入示例券码，可直接确认核销', 'info');
+}
+
+function submitScan(selectedId){
+  var code = val('scan-code').trim();
+  if(!code){ toast('请扫码或输入券码', 'error'); return; }
+
+  var o = null;
+  if(selectedId){
+    o = ORDERS.find(function(x){ return x.id === selectedId; });
+    if(!o){ toast('未找到当前渠道订单', 'error'); return; }
+    if(code !== o.coupon && code !== o.platformNo && code !== o.id && code !== o.sysNo){
+      toast('券码与当前订单不匹配，请核对后重试', 'error');
+      return;
+    }
+  } else {
+    o = ORDERS.find(function(x){
+      return x.coupon === code || x.platformNo === code || x.id === code || x.sysNo === code;
+    });
+    if(!o){ toast('未找到券码「' + code + '」对应的渠道订单', 'error'); return; }
+  }
+
+  if(o.status === '已核销'){ toast('订单 ' + o.sysNo + ' 已核销，重复核销已被拦截', 'error'); return; }
+  if(o.status === '已退款'){ toast('订单 ' + o.sysNo + ' 已退款，无法核销', 'error'); return; }
+  if(o.status === '核销失败'){ toast('订单 ' + o.sysNo + ' 上次核销失败，请先在异常订单中人工核对修正', 'error'); return; }
+  if(o.status !== '待核销'){ toast('订单状态为「' + o.status + '」，不可核销', 'error'); return; }
+  if(o.validUntil && o.validUntil < TODAY){ toast('订单已过有效期（' + o.validUntil + '），无法核销', 'error'); return; }
+
+  o.status = '已核销';
+  o.verifyTime = nowStr();
+  closeActiveModal();
+  renderStats();
+  renderOrderTable();
+  renderAnomalyTable();
+  toast('核销成功：' + o.sysNo + '，状态已回写' + o.platform, 'success');
+}
+
+/* ========== 订单详情 ========== */
+function openOrderDetail(id){
+  var o = ORDERS.find(function(x){ return x.id === id; });
+  if(!o) return;
+  var verifyHtml = '';
+  if(o.verifyTime){
+    var fail = o.status === '核销失败';
+    verifyHtml = `<div class="timeline" style="margin-bottom:0">
+      <div class="timeline-item ${fail ? 'error' : 'success'}">
+        <div class="timeline-time">${o.verifyTime}</div>
+        <div class="timeline-title">${fail ? '核销失败' : '核销成功'}</div>
+        <div class="timeline-desc">操作人：前台核销员 · 平台：${o.platform}${fail ? ' · 失败原因：平台返回订单状态异常' : ' · 核销结果已回写平台'}</div>
+      </div>
+    </div>`;
+  } else {
+    verifyHtml = `<div class="empty" style="padding:20px"><div class="empty-text">暂无核销记录</div></div>`;
+  }
+  var refundHtml = o.refundInfo ? `<div class="timeline" style="margin-bottom:0">
+    <div class="timeline-item warning">
+      <div class="timeline-time">${o.refundInfo.time}</div>
+      <div class="timeline-title">退款成功 · ¥${money(o.refundInfo.amount)}</div>
+      <div class="timeline-desc">退款单号 <span class="mono">${o.refundInfo.no}</span> · ${o.refundInfo.reason} · ${o.refundInfo.way}</div>
+    </div>
+  </div>` : `<div class="empty" style="padding:20px"><div class="empty-text">无退款记录</div></div>`;
+
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">渠道订单详情 · ${o.sysNo}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">系统单号</div><div class="v mono">${o.sysNo}</div></div>
+        <div class="kv-item"><div class="k">平台</div><div class="v">${o.platform}</div></div>
+        <div class="kv-item"><div class="k">平台订单号</div><div class="v mono">${o.platformNo}</div></div>
+        <div class="kv-item"><div class="k">商品/套餐</div><div class="v">${esc(o.product)}</div></div>
+        <div class="kv-item"><div class="k">购买人 / 手机</div><div class="v">${esc(o.buyer)} · ${o.phone}</div></div>
+        <div class="kv-item"><div class="k">金额</div><div class="v">¥${money(o.amount)}</div></div>
+        <div class="kv-item"><div class="k">购买时间</div><div class="v">${o.buyTime}</div></div>
+        <div class="kv-item"><div class="k">有效期至</div><div class="v">${o.validUntil}</div></div>
+        <div class="kv-item"><div class="k">订单状态</div><div class="v"><span class="tag ${STATUS_TAG[o.status] || 'tag-gray'}">${o.status}</span></div></div>
+        <div class="kv-item"><div class="k">核销时间</div><div class="v">${o.verifyTime || '—'}</div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="font-medium mb-8">核销记录</div>
+      ${verifyHtml}
+      <div class="divider"></div>
+      <div class="font-medium mb-8">退款记录</div>
+      ${refundHtml}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      ${o.status === '待核销' ? `<button class="btn btn-success" onclick="closeActiveModal();openScan('${o.id}')">扫码核销</button>` : ''}
+    </div>
+  </div>`);
+}
+
+/* ========== 异常订单 ========== */
+function anomalyFiltered(){
+  var type = val('an-type');
+  var status = val('an-status');
+  var kw = val('an-kw').trim();
+  return ANOMALIES.filter(function(a){
+    if(type && a.type !== type) return false;
+    if(status && a.status !== status) return false;
+    if(kw && !(a.id.indexOf(kw) > -1 || a.orderNo.indexOf(kw) > -1 || a.desc.indexOf(kw) > -1)) return false;
+    return true;
+  });
+}
+
+function renderAnomalyTable(){
+  if(activeTab !== 'anomaly') return;
+  var list = anomalyFiltered();
+  var pages = Math.max(1, Math.ceil(list.length / AN_PAGE_SIZE));
+  if(anPage > pages) anPage = pages;
+  var start = (anPage - 1) * AN_PAGE_SIZE;
+  var rows = list.slice(start, start + AN_PAGE_SIZE).map(function(a){
+    var action = a.status === '已修正'
+      ? `<button class="btn btn-ghost btn-sm" onclick="toast('该异常已于 ' + '${a.handleTime}' + ' 修正，无需重复处理','info')">已修正</button>`
+      : `<button class="btn btn-primary btn-sm" onclick="openAnomalyFix('${a.id}')"><i data-lucide="wrench" style="width:13px"></i>人工核对修正</button>`;
+    return `<tr>
+      <td><span class="tag ${AN_TYPE_TAG[a.type] || 'tag-gray'}">${a.type}</span></td>
+      <td class="mono" style="font-size:12px">${a.orderNo}</td>
+      <td><span class="tag ${a.platform === '美团' ? 'tag-orange' : 'tag-purple'}">${a.platform}</span></td>
+      <td style="font-size:13px;max-width:260px;color:var(--text-2)">${esc(a.desc)}</td>
+      <td style="font-size:13px;max-width:240px;color:var(--text-2)">${esc(a.suggestion)}</td>
+      <td><span class="tag ${AN_STATUS_TAG[a.status] || 'tag-gray'}">${a.status}</span></td>
+      <td class="actions">${action}</td>
+    </tr>`;
+  }).join('');
+  var body = document.getElementById('an-rows');
+  if(body){
+    body.innerHTML = rows || `<tr><td colspan="7"><div class="empty"><div class="empty-icon"><i data-lucide="shield-check"></i></div><div class="empty-text">当前筛选条件下暂无异常订单</div></div></td></tr>`;
+  }
+  var cnt = document.getElementById('an-count');
+  if(cnt) cnt.textContent = '筛选结果 ' + list.length + ' 条';
+  var pager = document.getElementById('an-pager');
+  if(pager){
+    var btns = '';
+    for(var i = 1; i <= pages; i++){
+      btns += '<button class="page-btn ' + (i === anPage ? 'active' : '') + '" onclick="gotoAnPage(' + i + ')">' + i + '</button>';
+    }
+    pager.innerHTML = '<div class="pagination-info">共 ' + list.length + ' 条异常 · 第 ' + anPage + '/' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+      '<button class="page-btn" ' + (anPage <= 1 ? 'disabled' : '') + ' onclick="gotoAnPage(' + (anPage - 1) + ')"><i data-lucide="chevron-left" style="width:14px"></i></button>' +
+      btns +
+      '<button class="page-btn" ' + (anPage >= pages ? 'disabled' : '') + ' onclick="gotoAnPage(' + (anPage + 1) + ')"><i data-lucide="chevron-right" style="width:14px"></i></button>' +
+      '</div>';
+  }
+  refreshIcons();
+}
+
+function gotoAnPage(n){ anPage = n; renderAnomalyTable(); }
+function applyAnomalyFilters(){ anPage = 1; renderAnomalyTable(); }
+
+function goAnomaly(orderNo){
+  showTab('anomaly');
+  var kw = document.getElementById('an-kw');
+  if(kw){ kw.value = orderNo; }
+  anPage = 1;
+  renderAnomalyTable();
+  toast('已定位到异常订单：' + orderNo, 'info');
+}
+
+function openAnomalyFix(id){
+  var a = ANOMALIES.find(function(x){ return x.id === id; });
+  if(!a) return;
+  if(a.status === '已修正'){ toast('该异常已修正，无需重复处理', 'info'); return; }
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">人工核对修正 · ${a.id}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">异常类型</div><div class="v"><span class="tag ${AN_TYPE_TAG[a.type] || 'tag-gray'}">${a.type}</span></div></div>
+        <div class="kv-item"><div class="k">平台 / 订单号</div><div class="v">${a.platform} · <span class="mono" style="font-size:13px">${a.orderNo}</span></div></div>
+        <div class="kv-item"><div class="k">异常发生时间</div><div class="v">${a.time}</div></div>
+        <div class="kv-item"><div class="k">当前状态</div><div class="v"><span class="tag ${AN_STATUS_TAG[a.status]}">${a.status}</span></div></div>
+      </div>
+      <div class="card" style="background:var(--warning-bg);border-color:var(--warning);margin-bottom:16px">
+        <div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">
+          <b>异常描述：</b>${esc(a.desc)}<br>
+          <b>建议处理：</b>${esc(a.suggestion)}
+        </div>
+      </div>
+      <div class="form-item" style="margin-bottom:16px">
+        <label class="form-label">修正方式 <span class="required">*</span></label>
+        <select class="form-select" id="an-method">
+          <option value="">请选择修正方式</option>
+          <option value="以系统为准修正平台">以系统为准修正平台</option>
+          <option value="以平台为准修正系统">以平台为准修正系统</option>
+          <option value="重新发起核销">重新发起核销</option>
+          <option value="标记误报">标记误报</option>
+        </select>
+      </div>
+      <div class="form-item" style="margin-bottom:0">
+        <label class="form-label">处理说明 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="an-note" placeholder="请填写核对依据与修正结果，不少于 4 个字"></textarea>
+        <div class="form-hint">提交后异常状态置为已修正，修正结果同步回写渠道平台。</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="submitAnomalyFix('${a.id}')">确认修正</button>
+    </div>
+  </div>`);
+}
+
+function submitAnomalyFix(id){
+  var a = ANOMALIES.find(function(x){ return x.id === id; });
+  if(!a) return;
+  var method = val('an-method');
+  var note = val('an-note').trim();
+  if(!method){ toast('请选择修正方式', 'error'); return; }
+  if(note.length < 4){ toast('请填写不少于 4 个字的处理说明', 'error'); return; }
+  a.status = '已修正';
+  a.method = method;
+  a.note = note;
+  a.handler = '张前台';
+  a.handleTime = nowStr();
+  closeActiveModal();
+  renderStats();
+  renderAnomalyTable();
+  toast('异常 ' + a.id + ' 已修正，修正结果已回写' + a.platform, 'success');
+}
+
+/* ========== Tab ========== */
+function showTab(name){
+  activeTab = name;
+  ['orders','anomaly'].forEach(function(k){
+    var btn = document.getElementById('tabbtn-' + k);
+    var panel = document.getElementById('tab-' + k);
+    if(!btn || !panel) return;
+    btn.className = 'tab' + (k === name ? ' active' : '');
+    panel.style.display = k === name ? '' : 'none';
+  });
+  if(name === 'orders') renderOrderTable();
+  else renderAnomalyTable();
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">订单接入与核销</div>
+        <div class="page-desc">接收美团、抖音渠道订单，支持券码扫码核销、核销状态双向同步与异常订单人工修正</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="renderStats();renderOrderTable();toast('渠道订单已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+        <button class="btn btn-primary" onclick="openScan('')"><i data-lucide="scan-line"></i>扫码核销</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="co-stats"></div>
+
+  <div class="tabs">
+    <div class="tab active" id="tabbtn-orders" onclick="showTab('orders')">渠道订单</div>
+    <div class="tab" id="tabbtn-anomaly" onclick="showTab('anomaly')">异常订单</div>
+  </div>
+
+  <div id="tab-orders">
+    <div class="card mb-16">
+      <div class="card-header">
+        <div class="card-title">渠道订单列表</div>
+        <span class="text-muted" id="co-count" style="font-size:13px"></span>
+      </div>
+      <div class="card-body">
+        <div class="toolbar">
+          <select class="form-select" id="co-platform" onchange="applyOrderFilters()">
+            <option value="">全部平台</option>
+            <option value="美团">美团</option>
+            <option value="抖音">抖音</option>
+          </select>
+          <select class="form-select" id="co-status" onchange="applyOrderFilters()">
+            <option value="">全部状态</option>
+            <option value="待核销">待核销</option>
+            <option value="已核销">已核销</option>
+            <option value="已退款">已退款</option>
+            <option value="核销失败">核销失败</option>
+          </select>
+          <input class="form-input" id="co-kw" placeholder="搜索系统单号 / 平台订单号 / 商品 / 购买人" oninput="applyOrderFilters()" style="min-width:280px" />
+          <div class="spacer"></div>
+          <span class="text-muted" style="font-size:12px">购买人信息已脱敏展示</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>系统单号</th>
+                <th>平台</th>
+                <th>平台订单号</th>
+                <th>商品/套餐</th>
+                <th>购买人</th>
+                <th>手机</th>
+                <th class="text-right">金额</th>
+                <th>购买时间</th>
+                <th>有效期</th>
+                <th>状态</th>
+                <th>核销时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="co-rows"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="co-pager"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-anomaly" style="display:none">
+    <div class="card mb-16">
+      <div class="card-header">
+        <div class="card-title">异常订单</div>
+        <span class="text-muted" id="an-count" style="font-size:13px"></span>
+      </div>
+      <div class="card-body">
+        <div class="toolbar">
+          <select class="form-select" id="an-type" onchange="applyAnomalyFilters()">
+            <option value="">全部异常类型</option>
+            <option value="状态不一致">状态不一致</option>
+            <option value="核销失败">核销失败</option>
+            <option value="接口调用失败">接口调用失败</option>
+            <option value="金额不符">金额不符</option>
+          </select>
+          <select class="form-select" id="an-status" onchange="applyAnomalyFilters()">
+            <option value="">全部状态</option>
+            <option value="待处理">待处理</option>
+            <option value="已修正">已修正</option>
+          </select>
+          <input class="form-input" id="an-kw" placeholder="搜索异常编号 / 订单号 / 描述" oninput="applyAnomalyFilters()" style="min-width:240px" />
+          <div class="spacer"></div>
+          <span class="text-muted" style="font-size:12px">异常修正后自动回写平台</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>异常类型</th>
+                <th>订单号</th>
+                <th>平台</th>
+                <th>异常描述</th>
+                <th>建议处理方式</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="an-rows"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="an-pager"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">核销状态同步说明</div>
+      <span class="tag tag-cyan">双向同步</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon green" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="arrow-up-right"></i></span>
+        <div><div class="font-medium" style="font-size:13px">本地 → 平台</div><div class="text-muted" style="font-size:12px">顾客到店扫码核销成功后，核销状态、核销时间实时回写平台，平台侧同步显示已核销。</div></div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="arrow-down-left"></i></span>
+        <div><div class="font-medium" style="font-size:13px">平台 → 本地</div><div class="text-muted" style="font-size:12px">平台侧退款、核销、撤单等状态变更通过回调同步本地；回调失败自动重试并生成异常订单。</div></div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="shield-alert"></i></span>
+        <div><div class="font-medium" style="font-size:13px">异常处理</div><div class="text-muted" style="font-size:12px">状态不一致、金额不符等异常进入异常订单列表，人工核对修正后结果双向回写，形成闭环。</div></div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderStats();
+renderOrderTable();
+renderAnomalyTable();
+refreshIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>渠道对账结算 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('thirdparty-reconcile', '渠道对账结算');
+
+/* ========== 工具 ========== */
+var RECON_PAGE_SIZE = 5;
+var reconPage = 1;
+var RECON_PERIOD = '2026-10';
+var RECON_PLATFORM = '';
+var DETAIL_ID = null;
+var activeModal = null;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function signedMoney(n){
+  var v = Number(n) || 0;
+  return (v > 0 ? '+' : '') + '¥' + money(Math.abs(v));
+}
+function val(id){ var el = document.getElementById(id); return el ? el.value : ''; }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+
+/* ========== 数据 ========== */
+var RECONS = MOCK_EXT.channelReconcile.map(function(r){
+  return {
+    id:r.id, platform:r.platform, period:r.period, orders:r.orders,
+    orderAmount:r.orderAmount, settleAmount:r.settleAmount, verifyQty:r.verifyQty,
+    refundQty:r.refundQty, diffAmount:r.diffAmount, status:r.status,
+    receivable:false, receivableNo:''
+  };
+});
+
+RECONS = RECONS.concat([
+  {id:'CR202610A', platform:'美团', period:'2026-10', orders:42, orderAmount:6980.00, settleAmount:6770.60, verifyQty:40, refundQty:1, diffAmount:-209.40, status:'有差异', receivable:false, receivableNo:''},
+  {id:'CR202610B', platform:'抖音', period:'2026-10', orders:28, orderAmount:8420.00, settleAmount:8251.60, verifyQty:26, refundQty:2, diffAmount:-168.40, status:'待核对', receivable:false, receivableNo:''},
+  {id:'CR202610C', platform:'美团', period:'2026-10', orders:96, orderAmount:14260.00, settleAmount:13832.20, verifyQty:90, refundQty:3, diffAmount:-427.80, status:'待核对', receivable:false, receivableNo:''},
+  {id:'CR202610D', platform:'抖音', period:'2026-10', orders:33, orderAmount:9860.00, settleAmount:9564.20, verifyQty:30, refundQty:2, diffAmount:-295.80, status:'有差异', receivable:false, receivableNo:''},
+  {id:'CR202610E', platform:'美团', period:'2026-10', orders:25, orderAmount:4120.00, settleAmount:3996.40, verifyQty:24, refundQty:0, diffAmount:-123.60, status:'已核对', receivable:false, receivableNo:''},
+  {id:'CR202610F', platform:'抖音', period:'2026-10', orders:15, orderAmount:3480.00, settleAmount:3375.60, verifyQty:14, refundQty:1, diffAmount:-104.40, status:'待核对', receivable:false, receivableNo:''},
+  {id:'CR202610G', platform:'美团', period:'2026-10', orders:18, orderAmount:3260.00, settleAmount:3194.80, verifyQty:17, refundQty:1, diffAmount:-65.20, status:'已核对', receivable:false, receivableNo:''},
+  {id:'CR202610H', platform:'抖音', period:'2026-10', orders:12, orderAmount:2890.00, settleAmount:2745.50, verifyQty:11, refundQty:1, diffAmount:-144.50, status:'有差异', receivable:false, receivableNo:''},
+  {id:'CR202609A', platform:'美团', period:'2026-09', orders:152, orderAmount:22380.00, settleAmount:21708.60, verifyQty:146, refundQty:5, diffAmount:-671.40, status:'已核对', receivable:false, receivableNo:''},
+  {id:'CR202609B', platform:'抖音', period:'2026-09', orders:55, orderAmount:15600.00, settleAmount:15132.00, verifyQty:52, refundQty:3, diffAmount:-468.00, status:'已核对', receivable:false, receivableNo:''},
+  {id:'CR202609C', platform:'美团', period:'2026-09', orders:38, orderAmount:5820.00, settleAmount:5645.40, verifyQty:36, refundQty:2, diffAmount:-174.60, status:'有差异', receivable:false, receivableNo:''},
+  {id:'CR202608A', platform:'美团', period:'2026-08', orders:131, orderAmount:19860.00, settleAmount:19324.20, verifyQty:126, refundQty:4, diffAmount:-535.80, status:'已核对', receivable:false, receivableNo:''},
+  {id:'CR202608B', platform:'抖音', period:'2026-08', orders:47, orderAmount:13240.00, settleAmount:12842.80, verifyQty:44, refundQty:2, diffAmount:-397.20, status:'已核对', receivable:false, receivableNo:''}
+]);
+
+var STATUS_TAG = {'待核对':'tag-orange', '已核对':'tag-green', '有差异':'tag-red'};
+
+/* ========== 统计 ========== */
+function reconFiltered(){
+  return RECONS.filter(function(r){
+    if(RECON_PERIOD && r.period !== RECON_PERIOD) return false;
+    if(RECON_PLATFORM && r.platform !== RECON_PLATFORM) return false;
+    return true;
+  });
+}
+
+function renderStats(){
+  var el = document.getElementById('cr-stats');
+  if(!el) return;
+  var list = reconFiltered();
+  var orderAmount = list.reduce(function(s, r){ return s + r.orderAmount; }, 0);
+  var settleAmount = list.reduce(function(s, r){ return s + r.settleAmount; }, 0);
+  var diffAmount = list.reduce(function(s, r){ return s + r.diffAmount; }, 0);
+  var orders = list.reduce(function(s, r){ return s + r.orders; }, 0);
+  var platformLabel = RECON_PLATFORM || '全部平台';
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">本月渠道订单额 <span class="stat-icon blue"><i data-lucide="shopping-bag"></i></span></div>
+      <div class="stat-value">¥${money(orderAmount)}</div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>${RECON_PERIOD} · ${platformLabel}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">结算额 <span class="stat-icon green"><i data-lucide="banknote"></i></span></div>
+      <div class="stat-value text-success">¥${money(settleAmount)}</div>
+      <div class="stat-trend up"><i data-lucide="check-circle-2" style="width:14px"></i>平台结算单已回传</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">差异额 <span class="stat-icon red"><i data-lucide="scale"></i></span></div>
+      <div class="stat-value ${diffAmount < 0 ? 'text-error' : 'text-success'}">${signedMoney(diffAmount)}</div>
+      <div class="stat-trend down"><i data-lucide="alert-triangle" style="width:14px"></i>含平台服务费与退款差异</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">订单数 <span class="stat-icon purple"><i data-lucide="receipt"></i></span></div>
+      <div class="stat-value">${orders}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      <div class="stat-trend"><i data-lucide="list-checks" style="width:14px;color:var(--text-3)"></i>共 ${list.length} 张对账单</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 对账列表 ========== */
+function reconActions(r){
+  var btns = `<button class="btn btn-default btn-sm" onclick="openReconDetail('${r.id}')"><i data-lucide="eye" style="width:13px"></i>查看明细</button>`;
+  if(r.status === '已核对'){
+    btns += `<button class="btn btn-ghost btn-sm" disabled>已核对</button>`;
+  } else {
+    btns += `<button class="btn btn-success btn-sm" onclick="markChecked('${r.id}')"><i data-lucide="check" style="width:13px"></i>标记已核对</button>`;
+  }
+  if(r.receivable){
+    btns += `<button class="btn btn-ghost btn-sm" disabled>已生成应收</button>`;
+  } else {
+    btns += `<button class="btn btn-primary btn-sm" onclick="genReceivable('${r.id}')"><i data-lucide="file-plus" style="width:13px"></i>生成渠道应收</button>`;
+  }
+  return btns;
+}
+
+function renderTable(){
+  var list = reconFiltered();
+  var pages = Math.max(1, Math.ceil(list.length / RECON_PAGE_SIZE));
+  if(reconPage > pages) reconPage = pages;
+  var start = (reconPage - 1) * RECON_PAGE_SIZE;
+  var rows = list.slice(start, start + RECON_PAGE_SIZE).map(function(r){
+    var diffCls = r.diffAmount < 0 ? 'text-error' : (r.diffAmount > 0 ? 'text-success' : 'text-muted');
+    return `<tr>
+      <td class="mono" style="font-size:12px">${r.id}${r.receivable ? '<div class="mt-8"><span class="tag tag-green">应收已生成</span></div>' : ''}</td>
+      <td><span class="tag ${r.platform === '美团' ? 'tag-orange' : 'tag-purple'}">${r.platform}</span></td>
+      <td style="font-size:13px">${r.period}</td>
+      <td class="text-right">${r.orders}</td>
+      <td class="text-right">¥${money(r.orderAmount)}</td>
+      <td class="text-right">¥${money(r.settleAmount)}</td>
+      <td class="text-right">${r.verifyQty}</td>
+      <td class="text-right">${r.refundQty}</td>
+      <td class="text-right font-medium ${diffCls}">${signedMoney(r.diffAmount)}</td>
+      <td><span class="tag ${STATUS_TAG[r.status] || 'tag-gray'}">${r.status}</span></td>
+      <td class="actions" style="flex-wrap:wrap">${reconActions(r)}</td>
+    </tr>`;
+  }).join('');
+  var body = document.getElementById('cr-rows');
+  if(body){
+    body.innerHTML = rows || `<tr><td colspan="11"><div class="empty"><div class="empty-icon"><i data-lucide="search-x"></i></div><div class="empty-text">当前筛选条件下暂无对账单</div></div></td></tr>`;
+  }
+  var cnt = document.getElementById('cr-count');
+  if(cnt) cnt.textContent = '筛选结果 ' + list.length + ' 张对账单';
+  var pager = document.getElementById('cr-pager');
+  if(pager){
+    var btns = '';
+    for(var i = 1; i <= pages; i++){
+      btns += '<button class="page-btn ' + (i === reconPage ? 'active' : '') + '" onclick="gotoReconPage(' + i + ')">' + i + '</button>';
+    }
+    pager.innerHTML = '<div class="pagination-info">共 ' + list.length + ' 张对账单 · 第 ' + reconPage + '/' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+      '<button class="page-btn" ' + (reconPage <= 1 ? 'disabled' : '') + ' onclick="gotoReconPage(' + (reconPage - 1) + ')"><i data-lucide="chevron-left" style="width:14px"></i></button>' +
+      btns +
+      '<button class="page-btn" ' + (reconPage >= pages ? 'disabled' : '') + ' onclick="gotoReconPage(' + (reconPage + 1) + ')"><i data-lucide="chevron-right" style="width:14px"></i></button>' +
+      '</div>';
+  }
+  refreshIcons();
+}
+
+function gotoReconPage(n){ reconPage = n; renderTable(); }
+function applyReconFilter(){
+  RECON_PERIOD = val('cr-period');
+  RECON_PLATFORM = val('cr-platform');
+  reconPage = 1;
+  renderStats();
+  renderTable();
+}
+function refreshAll(){ renderStats(); renderTable(); toast('对账数据已刷新', 'info'); }
+
+/* ========== 标记核对 / 生成应收 ========== */
+function markChecked(id){
+  var r = RECONS.find(function(x){ return x.id === id; });
+  if(!r) return;
+  if(r.status === '已核对'){ toast('该对账单已核对，无需重复操作', 'info'); return; }
+  var doMark = function(){
+    r.status = '已核对';
+    renderTable();
+    toast('对账单 ' + r.id + ' 已标记为已核对', 'success');
+  };
+  if(r.status === '有差异'){
+    confirmDialog('对账单 ' + r.id + ' 存在差异，确认标记为已核对？差异记录仍保留在差异明细中，用于后续追溯。', doMark);
+  } else {
+    doMark();
+  }
+}
+
+function genReceivable(id){
+  var r = RECONS.find(function(x){ return x.id === id; });
+  if(!r) return;
+  if(r.receivable){ toast('该对账单已生成渠道应收，请勿重复生成', 'info'); return; }
+  r.receivable = true;
+  r.receivableNo = 'AR-CH-' + r.period.replace('-', '') + '-' + r.id.slice(-3);
+  renderTable();
+  toast('已生成渠道应收并进入应收汇总', 'success');
+}
+
+/* ========== 明细数据生成 ========== */
+function orderDetails(r){
+  var n = Math.min(6, Math.max(3, Math.floor(r.orders / 20)));
+  var each = r.orderAmount / n;
+  var prefix = r.platform === '美团' ? 'MT' : 'DY';
+  var rows = [];
+  for(var i = 0; i < n; i++){
+    var st = (i === 0 && r.refundQty > 0) ? '已退款' : (i === n - 1 && r.orders > r.verifyQty ? '待核销' : '已核销');
+    rows.push([
+      '<span class="mono" style="font-size:12px">' + prefix + r.period.replace('-', '') + String(100 + i + 1) + '</span>',
+      ['篮球半场2小时套餐', '羽毛球1小时体验券', '网球私教体验课', '篮球馆月卡'][i % 4],
+      r.period + '-' + String(10 + i).padStart(2, '0') + ' 19:00',
+      '¥' + money(each),
+      '<span class="tag ' + (st === '已核销' ? 'tag-green' : (st === '已退款' ? 'tag-gray' : 'tag-orange')) + '">' + st + '</span>'
+    ]);
+  }
+  return miniTable(['订单号', '商品/套餐', '购买时间', '金额', '状态'], rows, '暂无订单明细');
+}
+
+function verifyDetails(r){
+  var n = Math.min(5, r.verifyQty);
+  var prefix = r.platform === '美团' ? 'MT' : 'DY';
+  var rows = [];
+  for(var i = 0; i < n; i++){
+    rows.push([
+      '<span class="mono" style="font-size:12px">V' + prefix + r.period.replace('-', '') + String(200 + i + 1) + '</span>',
+      '<span class="mono" style="font-size:12px">' + prefix + r.period.replace('-', '') + String(100 + i + 1) + '</span>',
+      '扫码核销',
+      r.period + '-' + String(12 + i).padStart(2, '0') + ' 19:30',
+      '前台核销员',
+      '<span class="tag tag-green">成功</span>'
+    ]);
+  }
+  return miniTable(['核销单号', '订单号', '核销方式', '核销时间', '核销人', '结果'], rows, '本期暂无核销明细');
+}
+
+function refundDetails(r){
+  var n = Math.min(3, r.refundQty);
+  var prefix = r.platform === '美团' ? 'MT' : 'DY';
+  var rows = [];
+  for(var i = 0; i < n; i++){
+    var amount = r.orderAmount / Math.max(r.orders, 1);
+    rows.push([
+      '<span class="mono" style="font-size:12px">RF' + prefix + r.period.replace('-', '') + String(300 + i + 1) + '</span>',
+      '<span class="mono" style="font-size:12px">' + prefix + r.period.replace('-', '') + String(100 + i + 1) + '</span>',
+      '¥' + money(amount),
+      r.period + '-' + String(18 + i).padStart(2, '0') + ' 10:00',
+      ['用户未使用申请退款', '场馆临时闭馆退款', '重复购买退款'][i % 3],
+      '<span class="tag tag-gray">已退款</span>'
+    ]);
+  }
+  return miniTable(['退款单号', '订单号', '退款金额', '退款时间', '退款原因', '状态'], rows, '本期暂无退款明细');
+}
+
+function settleDetails(r){
+  var fee = Math.max(0, -r.diffAmount);
+  var rows = [[
+    '<span class="mono" style="font-size:12px">JS' + r.period.replace('-', '') + r.id.slice(-3) + '</span>',
+    '<span class="mono" style="font-size:12px">ST' + (r.platform === '美团' ? 'MT' : 'DY') + r.period.replace('-', '') + '01</span>',
+    '¥' + money(r.settleAmount),
+    '¥' + money(fee),
+    r.period + '-25',
+    '<span class="tag tag-green">已结算</span>'
+  ]];
+  return miniTable(['结算批次', '平台结算单号', '结算金额', '服务费', '结算日期', '结算状态'], rows, '暂无结算明细');
+}
+
+function diffDetails(r){
+  var rows = [];
+  if(r.diffAmount !== 0){
+    rows.push([
+      '<span class="tag tag-red">金额差异</span>',
+      '¥' + money(r.orderAmount),
+      '¥' + money(r.settleAmount),
+      '<span class="text-error">' + signedMoney(r.diffAmount) + '</span>',
+      '平台按结算规则扣除服务费/补贴后结算，差异计入渠道费用'
+    ]);
+  }
+  var settledQty = r.verifyQty + r.refundQty;
+  if(r.orders !== settledQty){
+    rows.push([
+      '<span class="tag tag-orange">数量差异</span>',
+      r.orders + ' 单',
+      settledQty + ' 单',
+      (r.orders - settledQty) + ' 单',
+      '未核销订单仍在有效期内，下期继续核销'
+    ]);
+  }
+  if(r.status === '有差异'){
+    rows.push([
+      '<span class="tag tag-purple">状态差异</span>',
+      '待核对',
+      '平台已结算',
+      '—',
+      '平台结算状态与本地对账状态不一致，需人工确认后再标记已核对'
+    ]);
+  }
+  return miniTable(['差异类型', '系统值', '平台值', '差异', '说明'], rows, '本期对账无差异');
+}
+
+function miniTable(heads, rows, emptyMsg){
+  if(!rows.length){
+    return '<div class="empty" style="padding:28px 20px"><div class="empty-icon" style="font-size:32px"><i data-lucide="check-circle-2"></i></div><div class="empty-text">' + emptyMsg + '</div></div>';
+  }
+  var th = heads.map(function(h){ return '<th>' + h + '</th>'; }).join('');
+  var tr = rows.map(function(cells){
+    return '<tr>' + cells.map(function(c){ return '<td>' + c + '</td>'; }).join('') + '</tr>';
+  }).join('');
+  return '<div class="table-wrap"><table class="data-table" style="font-size:13px"><thead><tr>' + th + '</tr></thead><tbody>' + tr + '</tbody></table></div>';
+}
+
+/* ========== 明细弹窗 ========== */
+function openReconDetail(id){
+  var r = RECONS.find(function(x){ return x.id === id; });
+  if(!r) return;
+  DETAIL_ID = id;
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">对账明细 · ${r.id}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">平台</div><div class="v">${r.platform}</div></div>
+        <div class="kv-item"><div class="k">对账周期</div><div class="v">${r.period}</div></div>
+        <div class="kv-item"><div class="k">订单数 / 订单金额</div><div class="v">${r.orders} 单 · ¥${money(r.orderAmount)}</div></div>
+        <div class="kv-item"><div class="k">结算金额</div><div class="v">¥${money(r.settleAmount)}</div></div>
+        <div class="kv-item"><div class="k">核销笔数 / 退款笔数</div><div class="v">${r.verifyQty} 笔 / ${r.refundQty} 笔</div></div>
+        <div class="kv-item"><div class="k">差异金额 / 状态</div><div class="v"><span class="${r.diffAmount < 0 ? 'text-error' : ''}">${signedMoney(r.diffAmount)}</span> · <span class="tag ${STATUS_TAG[r.status] || 'tag-gray'}">${r.status}</span></div></div>
+      </div>
+      <div class="tabs" style="margin-bottom:12px">
+        <div class="tab active" id="det-tab-0" onclick="switchDetailTab(0)">订单明细</div>
+        <div class="tab" id="det-tab-1" onclick="switchDetailTab(1)">核销明细</div>
+        <div class="tab" id="det-tab-2" onclick="switchDetailTab(2)">退款明细</div>
+        <div class="tab" id="det-tab-3" onclick="switchDetailTab(3)">渠道结算明细</div>
+      </div>
+      <div id="det-panel-0">${orderDetails(r)}</div>
+      <div id="det-panel-1" style="display:none">${verifyDetails(r)}</div>
+      <div id="det-panel-2" style="display:none">${refundDetails(r)}</div>
+      <div id="det-panel-3" style="display:none">${settleDetails(r)}</div>
+      <div class="divider"></div>
+      <div class="flex justify-between items-center mb-8">
+        <div class="font-medium">差异明细</div>
+        <span class="text-muted" style="font-size:12px">系统值 vs 平台值</span>
+      </div>
+      ${diffDetails(r)}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      ${r.status === '已核对' ? '' : `<button class="btn btn-success" onclick="closeActiveModal();markChecked('${r.id}')">标记已核对</button>`}
+      ${r.receivable ? `<button class="btn btn-ghost" disabled>已生成应收</button>` : `<button class="btn btn-primary" onclick="genReceivable('${r.id}')">生成渠道应收</button>`}
+    </div>
+  </div>`);
+}
+
+function switchDetailTab(n){
+  for(var i = 0; i < 4; i++){
+    var btn = document.getElementById('det-tab-' + i);
+    var panel = document.getElementById('det-panel-' + i);
+    if(!btn || !panel) continue;
+    btn.className = 'tab' + (i === n ? ' active' : '');
+    panel.style.display = i === n ? '' : 'none';
+  }
+  refreshIcons();
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">渠道对账结算</div>
+        <div class="page-desc">按对账周期与平台核对渠道订单、核销、退款及结算金额，确认差异并生成渠道应收</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="refreshAll()"><i data-lucide="refresh-cw"></i>刷新</button>
+        <button class="btn btn-primary" onclick="toast('渠道对账底稿已导出为 Excel','success')"><i data-lucide="download"></i>导出对账底稿</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="cr-stats"></div>
+
+  <div class="card mb-16">
+    <div class="card-body">
+      <div class="toolbar" style="margin-bottom:0">
+        <span class="text-muted" style="font-size:13px;font-weight:500">对账周期</span>
+        <select class="form-select" id="cr-period" onchange="applyReconFilter()">
+          <option value="2026-10"${RECON_PERIOD === '2026-10' ? ' selected' : ''}>2026-10（本月）</option>
+          <option value="2026-09"${RECON_PERIOD === '2026-09' ? ' selected' : ''}>2026-09</option>
+          <option value="2026-08"${RECON_PERIOD === '2026-08' ? ' selected' : ''}>2026-08</option>
+        </select>
+        <select class="form-select" id="cr-platform" onchange="applyReconFilter()">
+          <option value=""${RECON_PLATFORM === '' ? ' selected' : ''}>全部平台</option>
+          <option value="美团"${RECON_PLATFORM === '美团' ? ' selected' : ''}>美团</option>
+          <option value="抖音"${RECON_PLATFORM === '抖音' ? ' selected' : ''}>抖音</option>
+        </select>
+        <div class="spacer"></div>
+        <span class="text-muted" style="font-size:12px">差异额 = 平台结算额 − 渠道订单额</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">渠道对账单</div>
+      <span class="text-muted" id="cr-count" style="font-size:13px"></span>
+    </div>
+    <div class="card-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>对账单号</th>
+              <th>平台</th>
+              <th>周期</th>
+              <th class="text-right">订单数</th>
+              <th class="text-right">订单金额</th>
+              <th class="text-right">结算金额</th>
+              <th class="text-right">核销笔数</th>
+              <th class="text-right">退款笔数</th>
+              <th class="text-right">差异金额</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="cr-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="cr-pager"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">渠道结算说明</div>
+      <span class="tag tag-cyan">渠道结算 · 不产生兴E付流水</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="wallet"></i></span>
+        <div><div class="font-medium" style="font-size:13px">资金由平台结算</div><div class="text-muted" style="font-size:12px">渠道订单资金由美团、抖音平台统一结算，不产生兴E付流水，不进入线下收款通道。</div></div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon green" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="file-check-2"></i></span>
+        <div><div class="font-medium" style="font-size:13px">按平台结算单登记收款</div><div class="text-muted" style="font-size:12px">收款按平台结算单登记，收款方式 = 渠道结算，客商 = 散客，应收来源关联渠道对账单。</div></div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:34px;height:34px;flex-shrink:0"><i data-lucide="ban"></i></span>
+        <div><div class="font-medium" style="font-size:13px">系统不做资金划转</div><div class="text-muted" style="font-size:12px">系统仅做对账与应收登记，不发起资金划转；平台服务费、补贴等差异计入渠道费用。</div></div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderStats();
+renderTable();
+refreshIcons();
+</script>
+</body>
+</html>

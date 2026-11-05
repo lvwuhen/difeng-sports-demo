@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 场馆预约</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="dark">
+<div class="app">
+  <div class="scroll">
+    <div class="navbar">
+      <button class="nav-back" onclick="history.length>1?history.back():M.go('home.html')">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+      </button>
+      <div class="nav-title">场馆预约</div>
+      <a class="nav-act" href="orders.html">订单</a>
+    </div>
+
+    <div style="background:#fff;padding:12px 16px 4px">
+      <div style="display:flex;align-items:center;gap:8px;background:#f4f6fa;border-radius:20px;padding:9px 14px;font-size:13px;color:#9aa3b2">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#9aa3b2" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.6"/><path d="m20 20-4.2-4.2"/></svg>
+        <span>搜索场馆名称或区域</span>
+      </div>
+      <div class="chips-row" id="areaChips" style="display:flex;gap:8px;overflow-x:auto;padding:12px 0 10px"></div>
+    </div>
+
+    <div class="section tight">
+      <div class="section-head" style="margin:8px 0 10px">
+        <div class="section-title" style="font-size:14px;font-weight:500;color:#6b7280">共 <span id="venueCount">4</span> 座场馆 · 按距离排序</div>
+        <span class="sub">厦门</span>
+      </div>
+      <div id="venueList"></div>
+    </div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var current = '全部';
+  var areas = ['全部','思明区','湖里区','集美区','海沧区'];
+
+  function renderChips(){
+    M.$('#areaChips').innerHTML = areas.map(function(a){
+      return '<span class="chip' + (a === current ? ' active' : '') + '" data-area="' + a + '">' + a + '</span>';
+    }).join('');
+    M.$$('#areaChips .chip').forEach(function(el){
+      el.addEventListener('click', function(){
+        current = el.getAttribute('data-area');
+        renderChips(); renderList();
+      });
+    });
+  }
+
+  function venueCard(v){
+    var tags = v.tags.map(function(t, i){
+      return '<span class="tag ' + (i === 0 ? 'tag-blue' : 'tag-gray') + '">' + t + '</span>';
+    }).join('');
+    return '<a class="venue-card pressable" href="venue-detail.html?id=' + v.id + '">' +
+      '<div class="venue-thumb ' + v.thumb + '">' +
+        '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="rgba(255,255,255,.92)" stroke-width="1.5"><circle cx="12" cy="12" r="8.4"/><path d="M5.4 7.8c3.4 2 9.8 2 13.2 0M5.4 16.2c3.4-2 9.8-2 13.2 0M12 3.6v16.8"/></svg>' +
+        '<span class="vt-name">' + v.short + '</span>' +
+      '</div>' +
+      '<div class="venue-info">' +
+        '<div class="venue-name">' + v.name + '<span class="tag tag-green">运营中</span></div>' +
+        '<div class="venue-meta">' + M.icon('pin', 13) + v.address + '</div>' +
+        '<div class="venue-meta">' + M.icon('clock', 13) + v.openTime + ' · ' + v.courts + ' 片场地</div>' +
+        '<div class="venue-tags">' + tags + '</div>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between">' +
+        '<span class="tag tag-gray">' + v.distance + '</span>' +
+        '<span class="chev">' + M.icon('right', 16) + '</span>' +
+      '</div>' +
+    '</a>';
+  }
+
+  function renderList(){
+    var list = M.VENUES.filter(function(v){ return current === '全部' || v.district === current; });
+    M.$('#venueCount').textContent = list.length;
+    M.$('#venueList').innerHTML = list.length
+      ? list.map(venueCard).join('')
+      : '<div class="empty"><div class="e-ico">' + M.icon('pin', 28) + '</div><p>该区域暂无在营场馆<br>试试其他区域</p></div>';
+  }
+
+  renderChips(); renderList();
+  M.init({ tab:'booking' });
+})();
+</script>
+</body>
+</html>

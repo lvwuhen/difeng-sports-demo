@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客户档案 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('customer', '客户档案');
+
+const typeTagMap = { '个人':'tag-blue', '企业':'tag-purple', '团体':'tag-cyan' };
+const statusTagMap = { '正常':'tag-green', '冻结':'tag-red' };
+
+// 扩展客户数据
+const customers = JSON.parse(JSON.stringify(MOCK.customers));
+// 补充额外字段
+customers.forEach(c=>{
+  if(c.type==='企业'){
+    c.creditCode = c.creditCode || '91350200MA********';
+    c.invoiceTitle = c.invoiceTitle || c.name;
+    c.taxNo = c.taxNo || '91350200MA34A****';
+    c.invoiceAddr = c.invoiceAddr || '厦门市思明区XX路XX号 0592-00000000';
+    c.bankAccount = c.bankAccount || '中国工商银行厦门分行 410000********1234';
+    c.contactPerson = c.contactPerson || '刘财务';
+    c.bizAttr = c.bizAttr || '长期合作';
+  } else if(c.type==='团体'){
+    c.groupName = c.groupName || c.name;
+    c.leader = c.leader || '陈教练';
+    c.memberCount = c.memberCount || 18;
+    c.bizAttr = c.bizAttr || '团体订场';
+  } else {
+    c.bizAttr = c.bizAttr || '散客充值';
+  }
+  if(!c.bizAttr) c.bizAttr = '常规';
+});
+
+// 注册用户列表（绑定客户或未绑定）
+const regUsers = [
+  {id:'RU001', regDate:'2024-03-15 10:22', channel:'小程序', phone:'138****1234', customerId:'CU001', lastConsume:'2026-10-28', total:12580},
+  {id:'RU002', regDate:'2024-05-20 14:08', channel:'小程序', phone:'139****5678', customerId:'CU002', lastConsume:'2026-10-29', total:8650},
+  {id:'RU003', regDate:'2026-09-12 09:15', channel:'小程序', phone:'135****7788', customerId:null, lastConsume:'2026-10-20', total:360},
+  {id:'RU004', regDate:'2026-08-30 19:42', channel:'美团', phone:'150****3344', customerId:null, lastConsume:'2026-10-15', total:200},
+  {id:'RU005', regDate:'2026-10-01 11:30', channel:'抖音', phone:'188****5566', customerId:null, lastConsume:'2026-10-25', total:480},
+  {id:'RU006', regDate:'2023-11-08 16:00', channel:'线下录入', phone:'0592-8888****', customerId:'CU003', lastConsume:'2026-10-25', total:56800},
+  {id:'RU007', regDate:'2024-01-10 08:50', channel:'线下录入', phone:'137****9012', customerId:'CU004', lastConsume:'2026-10-27', total:32400},
+];
+
+let curPage = 1, pageSize = 10;
+
+function getFiltered(){
+  const tp = document.getElementById('fType')?.value || '';
+  const ven = document.getElementById('fVenue')?.value || '';
+  const st = document.getElementById('fStatus')?.value || '';
+  const kw = (document.getElementById('fKw')?.value || '').trim();
+  return customers.filter(c=>{
+    if(tp && c.type!==tp) return false;
+    if(ven && c.venue!==ven) return false;
+    if(st && c.status!==st) return false;
+    if(kw && !(c.name.includes(kw) || (c.phone||'').includes(kw) || c.id.includes(kw))) return false;
+    return true;
+  });
+}
+
+function renderCustomers(){
+  const list = getFiltered();
+  const total = list.length;
+  const start = (curPage-1)*pageSize;
+  const rows = list.slice(start,start+pageSize).map(c=>`
+    <tr>
+      <td><span class="tag ${typeTagMap[c.type]}">${c.type}</span></td>
+      <td><div class="font-medium">${c.name}</div><div class="text-muted" style="font-size:12px">${c.id}</div></td>
+      <td>${c.phone||'-'}</td>
+      <td style="font-size:13px">${c.idCard||c.creditCode||'-'}</td>
+      <td>${c.venue}</td>
+      <td><span class="tag tag-gray">${c.bizAttr||'常规'}</span></td>
+      <td><span class="tag ${statusTagMap[c.status]}"><span class="dot" style="background:${c.status==='正常'?'var(--success)':'var(--error)'}"></span>${c.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewCustomer('${c.id}')">详情</button>
+        <button class="btn btn-ghost btn-sm" onclick="editCustomer('${c.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm ${c.status==='正常'?'text-error':''}" onclick="freezeCustomer('${c.id}')">${c.status==='正常'?'冻结':'解冻'}</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="users"></i></div><div class="empty-text">暂无符合条件的客户</div></div></td></tr>`;
+  document.getElementById('custTbody').innerHTML = rows;
+  const pages = Math.max(1, Math.ceil(total/pageSize));
+  let btns='';
+  for(let i=1;i<=pages;i++) btns+=`<button class="page-btn ${i===curPage?'active':''}" onclick="goPage(${i})">${i}</button>`;
+  document.getElementById('custPag').innerHTML = `
+    <div class="pagination-info">共 ${total} 条</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${curPage<=1?'disabled':''} onclick="goPage(${curPage-1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${curPage>=pages?'disabled':''} onclick="goPage(${curPage+1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  if(window.lucide) lucide.createIcons();
+}
+window.goPage = p=>{ curPage=p; renderCustomers(); };
+
+// 新增/编辑客户
+window.editCustomer = function(id){
+  const c = id ? customers.find(x=>x.id===id) : {type:'个人', name:'', phone:'', idCard:'', venue:'总部', bizAttr:'常规'};
+  const isEdit = !!id;
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">${isEdit?'编辑':'新增'}客户</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">客户类型<span class="required">*</span></label>
+          <select class="form-select" id="cfType" onchange="toggleCustFields()">
+            <option value="个人" ${c.type==='个人'?'selected':''}>个人</option>
+            <option value="企业" ${c.type==='企业'?'selected':''}>企业</option>
+            <option value="团体" ${c.type==='团体'?'selected':''}>团体</option>
+          </select>
+        </div>
+        <div class="form-item">
+          <label class="form-label">客户名称<span class="required">*</span></label>
+          <input class="form-input" id="cfName" value="${c.name||''}" placeholder="个人填姓名/企业填单位全称/团体填团体名称">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">联系方式<span class="required">*</span></label>
+          <input class="form-input" id="cfPhone" value="${c.phone||''}" placeholder="手机号或座机">
+        </div>
+        <div class="form-item" id="cfIdItem">
+          <label class="form-label" id="cfIdLabel">身份证号</label>
+          <input class="form-input" id="cfIdCard" value="${c.idCard||c.creditCode||''}" placeholder="个人填身份证/企业填统一社会信用代码">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">所属场馆</label>
+          <select class="form-select" id="cfVenue">
+            ${MOCK.venues.map(v=>{const short=v.name.includes('总部')?'总部':v.name.includes('篮球')?'篮球公园':v.name.includes('网球')?'网球中心':v.name.includes('羽毛球')?'羽毛球馆':v.name;return `<option value="${short}" ${c.venue===short?'selected':''}>${v.name}</option>`;}).join('')}
+          </select>
+        </div>
+        <div class="form-item">
+          <label class="form-label">业务属性</label>
+          <select class="form-select" id="cfBizAttr">
+            <option ${c.bizAttr==='常规'?'selected':''}>常规</option>
+            <option ${c.bizAttr==='散客充值'?'selected':''}>散客充值</option>
+            <option ${c.bizAttr==='团体订场'?'selected':''}>团体订场</option>
+            <option ${c.bizAttr==='长期合作'?'selected':''}>长期合作</option>
+            <option ${c.bizAttr==='赛事合作'?'selected':''}>赛事合作</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 个人字段 -->
+      <div id="personalFields" style="${c.type==='个人'?'':'display:none'}">
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">性别</label><select class="form-select"><option>男</option><option>女</option></select></div>
+          <div class="form-item"><label class="form-label">生日</label><input type="date" class="form-input"></div>
+        </div>
+      </div>
+
+      <!-- 企业字段 -->
+      <div id="enterpriseFields" style="${c.type==='企业'?'':'display:none'}">
+        <div class="divider"></div>
+        <div class="font-medium mb-12"><i data-lucide="building-2" style="width:16px;vertical-align:-3px;color:var(--primary)"></i> 企业开票信息</div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">发票抬头</label><input class="form-input" id="cfInvoiceTitle" value="${c.invoiceTitle||''}" placeholder="与单位名称一致"></div>
+          <div class="form-item"><label class="form-label">税号</label><input class="form-input" id="cfTaxNo" value="${c.taxNo||''}"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">开票地址电话</label><input class="form-input" id="cfInvoiceAddr" value="${c.invoiceAddr||''}"></div>
+          <div class="form-item"><label class="form-label">开户行及账号</label><input class="form-input" id="cfBankAccount" value="${c.bankAccount||''}"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">对账联系人</label><input class="form-input" id="cfContactPerson" value="${c.contactPerson||''}"></div>
+          <div class="form-item"><label class="form-label">对账周期</label><select class="form-select"><option>月结</option><option>季结</option><option>预付</option></select></div>
+        </div>
+      </div>
+
+      <!-- 团体字段 -->
+      <div id="groupFields" style="${c.type==='团体'?'':'display:none'}">
+        <div class="divider"></div>
+        <div class="font-medium mb-12"><i data-lucide="users-round" style="width:16px;vertical-align:-3px;color:var(--info)"></i> 团体信息</div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">团体名称</label><input class="form-input" id="cfGroupName" value="${c.groupName||c.name||''}"></div>
+          <div class="form-item"><label class="form-label">负责人</label><input class="form-input" id="cfLeader" value="${c.leader||''}"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">成员人数</label><input type="number" class="form-input" id="cfMemberCount" value="${c.memberCount||''}"></div>
+          <div class="form-item"><label class="form-label">运动项目</label><select class="form-select"><option>篮球</option><option>足球</option><option>网球</option><option>羽毛球</option><option>综合</option></select></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveCustomer('${id||''}')">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+window.toggleCustFields = function(){
+  const t = document.getElementById('cfType').value;
+  document.getElementById('personalFields').style.display = t==='个人'?'block':'none';
+  document.getElementById('enterpriseFields').style.display = t==='企业'?'block':'none';
+  document.getElementById('groupFields').style.display = t==='团体'?'block':'none';
+  document.getElementById('cfIdLabel').textContent = t==='企业'?'统一社会信用代码':'身份证号';
+};
+
+window.saveCustomer = function(id){
+  const name = document.getElementById('cfName').value.trim();
+  const phone = document.getElementById('cfPhone').value.trim();
+  if(!name){ toast('请输入客户名称','error'); return; }
+  if(!phone){ toast('请输入联系方式','error'); return; }
+  toast(id?'客户信息已更新':'客户已新增','success');
+  document.querySelector('.modal-overlay').remove();
+};
+
+// 批量导入
+window.importCustomers = function(){
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">批量导入客户</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div style="background:var(--primary-bg);padding:12px 16px;border-radius:6px;font-size:13px;color:var(--primary);margin-bottom:16px">
+        <i data-lucide="info" style="width:14px;vertical-align:-2px"></i> 请先下载模板，按格式填写后上传。支持 .xlsx / .csv 格式。
+      </div>
+      <div class="form-item mb-16">
+        <button class="btn btn-default" onclick="toast('模板已下载','success')"><i data-lucide="download"></i> 下载导入模板</button>
+      </div>
+      <div style="border:2px dashed var(--border);border-radius:8px;padding:40px;text-align:center;cursor:pointer" onclick="toast('请选择文件','info')">
+        <i data-lucide="upload-cloud" style="width:40px;color:var(--text-4)"></i>
+        <div class="mt-8 text-muted">点击或拖拽文件到此处上传</div>
+        <div class="text-muted" style="font-size:12px;margin-top:4px">单次最多导入 1000 条</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('导入成功，共 86 条','success');this.closest('.modal-overlay').remove()">开始导入</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 冻结/解冻
+window.freezeCustomer = function(id){
+  const c = customers.find(x=>x.id===id);
+  const isFreeze = c.status==='正常';
+  const html = `<div class="modal" style="max-width:460px">
+    <div class="modal-header"><div class="modal-title">${isFreeze?'冻结':'解冻'}客户 - ${c.name}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div style="background:${isFreeze?'var(--error-bg)':'var(--success-bg)'};padding:12px 16px;border-radius:6px;font-size:13px;color:${isFreeze?'var(--error)':'var(--success)'};margin-bottom:16px">
+        <i data-lucide="${isFreeze?'snowflake':'sun'}" style="width:14px;vertical-align:-2px"></i> 
+        ${isFreeze?'冻结后该客户将无法进行预约、充值、消费等操作，操作将记录留痕。':'解冻后该客户恢复正常使用权限。'}
+      </div>
+      <div class="form-item">
+        <label class="form-label">${isFreeze?'冻结':'解冻'}原因<span class="required">*</span></label>
+        <textarea class="form-textarea" id="frReason" placeholder="请填写原因，将作为审计留痕"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn ${isFreeze?'btn-danger':'btn-success'}" onclick="doFreeze('${id}',${isFreeze})">确认${isFreeze?'冻结':'解冻'}</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.doFreeze = function(id, isFreeze){
+  const reason = document.getElementById('frReason').value.trim();
+  if(!reason){ toast('请填写原因','error'); return; }
+  const c = customers.find(x=>x.id===id);
+  c.status = isFreeze?'冻结':'正常';
+  toast(`${c.name} 已${isFreeze?'冻结':'解冻'}，操作已留痕`,'success');
+  document.querySelector('.modal-overlay').remove();
+  renderCustomers();
+};
+
+// 客户详情
+window.viewCustomer = function(id){
+  const c = customers.find(x=>x.id===id);
+  const member = MOCK.members.find(m=>m.customerId===id);
+  const tcs = MOCK.timeCards.filter(t=>t.customerId===id);
+  const custOrders = MOCK.orders.filter(o=>o.customer===c.name || (c.type==='企业'&&o.customer.includes(c.name.slice(0,4))));
+  const html = `<div class="modal modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">客户详情 - ${c.name} <span class="tag ${typeTagMap[c.type]}" style="margin-left:8px">${c.type}</span> <span class="tag ${statusTagMap[c.status]}" style="margin-left:4px">${c.status}</span></div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <!-- 基本信息 -->
+      <div class="font-medium mb-12"><i data-lucide="user" style="width:16px;vertical-align:-3px;color:var(--primary)"></i> 基本信息</div>
+      <div class="kv-grid mb-20">
+        <div class="kv-item"><div class="k">客户编号</div><div class="v mono">${c.id}</div></div>
+        <div class="kv-item"><div class="k">客户名称</div><div class="v">${c.name}</div></div>
+        <div class="kv-item"><div class="k">联系方式</div><div class="v">${c.phone}</div></div>
+        <div class="kv-item"><div class="k">${c.type==='企业'?'统一社会信用代码':'身份证号'}</div><div class="v mono">${c.idCard||c.creditCode||'-'}</div></div>
+        <div class="kv-item"><div class="k">所属场馆</div><div class="v">${c.venue}</div></div>
+        <div class="kv-item"><div class="k">业务属性</div><div class="v"><span class="tag tag-gray">${c.bizAttr}</span></div></div>
+        <div class="kv-item"><div class="k">注册时间</div><div class="v">${c.regDate}</div></div>
+        <div class="kv-item"><div class="k">最近消费</div><div class="v">${c.lastConsume}</div></div>
+      </div>
+
+      ${c.type==='企业'?`
+      <div class="font-medium mb-12"><i data-lucide="building-2" style="width:16px;vertical-align:-3px;color:var(--purple)"></i> 企业开票信息</div>
+      <div class="kv-grid mb-20">
+        <div class="kv-item"><div class="k">发票抬头</div><div class="v">${c.invoiceTitle}</div></div>
+        <div class="kv-item"><div class="k">税号</div><div class="v mono">${c.taxNo}</div></div>
+        <div class="kv-item"><div class="k">地址电话</div><div class="v">${c.invoiceAddr}</div></div>
+        <div class="kv-item"><div class="k">开户行账号</div><div class="v mono">${c.bankAccount}</div></div>
+        <div class="kv-item"><div class="k">对账联系人</div><div class="v">${c.contactPerson}</div></div>
+      </div>`:''}
+
+      ${c.type==='团体'?`
+      <div class="font-medium mb-12"><i data-lucide="users-round" style="width:16px;vertical-align:-3px;color:var(--info)"></i> 团体信息</div>
+      <div class="kv-grid mb-20">
+        <div class="kv-item"><div class="k">团体名称</div><div class="v">${c.groupName}</div></div>
+        <div class="kv-item"><div class="k">负责人</div><div class="v">${c.leader}</div></div>
+        <div class="kv-item"><div class="k">成员人数</div><div class="v">${c.memberCount} 人</div></div>
+      </div>`:''}
+
+      <div class="divider"></div>
+
+      <!-- 消费汇总 -->
+      <div class="font-medium mb-12"><i data-lucide="bar-chart-3" style="width:16px;vertical-align:-3px;color:var(--success)"></i> 消费汇总</div>
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+        <div class="stat-card"><div class="stat-label">累计消费</div><div class="stat-value" style="color:var(--primary);font-size:22px">¥${c.totalAmount.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">订单数</div><div class="stat-value" style="font-size:22px">${custOrders.length}</div></div>
+        <div class="stat-card"><div class="stat-label">最近消费</div><div class="stat-value" style="font-size:16px">${c.lastConsume}</div></div>
+        <div class="stat-card"><div class="stat-label">当前状态</div><div class="stat-value" style="font-size:16px;color:${c.status==='正常'?'var(--success)':'var(--error)'}">${c.status}</div></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- 会员信息 -->
+      <div class="font-medium mb-12"><i data-lucide="credit-card" style="width:16px;vertical-align:-3px;color:var(--warning)"></i> 会员卡信息</div>
+      ${member ? `
+      <div class="kv-grid mb-20">
+        <div class="kv-item"><div class="k">卡号</div><div class="v mono">${member.cardNo}</div></div>
+        <div class="kv-item"><div class="k">储值余额</div><div class="v">¥${member.balance}</div></div>
+        <div class="kv-item"><div class="k">赠送金额</div><div class="v">¥${member.giftBalance}</div></div>
+        <div class="kv-item"><div class="k">积分</div><div class="v">${member.points}</div></div>
+        <div class="kv-item"><div class="k">有效期</div><div class="v">${member.validUntil}</div></div>
+        <div class="kv-item"><div class="k">会员类型</div><div class="v">${member.level}</div></div>
+      </div>`:'<div class="text-muted mb-20">该客户尚未开通会员卡</div>'}
+
+      <div class="divider"></div>
+
+      <!-- 次卡列表 -->
+      <div class="font-medium mb-12"><i data-lucide="repeat" style="width:16px;vertical-align:-3px;color:var(--purple)"></i> 持有次卡</div>
+      ${tcs.length>0?`
+      <table class="data-table">
+        <thead><tr><th>卡名称</th><th>总次数</th><th>已用</th><th>剩余</th><th>有效期</th><th>状态</th></tr></thead>
+        <tbody>${tcs.map(t=>`<tr>
+          <td>${t.productName}</td><td class="text-center">${t.total}</td><td class="text-center">${t.used}</td>
+          <td class="text-center font-medium">${t.remain}</td><td>${t.validUntil}</td>
+          <td><span class="tag ${t.status==='有效'?'tag-green':'tag-gray'}">${t.status}</span></td>
+        </tr>`).join('')}</tbody>
+      </table>`:'<div class="text-muted">暂无次卡</div>'}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="toast('已导出客户消费明细','success')"><i data-lucide="download"></i> 导出消费</button>
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 注册用户列表
+function renderRegUsers(){
+  const rows = regUsers.map(r=>{
+    const cust = r.customerId ? customers.find(c=>c.id===r.customerId) : null;
+    return `<tr>
+      <td class="mono" style="font-size:13px">${r.id}</td>
+      <td>${r.regDate}</td>
+      <td><span class="tag ${r.channel==='小程序'?'tag-blue':r.channel==='美团'?'tag-orange':r.channel==='抖音'?'tag-purple':'tag-cyan'}">${r.channel}</span></td>
+      <td>${r.phone}</td>
+      <td>${cust?`<a class="text-primary" onclick="viewCustomer('${cust.id}')">${cust.name}</a>`:'<span class="text-muted">未绑定</span>'}</td>
+      <td>${r.lastConsume}</td>
+      <td class="text-right font-medium">¥${r.total.toLocaleString()}</td>
+      <td class="actions">
+        ${!cust?`<button class="btn btn-ghost btn-sm" onclick="toast('已绑定到客户档案','success')">绑定客户</button>`:''}
+        <button class="btn btn-ghost btn-sm" onclick="toast('查看注册用户 ${r.id} 详情','info')">详情</button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('regTbody').innerHTML = rows;
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">客户档案</div>
+  <div class="page-desc">管理个人、企业、团体三类客户档案，支持脱敏展示、批量导入与冻结留痕</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">客户总数 <span class="stat-icon blue"><i data-lucide="users"></i></span></div><div class="stat-value">${customers.length}</div><div class="stat-trend up">本月新增 +12</div></div>
+  <div class="stat-card"><div class="stat-label">个人客户 <span class="stat-icon cyan"><i data-lucide="user"></i></span></div><div class="stat-value">${customers.filter(c=>c.type==='个人').length}</div></div>
+  <div class="stat-card"><div class="stat-label">企业客户 <span class="stat-icon purple"><i data-lucide="building-2"></i></span></div><div class="stat-value">${customers.filter(c=>c.type==='企业').length}</div></div>
+  <div class="stat-card"><div class="stat-label">冻结客户 <span class="stat-icon red"><i data-lucide="snowflake"></i></span></div><div class="stat-value" style="color:var(--error)">${customers.filter(c=>c.status==='冻结').length}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="cust" onclick="switchTab('cust')">客户档案</div>
+      <div class="tab" data-tab="reg" onclick="switchTab('reg')">注册用户</div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="cust">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="fType" onchange="curPage=1;renderCustomers()">
+            <option value="">全部类型</option><option>个人</option><option>企业</option><option>团体</option>
+          </select>
+          <select class="form-select" id="fVenue" onchange="curPage=1;renderCustomers()">
+            <option value="">全部场馆</option>${MOCK.venues.map(v=>{const short=v.name.includes('总部')?'总部':v.name.includes('篮球')?'篮球公园':v.name.includes('网球')?'网球中心':v.name.includes('羽毛球')?'羽毛球馆':v.name;return `<option value="${short}">${v.name}</option>`;}).join('')}
+          </select>
+          <select class="form-select" id="fStatus" onchange="curPage=1;renderCustomers()">
+            <option value="">全部状态</option><option>正常</option><option>冻结</option>
+          </select>
+        </div>
+        <input class="form-input" id="fKw" placeholder="客户名称/手机号/编号" style="width:220px" oninput="curPage=1;renderCustomers()">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="importCustomers()"><i data-lucide="upload"></i> 批量导入</button>
+        <button class="btn btn-default" onclick="toast('已导出客户档案','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="editCustomer('')"><i data-lucide="plus"></i> 新增客户</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>类型</th><th>客户名称</th><th>联系方式</th><th>证件信息</th><th>所属场馆</th><th>业务属性</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="custTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="custPag"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="reg" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select"><option>全部渠道</option><option>小程序</option><option>美团</option><option>抖音</option><option>线下录入</option></select>
+          <select class="form-select"><option>全部状态</option><option>已绑定</option><option>未绑定</option></select>
+        </div>
+        <input type="date" class="form-input">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出注册用户','success')"><i data-lucide="download"></i> 导出</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>用户编号</th><th>注册时间</th><th>渠道</th><th>手机号</th><th>绑定客户</th><th>最近消费</th><th class="text-right">累计消费</th><th>操作</th></tr></thead>
+          <tbody id="regTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderCustomers();
+renderRegUsers();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>操作日志审计 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('system-log', '操作日志审计');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var logPage = 1;
+var logPageSize = 10;
+var FILTER = {user:'', from:'', to:'', type:'', biz:'', keyword:''};
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+/* ========== 数据 ========== */
+var LOGS = [
+  {id:'L001', time:'2026-10-30 14:32:18', user:'张前台', terminal:'PC-01', type:'单据状态流转', biz:'订单', object:'ORD20261030002', detail:'核销订单，支付方式：储值余额', changes:[
+    {field:'订单状态', before:'待核销', after:'已核销'},
+    {field:'核销时间', before:'—', after:'2026-10-30 14:32:18'},
+    {field:'核销人', before:'—', after:'张敏'}
+  ]},
+  {id:'L002', time:'2026-10-30 14:15:02', user:'李运营', terminal:'PC-02', type:'配置变更', biz:'价格方案', object:'P002', detail:'篮球工作日高峰价格 120→130', changes:[
+    {field:'场地价格（元/小时）', before:'120', after:'130'},
+    {field:'生效日期', before:'2026-10-01', after:'2026-11-01'},
+    {field:'变更原因', before:'—', after:'场地改造后成本上升'}
+  ]},
+  {id:'L003', time:'2026-10-30 13:48:33', user:'admin', terminal:'PC-00', type:'权限变更', biz:'角色', object:'角色:前台', detail:'新增"代客下单"按钮权限', changes:[
+    {field:'角色名称', before:'前台角色', after:'前台角色'},
+    {field:'按钮权限', before:'核销', after:'核销、代客下单'},
+    {field:'数据范围', before:'本场馆', after:'本场馆'}
+  ]},
+  {id:'L004', time:'2026-10-30 11:20:11', user:'王财务', terminal:'PC-05', type:'单据状态流转', biz:'应收单', object:'AR20261029', detail:'推送至用友NCC成功', changes:[
+    {field:'推送状态', before:'待推送', after:'已推送'},
+    {field:'财务系统单号', before:'—', after:'NCC-20261030-0012'},
+    {field:'推送时间', before:'—', after:'2026-10-30 11:20:11'}
+  ]},
+  {id:'L005', time:'2026-11-05 09:12:05', user:'张敏', terminal:'PC-01', type:'登录登出', biz:'系统', object:'—', detail:'账号登录成功（微信扫码）', changes:[]},
+  {id:'L006', time:'2026-11-05 09:20:31', user:'张敏', terminal:'PC-01', type:'新增', biz:'会员', object:'会员:陈晓明', detail:'新增会员，绑定手机号 138****1234', changes:[
+    {field:'会员姓名', before:'—', after:'陈晓明'},
+    {field:'会员手机号', before:'—', after:'138****1234'},
+    {field:'会员等级', before:'—', after:'普通会员'}
+  ]},
+  {id:'L007', time:'2026-11-05 10:05:12', user:'李强', terminal:'PC-02', type:'修改', biz:'订单', object:'ORD20261105001', detail:'修改预约时段 18:00-19:00 → 19:00-20:00', changes:[
+    {field:'预约时段', before:'18:00-19:00', after:'19:00-20:00'},
+    {field:'订单金额（元）', before:'80', after:'120'},
+    {field:'改期原因', before:'—', after:'客户临时调整'}
+  ]},
+  {id:'L008', time:'2026-11-05 10:42:09', user:'刘芳', terminal:'PC-03', type:'导入导出', biz:'商品', object:'商品导入批次:20261105', detail:'导入商品 126 条，失败 2 条', changes:[
+    {field:'导入成功条数', before:'—', after:'126'},
+    {field:'导入失败条数', before:'—', after:'2'},
+    {field:'批次状态', before:'—', after:'部分成功'}
+  ]},
+  {id:'L009', time:'2026-11-05 11:15:44', user:'王磊', terminal:'PC-05', type:'权限变更', biz:'角色', object:'角色:财务角色', detail:'数据范围由「全部场馆」调整为「指定场馆」', changes:[
+    {field:'数据范围', before:'全部场馆', after:'指定场馆'},
+    {field:'可访问场馆', before:'总部、篮球公园、网球中心、羽毛球馆', after:'总部、网球中心'},
+    {field:'关联员工', before:'3', after:'3'}
+  ]},
+  {id:'L010', time:'2026-11-05 11:30:20', user:'admin', terminal:'PC-00', type:'配置变更', biz:'系统参数', object:'bookingDays', detail:'可提前预约天数 7 → 15', changes:[
+    {field:'参数值', before:'7', after:'15'},
+    {field:'参数单位', before:'天', after:'天'},
+    {field:'生效方式', before:'即时生效', after:'即时生效'}
+  ]},
+  {id:'L011', time:'2026-11-05 12:02:17', user:'刘芳', terminal:'PC-03', type:'删除', biz:'客户', object:'客户:刘某某', detail:'删除无效客户档案（无订单、无会员资产）', changes:[
+    {field:'客户姓名', before:'刘某某', after:'—'},
+    {field:'客户手机号', before:'137****6621', after:'—'},
+    {field:'删除原因', before:'—', after:'重复录入'}
+  ]},
+  {id:'L012', time:'2026-10-29 18:40:22', user:'李强', terminal:'PC-02', type:'修改', biz:'场地', object:'场地:B-03', detail:'场地状态 维护中 → 可预约', changes:[
+    {field:'场地状态', before:'维护中', after:'可预约'},
+    {field:'维护说明', before:'篮网更换', after:'更换完成'}
+  ]},
+  {id:'L013', time:'2026-10-28 09:05:18', user:'王磊', terminal:'PC-05', type:'单据状态流转', biz:'收款单', object:'RC20261027003', detail:'收款单核销应收 AR20261026', changes:[
+    {field:'核销状态', before:'待核销', after:'已核销'},
+    {field:'核销金额（元）', before:'0', after:'3200'}
+  ]},
+  {id:'L014', time:'2026-10-27 20:15:33', user:'张敏', terminal:'PC-01', type:'导入导出', biz:'订单', object:'订单导出:20261027', detail:'导出订单 368 条（时间范围 10-01 至 10-27）', changes:[
+    {field:'导出条数', before:'—', after:'368'},
+    {field:'导出格式', before:'—', after:'CSV'}
+  ]},
+  {id:'L015', time:'2026-10-26 16:33:41', user:'admin', terminal:'PC-00', type:'配置变更', biz:'消息模板', object:'短信模板:预约确认', detail:'修改开场提醒时间 提前 2 小时 → 提前 3 小时', changes:[
+    {field:'提前提醒时长', before:'2 小时', after:'3 小时'},
+    {field:'模板状态', before:'启用', after:'启用'}
+  ]}
+];
+
+var TYPE_TAGS = {
+  '登录登出':'tag-gray', '新增':'tag-green', '修改':'tag-blue', '删除':'tag-red',
+  '导入导出':'tag-purple', '权限变更':'tag-orange', '配置变更':'tag-cyan', '单据状态流转':'tag-blue'
+};
+var TODAY = '2026-11-05';
+
+/* ========== 统计 ========== */
+function renderStats(){
+  var el = document.getElementById('log-stats');
+  if(!el) return;
+  var todayLogs = LOGS.filter(function(l){ return l.time.slice(0, 10) === TODAY; });
+  var users = {};
+  todayLogs.forEach(function(l){ users[l.user] = 1; });
+  var permCount = LOGS.filter(function(l){ return l.type === '权限变更'; }).length;
+  var exportCount = LOGS.filter(function(l){ return l.type === '导入导出'; }).length;
+  var cards = [
+    {label:'今日操作数', value:todayLogs.length, unit:'次', icon:'activity', color:'blue'},
+    {label:'涉及操作人', value:Object.keys(users).length, unit:'人', icon:'users', color:'cyan'},
+    {label:'权限变更数', value:permCount, unit:'次', icon:'shield', color:'orange'},
+    {label:'导出记录数', value:exportCount, unit:'次', icon:'download', color:'purple'}
+  ];
+  el.innerHTML = cards.map(function(c){
+    return '<div class="stat-card"><div class="stat-label"><span>' + c.label + '</span>' +
+      '<span class="stat-icon ' + c.color + '" style="width:34px;height:34px"><i data-lucide="' + c.icon + '" style="width:17px;height:17px"></i></span></div>' +
+      '<div class="stat-value">' + c.value + '<span style="font-size:14px;color:var(--text-3);font-weight:400;margin-left:4px">' + c.unit + '</span></div></div>';
+  }).join('');
+  refreshIcons();
+}
+
+/* ========== 筛选 ========== */
+function applyFilters(){
+  FILTER = {
+    user: trimVal('filter-user'), from: trimVal('filter-from'), to: trimVal('filter-to'),
+    type: trimVal('filter-type'), biz: trimVal('filter-biz'), keyword: trimVal('filter-keyword')
+  };
+  logPage = 1;
+  renderLogTable();
+}
+function resetFilters(){
+  FILTER = {user:'', from:'', to:'', type:'', biz:'', keyword:''};
+  ['filter-user','filter-type','filter-biz'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.value = '';
+  });
+  ['filter-from','filter-to','filter-keyword'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.value = '';
+  });
+  logPage = 1;
+  renderLogTable();
+  toast('筛选条件已重置', 'info');
+}
+function filteredLogs(){
+  return LOGS.filter(function(l){
+    if(FILTER.user && l.user !== FILTER.user) return false;
+    if(FILTER.type && l.type !== FILTER.type) return false;
+    if(FILTER.biz && l.biz !== FILTER.biz) return false;
+    var date = l.time.slice(0, 10);
+    if(FILTER.from && date < FILTER.from) return false;
+    if(FILTER.to && date > FILTER.to) return false;
+    if(FILTER.keyword){
+      var kw = FILTER.keyword.toLowerCase();
+      if((l.object + ' ' + l.detail + ' ' + l.user + ' ' + l.type + ' ' + l.biz).toLowerCase().indexOf(kw) < 0) return false;
+    }
+    return true;
+  });
+}
+
+/* ========== 日志表 ========== */
+function renderLogTable(){
+  var el = document.getElementById('log-table');
+  if(!el) return;
+  var list = filteredLogs();
+  var pages = Math.max(1, Math.ceil(list.length / logPageSize));
+  if(logPage > pages) logPage = pages;
+  var start = (logPage - 1) * logPageSize;
+  var rows = list.slice(start, start + logPageSize).map(function(l){
+    var detailText = l.changes.length
+      ? esc(l.changes[0].field) + '：' + esc(l.changes[0].before) + ' → ' + esc(l.changes[0].after) + (l.changes.length > 1 ? ' 等 ' + l.changes.length + ' 项' : '')
+      : esc(l.detail);
+    return '<tr>' +
+      '<td><div class="mono" style="font-size:13px">' + esc(l.time) + '</div></td>' +
+      '<td>' + esc(l.user) + '</td>' +
+      '<td class="mono" style="font-size:12px">' + esc(l.terminal) + '</td>' +
+      '<td><span class="tag ' + (TYPE_TAGS[l.type] || 'tag-gray') + '">' + esc(l.type) + '</span></td>' +
+      '<td><div>' + esc(l.biz) + '</div><div class="mono text-muted" style="font-size:12px">' + esc(l.object) + '</div></td>' +
+      '<td style="max-width:300px"><div class="truncate" style="font-size:13px" title="' + esc(detailText) + '">' + detailText + '</div></td>' +
+      '<td class="actions"><button class="btn btn-default btn-sm" onclick="openLogDetail(\'' + l.id + '\')">查看详情</button></td>' +
+    '</tr>';
+  }).join('');
+  var body = rows || '<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><div class="empty-text">没有符合条件的操作日志</div></div></td></tr>';
+  var pageBtns = '';
+  for(var i = 1; i <= pages; i++){
+    pageBtns += '<button class="page-btn ' + (i === logPage ? 'active' : '') + '" onclick="goLogPage(' + i + ')">' + i + '</button>';
+  }
+  el.innerHTML = '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th>时间</th><th>操作人</th><th>终端</th><th>操作类型</th><th>业务对象</th><th>变更详情（前后值）</th><th>操作</th>' +
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    '<div class="pagination"><div class="pagination-info">共 ' + list.length + ' 条日志，当前第 ' + logPage + ' / ' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+        '<button class="page-btn" ' + (logPage === 1 ? 'disabled' : '') + ' onclick="goLogPage(' + (logPage - 1) + ')">上一页</button>' +
+        pageBtns +
+        '<button class="page-btn" ' + (logPage === pages ? 'disabled' : '') + ' onclick="goLogPage(' + (logPage + 1) + ')">下一页</button>' +
+      '</div></div>';
+}
+function goLogPage(p){
+  var pages = Math.max(1, Math.ceil(filteredLogs().length / logPageSize));
+  if(p < 1 || p > pages) return;
+  logPage = p;
+  renderLogTable();
+}
+
+/* ========== 详情 ========== */
+function openLogDetail(id){
+  var l = LOGS.filter(function(x){ return x.id === id; })[0];
+  if(!l) return;
+  var changeRows = l.changes.map(function(c){
+    return '<tr><td class="font-medium">' + esc(c.field) + '</td>' +
+      '<td style="color:var(--text-3)">' + esc(c.before) + '</td>' +
+      '<td style="color:var(--success);font-weight:500">' + esc(c.after) + '</td></tr>';
+  }).join('');
+  var changeTable = l.changes.length
+    ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>字段</th><th>变更前</th><th>变更后</th></tr></thead><tbody>' + changeRows + '</tbody></table></div>'
+    : '<div class="empty" style="padding:30px"><div class="empty-text">本次操作无字段变更，仅记录操作行为</div></div>';
+  activeModal = openModal('<div class="modal modal-lg">' +
+    '<div class="modal-header"><div class="modal-title">操作日志详情 · ' + esc(l.id) + '</div>' +
+      '<div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="kv-grid mb-16">' +
+        '<div class="kv-item"><span class="k">操作时间</span><span class="v">' + esc(l.time) + '</span></div>' +
+        '<div class="kv-item"><span class="k">操作人 / 终端</span><span class="v">' + esc(l.user) + ' · ' + esc(l.terminal) + '</span></div>' +
+        '<div class="kv-item"><span class="k">操作类型</span><span class="v"><span class="tag ' + (TYPE_TAGS[l.type] || 'tag-gray') + '">' + esc(l.type) + '</span></span></div>' +
+        '<div class="kv-item"><span class="k">业务对象</span><span class="v">' + esc(l.biz) + ' / ' + esc(l.object) + '</span></div>' +
+      '</div>' +
+      '<div class="mb-16" style="font-size:13px;color:var(--text-2)"><span class="text-muted">操作摘要：</span>' + esc(l.detail) + '</div>' +
+      '<label class="form-label">关键字段变更前后值对照</label>' + changeTable +
+      '<div class="card mt-16" style="background:var(--warning-bg);border-color:var(--warning)"><div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2)">' +
+        '系统日志长期保留，仅支持查询与导出，不提供编辑、删除功能；如日志内容涉及客户隐私字段，按脱敏规则展示。' +
+      '</div></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">关闭</button></div>' +
+  '</div>');
+}
+
+/* ========== 导出 ========== */
+function exportLogs(){
+  var list = filteredLogs();
+  if(!list.length){ toast('当前筛选条件下没有可导出的日志', 'warning'); return; }
+  toast('已导出 ' + list.length + ' 条操作日志（CSV），导出行为已记录审计日志', 'success');
+}
+
+/* ========== 页面渲染 ========== */
+var users = [];
+var bizList = [];
+LOGS.forEach(function(l){
+  if(users.indexOf(l.user) < 0) users.push(l.user);
+  if(bizList.indexOf(l.biz) < 0) bizList.push(l.biz);
+});
+var userOptions = users.map(function(u){ return '<option value="' + esc(u) + '">' + esc(u) + '</option>'; }).join('');
+var bizOptions = bizList.map(function(b){ return '<option value="' + esc(b) + '">' + esc(b) + '</option>'; }).join('');
+var typeOptions = Object.keys(TYPE_TAGS).map(function(t){ return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join('');
+
+document.getElementById('page-content').innerHTML =
+  '<div class="page-header"><div class="page-title">操作日志审计</div>' +
+    '<div class="page-desc">记录谁在什么时候做了哪类操作，支持按人员、时间、类型、业务对象与关键词检索并导出。</div></div>' +
+
+  '<div class="stats-grid" id="log-stats"></div>' +
+
+  '<div class="card mb-16">' +
+    '<div class="card-header"><div class="card-title">日志检索</div>' +
+      '<button class="btn btn-primary btn-sm" onclick="exportLogs()"><i data-lucide="download" style="width:14px"></i>导出日志</button></div>' +
+    '<div class="card-body">' +
+      '<div class="toolbar">' +
+        '<select class="form-select" id="filter-user" style="min-width:130px"><option value="">全部操作人</option>' + userOptions + '</select>' +
+        '<input class="form-input" type="date" id="filter-from" style="width:150px" title="开始日期" />' +
+        '<span class="text-muted">至</span>' +
+        '<input class="form-input" type="date" id="filter-to" style="width:150px" title="结束日期" />' +
+        '<select class="form-select" id="filter-type" style="min-width:140px"><option value="">全部操作类型</option>' + typeOptions + '</select>' +
+        '<select class="form-select" id="filter-biz" style="min-width:130px"><option value="">全部业务对象</option>' + bizOptions + '</select>' +
+        '<input class="form-input" id="filter-keyword" placeholder="关键词（单号 / 详情）" style="min-width:170px" />' +
+        '<button class="btn btn-primary" onclick="applyFilters()">查询</button>' +
+        '<button class="btn btn-default" onclick="resetFilters()">重置</button>' +
+      '</div>' +
+      '<div id="log-table"></div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div class="card">' +
+    '<div class="card-header"><div class="card-title">日志说明</div><span class="tag tag-blue">长期保留 · 只读</span></div>' +
+    '<div class="card-body" style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+      '<div class="mb-8">· <b>系统日志</b>回答「谁在什么时候做了哪类操作」，覆盖登录登出、新增、修改、删除、导入导出、权限变更、配置变更、单据状态流转，用于安全审计与责任追溯。</div>' +
+      '<div class="mb-8">· <b>业务留痕</b>回答「某张单据经历了哪些环节」，可在订单、收款单、发票等业务详情中查看完整流转时间线，两者互补。</div>' +
+      '<div>· 日志长期保留、仅可查询与导出，不可编辑或删除；导出行为本身也记录为操作日志，包含操作人、条数与导出时间。</div>' +
+    '</div>' +
+  '</div>';
+
+renderStats();
+renderLogTable();
+refreshIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>短信通道与模板 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('sms', '短信通道与模板');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var currentTab = 'channel';
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function numVal(id){ var el = document.getElementById(id); return el ? el.value : ''; }
+
+/* ========== 数据 ========== */
+var CHANNELS = MOCK_EXT.smsChannels.map(function(c, i){
+  return Object.assign({}, c, {
+    account: i === 0 ? 'LTAI5tDifengSMS01' : 'AKID-DifengSMS-002',
+    billAccount: i === 0 ? '阿里云账户 · 地丰体育（月结）' : '腾讯云账户 · 地丰体育（预付费）',
+    retry: i === 0 ? '失败后 30 秒自动重发，最多 2 次' : '失败后 60 秒自动重发，最多 2 次',
+    alertThreshold: 95
+  });
+});
+CHANNELS.push({
+  id:'CH003', name:'华为云灾备通道', provider:'华为云', sign:'【地丰体育】', priority:3, status:'停用', successRate:0,
+  account:'HW-Difeng-SMS-003', billAccount:'华为云账户 · 地丰体育（预付费）',
+  retry:'失败后 5 分钟自动重发，最多 1 次', alertThreshold:95
+});
+
+var SCENES = ['会员充值','预约','余额提醒','消费','活动通知'];
+var TEMPLATES = MOCK.smsTemplates.map(function(t){ return Object.assign({}, t); });
+TEMPLATES.push({
+  id:'T005', name:'活动通知', scene:'活动通知',
+  content:'【地丰体育】尊敬的{会员名}，{场馆名称}将于近期举办会员活动，登录小程序即可报名，期待您的参与。', status:'启用'
+});
+TEMPLATES.push({
+  id:'T006', name:'开场提醒', scene:'预约',
+  content:'【地丰体育】尊敬的{会员名}，您在{场馆名称}的预约将于{预约时间}开场，请提前 15 分钟到场。', status:'启用'
+});
+
+var VARS = {
+  '会员名':'陈晓明', '充值金额':'800', '赠送金额':'80', '余额':'2350',
+  '消费金额':'240', '场馆名称':'地丰体育中心', '预约时间':'11-05 18:00-19:00'
+};
+function fillVars(text){
+  return String(text || '').replace(/\{([^}]+)\}/g, function(m, k){
+    return VARS[k] !== undefined ? VARS[k] : m;
+  });
+}
+function tplOptions(selectedId){
+  return TEMPLATES.filter(function(t){ return t.status === '启用'; }).map(function(t){
+    return '<option value="' + t.id + '"' + (t.id === selectedId ? ' selected' : '') + '>' + esc(t.name) + '（' + esc(t.scene) + '）</option>';
+  }).join('');
+}
+
+var NOTIFY = [
+  {id:'N1', name:'会员充值通知', icon:'wallet', color:'blue', template:'T001',
+   trigger:'会员充值到账（线上支付、线下收银、赠送金额入账均触发）',
+   sendAt:'充值成功后实时发送，延迟不超过 30 秒',
+   dnd:'22:00-08:00 不发送，延迟至次日 08:30 统一补发', enabled:true},
+  {id:'N2', name:'余额不足提醒', icon:'alert-triangle', color:'orange', template:'T003',
+   trigger:'储值余额低于提醒阈值，且会员近 30 天内有消费记录',
+   sendAt:'每日 20:00 批量扫描后发送', dnd:'同一会员 7 天内最多提醒 1 次', enabled:true},
+  {id:'N3', name:'消费短信通知', icon:'receipt', color:'green', template:'T004',
+   trigger:'会员使用储值余额 / 次卡完成消费结算',
+   sendAt:'结算成功后实时发送', dnd:'单笔消费金额低于 10 元不发送', enabled:true},
+  {id:'N4', name:'预约与开场提醒', icon:'calendar-clock', color:'purple', template:'T002',
+   trigger:'预约订单支付成功；开场前 2 小时未核销',
+   sendAt:'预约成功即时发送 + 开场前 2 小时提醒', dnd:'22:00-08:00 不发送开场提醒，改为开场前 1 小时发送', enabled:true}
+];
+
+var thresholdMode = 'unified';
+var unifiedThreshold = 50;
+var CUSTOMER_TH = [
+  {name:'陈晓明', phone:'138****1234', threshold:50},
+  {name:'林雅婷', phone:'139****5678', threshold:30},
+  {name:'厦门建工集团有限公司', phone:'0592-8888****', threshold:200},
+  {name:'鹭岛篮球俱乐部', phone:'137****9012', threshold:100}
+];
+
+/* ========== Tab 切换 ========== */
+function switchTab(name){
+  currentTab = name;
+  ['channel','template','notify'].forEach(function(k){
+    var btn = document.getElementById('tabbtn-' + k);
+    var panel = document.getElementById('tab-' + k);
+    if(!btn || !panel) return;
+    btn.className = 'tab' + (k === name ? ' active' : '');
+    panel.style.display = k === name ? '' : 'none';
+  });
+  renderCurrentTab();
+}
+function renderCurrentTab(){
+  if(currentTab === 'channel') renderChannelTab();
+  else if(currentTab === 'template') renderTemplateTab();
+  else renderNotifyTab();
+}
+
+/* ========== 短信通道 ========== */
+function channelSorted(){
+  return CHANNELS.slice().sort(function(a, b){ return a.priority - b.priority; });
+}
+function enabledChannels(){
+  return CHANNELS.filter(function(c){ return c.status === '启用'; }).sort(function(a, b){ return a.priority - b.priority; });
+}
+function channelRows(){
+  var list = enabledChannels();
+  var mainId = list.length ? list[0].id : '';
+  return channelSorted().map(function(c){
+    var roleTag = '';
+    if(c.status === '启用' && c.id === mainId) roleTag = '<span class="tag tag-blue" style="margin-left:8px">主用</span>';
+    else if(c.status === '启用') roleTag = '<span class="tag tag-cyan" style="margin-left:8px">备用</span>';
+    else roleTag = '<span class="tag tag-gray" style="margin-left:8px">未启用</span>';
+    var rate = c.successRate
+      ? '<div class="flex items-center gap-8"><div class="progress" style="width:64px"><div class="progress-bar" style="width:' + c.successRate + '%;background:' + (c.successRate >= 97 ? 'var(--success)' : 'var(--warning)') + '"></div></div><span style="font-size:13px">' + c.successRate + '%</span></div>'
+      : '<span class="text-muted">暂无数据</span>';
+    return `<tr>
+      <td><div class="font-medium">${esc(c.name)}${roleTag}</div><div class="mono text-muted" style="font-size:12px">${c.id}</div></td>
+      <td>${esc(c.provider)}</td>
+      <td>${esc(c.sign)}</td>
+      <td>${c.priority}</td>
+      <td><div class="flex items-center gap-8">
+        <label class="switch"><input type="checkbox" ${c.status === '启用' ? 'checked' : ''} onchange="toggleChannelStatus('${c.id}', this.checked)"><span class="switch-slider"></span></label>
+        <span class="tag ${c.status === '启用' ? 'tag-green' : 'tag-gray'}">${c.status}</span>
+      </div></td>
+      <td>${rate}</td>
+      <td class="actions" style="flex-wrap:wrap">
+        <button class="btn btn-default btn-sm" onclick="openChannelForm('${c.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="setBackup('${c.id}')">设为备用</button>
+        <button class="btn btn-ghost btn-sm" onclick="openTestSend('${c.id}')">测试发送</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderChannelTab(){
+  var el = document.getElementById('tab-channel');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="card mb-16" style="border-color:var(--primary);background:var(--primary-bg)">
+      <div class="card-body" style="padding:14px 20px">
+        <div class="flex items-center gap-8" style="margin-bottom:6px">
+          <i data-lucide="git-branch" style="width:16px;color:var(--primary)"></i>
+          <b style="font-size:14px">多通道切换与告警说明</b>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.9">
+          系统按优先级从高到低依次调用启用通道：主通道发送失败（超时 / 限流 / 运营商拦截）后 30 秒自动切至备用通道，并按通道配置的策略自动重发；<br>
+          通道成功率低于告警阈值（默认 95%）或连续失败 10 条时，自动推送站内告警给运维联系人，并在工作台标记「短信通道异常」；<br>
+          全部通道不可用时，消息转入待补发队列，通道恢复后按时间顺序补发，超过 24 小时仍未成功则记为失败记录。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">短信通道</div>
+        <div class="flex items-center gap-8">
+          <span class="text-muted" style="font-size:13px">启用 ${enabledChannels().length} / 共 ${CHANNELS.length} 个通道</span>
+          <button class="btn btn-primary btn-sm" onclick="openChannelForm()"><i data-lucide="plus" style="width:14px"></i>新增通道</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>通道名称</th>
+                <th>服务商</th>
+                <th>签名</th>
+                <th>优先级</th>
+                <th>状态</th>
+                <th>发送成功率</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="channel-rows">${channelRows()}</tbody>
+          </table>
+        </div>
+        <div class="form-hint" style="margin-top:12px">主通道不可用时自动切换至优先级最高的备用通道；停用通道不参与发送与故障切换。</div>
+      </div>
+    </div>`;
+  refreshIcons();
+}
+
+function toggleChannelStatus(id, checked){
+  var c = CHANNELS.find(function(x){ return x.id === id; });
+  if(!c) return;
+  if(!checked && enabledChannels().length <= 1 && c.status === '启用'){
+    toast('至少需保留 1 个启用通道，无法停用最后一个通道', 'warning');
+    renderChannelTab();
+    return;
+  }
+  c.status = checked ? '启用' : '停用';
+  if(checked && !c.successRate) c.successRate = 0;
+  renderChannelTab();
+  toast('「' + c.name + '」已' + (checked ? '启用' : '停用'), checked ? 'success' : 'info');
+}
+
+function setBackup(id){
+  var c = CHANNELS.find(function(x){ return x.id === id; });
+  if(!c) return;
+  if(c.status !== '启用'){ toast('仅启用状态的通道可设为备用', 'warning'); return; }
+  var list = enabledChannels();
+  if(list.length < 2){ toast('至少需要 2 个启用通道才能设置主备关系', 'warning'); return; }
+  if(c.priority !== 1){ toast('「' + c.name + '」已是备用通道', 'info'); return; }
+  var others = list.filter(function(x){ return x.id !== id; });
+  others.forEach(function(x, i){ x.priority = i + 1; });
+  c.priority = others.length + 1;
+  renderChannelTab();
+  toast('「' + c.name + '」已降为备用，主用通道切至「' + others[0].name + '」', 'success');
+}
+
+/* ---------- 通道表单 ---------- */
+function openChannelForm(id){
+  var c = null;
+  CHANNELS.forEach(function(x){ if(x.id === id) c = x; });
+  var data = c || {
+    id:'', name:'', provider:'阿里云', sign:'【地丰体育】', priority:CHANNELS.length + 1,
+    account:'', billAccount:'', retry:'失败后 30 秒自动重发，最多 2 次', alertThreshold:95
+  };
+  var providers = ['阿里云','腾讯云','华为云','梦网科技','移动云'];
+  var retries = ['失败后 30 秒自动重发，最多 2 次','失败后 60 秒自动重发，最多 2 次','失败后 5 分钟自动重发，最多 1 次','失败不重发，仅记录失败'];
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">${id ? '编辑短信通道' : '新增短信通道'}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">通道名称 <span class="required">*</span></label>
+          <input class="form-input" id="ch-name" value="${esc(data.name)}" placeholder="如：阿里云短信主通道" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">服务商 <span class="required">*</span></label>
+          <select class="form-select" id="ch-provider">
+            ${providers.map(function(p){ return '<option value="' + p + '"' + (data.provider === p ? ' selected' : '') + '>' + p + '</option>'; }).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">短信签名 <span class="required">*</span></label>
+          <input class="form-input" id="ch-sign" value="${esc(data.sign)}" placeholder="【地丰体育】" />
+          <div class="form-hint">签名须已在服务商侧完成报备，且与模板内容中的签名一致。</div>
+        </div>
+        <div class="form-item">
+          <label class="form-label">优先级 <span class="required">*</span></label>
+          <select class="form-select" id="ch-priority">
+            ${[1,2,3,4,5].map(function(n){ return '<option value="' + n + '"' + (data.priority === n ? ' selected' : '') + '>' + n + (n === 1 ? '（最高，主用）' : '') + '</option>'; }).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">发送账号 <span class="required">*</span></label>
+          <input class="form-input" id="ch-account" value="${esc(data.account)}" placeholder="AccessKey ID / 发送账号" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">计费账号 <span class="required">*</span></label>
+          <input class="form-input" id="ch-bill" value="${esc(data.billAccount)}" placeholder="计费账号 / 结算主体" />
+          <div class="form-hint">用于短信费用归集与成本核算，修改后次月生效。</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">失败自动重发策略 <span class="required">*</span></label>
+          <select class="form-select" id="ch-retry">
+            ${retries.map(function(r){ return '<option value="' + r + '"' + (data.retry === r ? ' selected' : '') + '>' + r + '</option>'; }).join('')}
+          </select>
+        </div>
+        <div class="form-item">
+          <label class="form-label">成功率告警阈值（%）</label>
+          <input class="form-input" id="ch-alert" type="number" min="50" max="100" value="${data.alertThreshold}" />
+          <div class="form-hint">低于该阈值触发通道异常告警，建议 95%。</div>
+        </div>
+      </div>
+      <div class="card" style="background:var(--warning-bg);border-color:var(--warning)">
+        <div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">
+          保存后按优先级参与发送：优先级 1 为主通道，其余为备用通道；主通道连续失败时按重发策略自动切换，切换记录写入接口日志。
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveChannelForm('${id || ''}')">保存</button>
+    </div>
+  </div>`);
+}
+
+function saveChannelForm(id){
+  var name = trimVal('ch-name');
+  var provider = document.getElementById('ch-provider').value;
+  var sign = trimVal('ch-sign');
+  var account = trimVal('ch-account');
+  var bill = trimVal('ch-bill');
+  var priority = parseInt(document.getElementById('ch-priority').value, 10) || 1;
+  var retry = document.getElementById('ch-retry').value;
+  var threshold = parseFloat(numVal('ch-alert'));
+  if(!name){ toast('请填写通道名称', 'error'); return; }
+  if(!sign){ toast('请填写短信签名', 'error'); return; }
+  if(!account){ toast('请填写发送账号', 'error'); return; }
+  if(!bill){ toast('请填写计费账号', 'error'); return; }
+  if(isNaN(threshold) || threshold < 50 || threshold > 100){ toast('成功率告警阈值需在 50-100 之间', 'error'); return; }
+
+  if(id){
+    var c = CHANNELS.find(function(x){ return x.id === id; });
+    if(!c) return;
+    c.name = name; c.provider = provider; c.sign = sign; c.priority = priority;
+    c.retry = retry; c.account = account; c.billAccount = bill; c.alertThreshold = threshold;
+    closeActiveModal();
+    renderChannelTab();
+    toast('通道「' + name + '」配置已保存', 'success');
+  } else {
+    var n = CHANNELS.length + 1;
+    var newId = 'CH' + String(n).padStart(3, '0');
+    while(CHANNELS.some(function(x){ return x.id === newId; })){ n++; newId = 'CH' + String(n).padStart(3, '0'); }
+    CHANNELS.push({
+      id:newId, name:name, provider:provider, sign:sign, priority:priority, status:'停用', successRate:0,
+      account:account, billAccount:bill, retry:retry, alertThreshold:threshold
+    });
+    closeActiveModal();
+    renderChannelTab();
+    toast('新增通道「' + name + '」成功，启用后参与发送', 'success');
+  }
+}
+
+/* ---------- 测试发送 ---------- */
+function updateTestContent(){
+  var tplId = document.getElementById('test-tpl').value;
+  var t = TEMPLATES.find(function(x){ return x.id === tplId; });
+  var ta = document.getElementById('test-content');
+  if(t && ta) ta.value = fillVars(t.content);
+}
+
+function openTestSend(id){
+  var c = CHANNELS.find(function(x){ return x.id === id; });
+  if(!c) return;
+  if(c.status !== '启用'){ toast('请先启用该通道后再测试发送', 'warning'); return; }
+  var first = TEMPLATES.filter(function(t){ return t.status === '启用'; })[0];
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">测试发送 · ${esc(c.name)}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">接收手机号 <span class="required">*</span></label>
+          <input class="form-input" id="test-phone" placeholder="请输入 11 位手机号" maxlength="11" />
+          <div class="form-hint">测试短信将真实下发，仅限内部测试号码。</div>
+        </div>
+        <div class="form-item">
+          <label class="form-label">使用模板</label>
+          <select class="form-select" id="test-tpl" onchange="updateTestContent()">${tplOptions(first ? first.id : '')}</select>
+        </div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">短信内容</label>
+        <textarea class="form-textarea" id="test-content" rows="4">${esc(first ? fillVars(first.content) : '')}</textarea>
+      </div>
+      <div class="divider"></div>
+      <div class="kv-grid">
+        <div class="kv-item"><div class="k">服务商</div><div class="v">${esc(c.provider)}</div></div>
+        <div class="kv-item"><div class="k">签名</div><div class="v">${esc(c.sign)}</div></div>
+        <div class="kv-item"><div class="k">发送账号</div><div class="v mono" style="font-size:13px">${esc(c.account)}</div></div>
+        <div class="kv-item"><div class="k">计费账号</div><div class="v" style="font-size:13px">${esc(c.billAccount)}</div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="sendTest('${c.id}')">发送测试短信</button>
+    </div>
+  </div>`);
+}
+
+function sendTest(id){
+  var c = CHANNELS.find(function(x){ return x.id === id; });
+  if(!c) return;
+  var phone = trimVal('test-phone');
+  var content = trimVal('test-content');
+  if(!/^1[3-9]\d{9}$/.test(phone)){ toast('请输入正确的 11 位手机号', 'error'); return; }
+  if(!content){ toast('短信内容不能为空', 'error'); return; }
+  closeActiveModal();
+  toast('测试短信已通过「' + c.name + '」提交至 ' + phone + '，状态回执约 10 秒后返回', 'success');
+}
+
+/* ========== 模板管理 ========== */
+var templateScene = '';
+var templateKw = '';
+function onTemplateFilter(){
+  templateScene = document.getElementById('tpl-scene').value;
+  templateKw = trimVal('tpl-kw');
+  var tb = document.getElementById('tpl-rows');
+  if(tb){
+    tb.innerHTML = templateRows();
+    refreshIcons();
+  }
+}
+function templateRows(){
+  var list = TEMPLATES.filter(function(t){
+    if(templateScene && t.scene !== templateScene) return false;
+    if(templateKw && !(t.name.indexOf(templateKw) > -1 || t.content.indexOf(templateKw) > -1)) return false;
+    return true;
+  });
+  if(!list.length){
+    return '<tr><td colspan="5"><div class="empty"><div class="empty-icon"><i data-lucide="search-x"></i></div><div class="empty-text">当前筛选条件下暂无模板</div></div></td></tr>';
+  }
+  return list.map(function(t){
+    return `<tr>
+      <td><div class="font-medium">${esc(t.name)}</div><div class="mono text-muted" style="font-size:12px">${t.id}</div></td>
+      <td><span class="tag tag-purple">${esc(t.scene)}</span></td>
+      <td style="max-width:380px;font-size:13px;color:var(--text-2)">${esc(t.content)}</td>
+      <td><span class="tag ${t.status === '启用' ? 'tag-green' : 'tag-gray'}">${t.status}</span></td>
+      <td class="actions" style="flex-wrap:wrap">
+        <button class="btn btn-default btn-sm" onclick="openTemplateForm('${t.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleTemplate('${t.id}')">${t.status === '启用' ? '停用' : '启用'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="previewTemplate('${t.id}')">预览</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTemplateTab(){
+  var el = document.getElementById('tab-template');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">短信模板</div>
+        <button class="btn btn-primary btn-sm" onclick="openTemplateForm()"><i data-lucide="plus" style="width:14px"></i>新增模板</button>
+      </div>
+      <div class="card-body">
+        <div class="toolbar">
+          <select class="form-select" id="tpl-scene" onchange="onTemplateFilter()">
+            <option value="">全部适用场景</option>
+            ${SCENES.map(function(s){ return '<option value="' + s + '"' + (templateScene === s ? ' selected' : '') + '>' + s + '</option>'; }).join('')}
+          </select>
+          <input class="form-input" id="tpl-kw" value="${esc(templateKw)}" placeholder="搜索模板名称 / 内容" oninput="onTemplateFilter()" style="min-width:240px" />
+          <div class="spacer"></div>
+          <span class="text-muted" style="font-size:12px">模板内容须包含签名，变量以 {变量名} 占位</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>模板名称</th>
+                <th>适用场景</th>
+                <th>内容</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="tpl-rows">${templateRows()}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+  refreshIcons();
+}
+
+function toggleTemplate(id){
+  var t = TEMPLATES.find(function(x){ return x.id === id; });
+  if(!t) return;
+  t.status = t.status === '启用' ? '停用' : '启用';
+  renderTemplateTab();
+  toast('模板「' + t.name + '」已' + t.status, t.status === '启用' ? 'success' : 'info');
+}
+
+function openTemplateForm(id){
+  var t = null;
+  TEMPLATES.forEach(function(x){ if(x.id === id) t = x; });
+  var data = t || { id:'', name:'', scene:'会员充值', content:'【地丰体育】尊敬的{会员名}，' };
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">${id ? '编辑短信模板' : '新增短信模板'}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">模板名称 <span class="required">*</span></label>
+          <input class="form-input" id="tmpl-name" value="${esc(data.name)}" placeholder="如：充值到账通知" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">适用场景 <span class="required">*</span></label>
+          <select class="form-select" id="tmpl-scene">
+            ${SCENES.map(function(s){ return '<option value="' + s + '"' + (data.scene === s ? ' selected' : '') + '>' + s + '</option>'; }).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">模板内容 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="tmpl-content" rows="5" placeholder="【地丰体育】尊敬的{会员名}，……">${esc(data.content)}</textarea>
+        <div class="form-hint">可用变量：{会员名} {充值金额} {赠送金额} {余额} {消费金额} {场馆名称} {预约时间}；内容不少于 10 个字符，并包含短信签名。</div>
+      </div>
+      <div class="divider"></div>
+      <div class="flex gap-8" style="flex-wrap:wrap;font-size:12px">
+        <span class="tag tag-gray">{会员名}</span><span class="tag tag-gray">{充值金额}</span>
+        <span class="tag tag-gray">{赠送金额}</span><span class="tag tag-gray">{余额}</span>
+        <span class="tag tag-gray">{消费金额}</span><span class="tag tag-gray">{场馆名称}</span>
+        <span class="tag tag-gray">{预约时间}</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveTemplateForm('${id || ''}')">保存</button>
+    </div>
+  </div>`);
+}
+
+function saveTemplateForm(id){
+  var name = trimVal('tmpl-name');
+  var scene = document.getElementById('tmpl-scene').value;
+  var content = trimVal('tmpl-content');
+  if(!name){ toast('请填写模板名称', 'error'); return; }
+  if(!scene){ toast('请选择适用场景', 'error'); return; }
+  if(content.length < 10){ toast('模板内容不少于 10 个字符', 'error'); return; }
+  if(content.indexOf('【地丰体育】') === -1){ toast('模板内容需包含短信签名「【地丰体育】」', 'error'); return; }
+
+  if(id){
+    var t = TEMPLATES.find(function(x){ return x.id === id; });
+    if(!t) return;
+    t.name = name; t.scene = scene; t.content = content;
+    closeActiveModal();
+    renderTemplateTab();
+    toast('模板「' + name + '」已保存', 'success');
+  } else {
+    var n = TEMPLATES.length + 1;
+    var newId = 'T' + String(n).padStart(3, '0');
+    while(TEMPLATES.some(function(x){ return x.id === newId; })){ n++; newId = 'T' + String(n).padStart(3, '0'); }
+    TEMPLATES.push({ id:newId, name:name, scene:scene, content:content, status:'启用' });
+    closeActiveModal();
+    renderTemplateTab();
+    toast('新增模板「' + name + '」成功', 'success');
+  }
+}
+
+function previewTemplate(id){
+  var t = TEMPLATES.find(function(x){ return x.id === id; });
+  if(!t) return;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">模板预览 · ${esc(t.name)}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="flex gap-8" style="margin-bottom:12px;flex-wrap:wrap">
+        <span class="tag tag-purple">${esc(t.scene)}</span>
+        <span class="tag ${t.status === '启用' ? 'tag-green' : 'tag-gray'}">${t.status}</span>
+        <span class="tag tag-gray">${fillVars(t.content).length} 字</span>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px">
+        <div class="flex items-center gap-8" style="margin-bottom:10px">
+          <span class="user-avatar" style="width:28px;height:28px;font-size:12px">地</span>
+          <span style="font-size:13px;font-weight:500">短信预览 · 接收号码 138****1234</span>
+        </div>
+        <div style="background:#fff;border-radius:8px;padding:12px 14px;font-size:14px;line-height:1.7;color:var(--text-1)">${esc(fillVars(t.content))}</div>
+      </div>
+      <div class="form-hint" style="margin-top:10px">预览中的变量已用样例数据替换：会员名「陈晓明」、余额 2350 元等。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="closeActiveModal();openTemplateForm('${t.id}')">编辑模板</button>
+    </div>
+  </div>`);
+}
+
+/* ========== 业务通知配置 ========== */
+function notifyCards(){
+  return NOTIFY.map(function(n){
+    return `<div class="card">
+      <div class="card-header">
+        <div class="flex items-center gap-12">
+          <span class="stat-icon ${n.color}" style="width:36px;height:36px"><i data-lucide="${n.icon}"></i></span>
+          <div>
+            <div class="card-title" style="font-size:15px">${esc(n.name)}</div>
+            <div class="text-muted" style="font-size:12px">关联模板：${esc(templateName(n.template))}</div>
+          </div>
+        </div>
+        <label class="switch"><input type="checkbox" ${n.enabled ? 'checked' : ''} onchange="toggleNotify('${n.id}', this.checked)"><span class="switch-slider"></span></label>
+      </div>
+      <div class="card-body" style="padding:14px 20px">
+        <div class="list-row"><span class="text-muted" style="font-size:12px;width:72px;flex-shrink:0">触发条件</span><span style="font-size:13px;color:var(--text-2)">${esc(n.trigger)}</span></div>
+        <div class="list-row"><span class="text-muted" style="font-size:12px;width:72px;flex-shrink:0">发送时点</span><span style="font-size:13px;color:var(--text-2)">${esc(n.sendAt)}</span></div>
+        <div class="list-row"><span class="text-muted" style="font-size:12px;width:72px;flex-shrink:0">免打扰</span><span style="font-size:13px;color:var(--text-2)">${esc(n.dnd)}</span></div>
+        <div class="flex justify-between items-center mt-12">
+          <span class="tag ${n.enabled ? 'tag-green' : 'tag-gray'}">${n.enabled ? '短信发送中' : '已关闭短信'}</span>
+          <button class="btn btn-default btn-sm" onclick="openNotifyForm('${n.id}')">编辑规则</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function templateName(id){
+  var t = TEMPLATES.find(function(x){ return x.id === id; });
+  return t ? t.name : '未关联';
+}
+
+function renderNotifyTab(){
+  var el = document.getElementById('tab-notify');
+  if(!el) return;
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:16px">
+      ${notifyCards()}
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">余额不足提醒阈值</div>
+          <div class="text-muted" style="font-size:12px">决定何时向会员发送「余额不足提醒」短信</div>
+        </div>
+        <div class="flex gap-8">
+          <button class="btn btn-sm ${thresholdMode === 'unified' ? 'btn-primary' : 'btn-default'}" onclick="setThresholdMode('unified')">统一阈值</button>
+          <button class="btn btn-sm ${thresholdMode === 'customer' ? 'btn-primary' : 'btn-default'}" onclick="setThresholdMode('customer')">按客户单独设置</button>
+        </div>
+      </div>
+      <div class="card-body" id="threshold-panel">${thresholdPanel()}</div>
+    </div>`;
+  refreshIcons();
+}
+
+function thresholdPanel(){
+  if(thresholdMode === 'unified'){
+    return `<div class="flex items-end gap-12" style="flex-wrap:wrap">
+      <div class="form-item" style="max-width:260px">
+        <label class="form-label">统一提醒阈值（元）</label>
+        <input class="form-input" id="th-unified" type="number" min="1" max="1000" value="${unifiedThreshold}" />
+      </div>
+      <button class="btn btn-primary" onclick="saveUnifiedThreshold()">保存配置</button>
+      <span class="text-muted" style="font-size:13px;padding-bottom:8px">余额低于该值时，按每日 20:00 批量扫描结果发送提醒。</span>
+    </div>`;
+  }
+  return `<div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>客户</th><th>手机号</th><th>专属提醒阈值（元）</th><th>说明</th></tr></thead>
+      <tbody>
+        ${CUSTOMER_TH.map(function(c, i){
+          return `<tr>
+            <td class="font-medium">${esc(c.name)}</td>
+            <td class="mono" style="font-size:13px">${esc(c.phone)}</td>
+            <td><input class="form-input" id="cth-${i}" type="number" min="1" max="5000" value="${c.threshold}" style="max-width:140px" /></td>
+            <td class="text-muted" style="font-size:12px">按客户单独设置后，优先于统一阈值</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+  <div class="flex items-center gap-12 mt-12">
+    <button class="btn btn-primary" onclick="saveCustomerThreshold()">保存配置</button>
+    <span class="text-muted" style="font-size:12px">仅对列表中客户生效，其余客户沿用统一阈值 ${unifiedThreshold} 元。</span>
+  </div>`;
+}
+
+function setThresholdMode(mode){
+  if(thresholdMode === mode) return;
+  thresholdMode = mode;
+  renderNotifyTab();
+  toast('已切换为' + (mode === 'unified' ? '统一阈值' : '按客户单独设置'), 'info');
+}
+
+function saveUnifiedThreshold(){
+  var v = parseFloat(numVal('th-unified'));
+  if(isNaN(v) || v < 1 || v > 1000){ toast('提醒阈值需在 1-1000 元之间', 'error'); return; }
+  unifiedThreshold = v;
+  renderNotifyTab();
+  toast('统一提醒阈值已保存为 ' + v + ' 元', 'success');
+}
+
+function saveCustomerThreshold(){
+  var next = CUSTOMER_TH.map(function(c){ return c; });
+  for(var i = 0; i < CUSTOMER_TH.length; i++){
+    var v = parseFloat(numVal('cth-' + i));
+    if(isNaN(v) || v < 1 || v > 5000){ toast('第 ' + (i + 1) + ' 行阈值需在 1-5000 元之间', 'error'); return; }
+    next[i] = Object.assign({}, CUSTOMER_TH[i], { threshold:v });
+  }
+  CUSTOMER_TH = next;
+  renderNotifyTab();
+  toast('客户专属阈值已保存（共 ' + CUSTOMER_TH.length + ' 位客户）', 'success');
+}
+
+function toggleNotify(id, checked){
+  var n = NOTIFY.find(function(x){ return x.id === id; });
+  if(!n) return;
+  n.enabled = checked;
+  renderNotifyTab();
+  toast('「' + n.name + '」短信通知已' + (checked ? '启用' : '关闭'), checked ? 'success' : 'info');
+}
+
+function openNotifyForm(id){
+  var n = NOTIFY.find(function(x){ return x.id === id; });
+  if(!n) return;
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">编辑通知规则 · ${esc(n.name)}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-item">
+        <label class="form-label">触发条件 <span class="required">*</span></label>
+        <input class="form-input" id="nf-trigger" value="${esc(n.trigger)}" placeholder="描述业务触发条件" />
+      </div>
+      <div class="form-item">
+        <label class="form-label">发送时点 <span class="required">*</span></label>
+        <input class="form-input" id="nf-sendat" value="${esc(n.sendAt)}" placeholder="如：结算成功后实时发送" />
+      </div>
+      <div class="form-item">
+        <label class="form-label">免打扰规则 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="nf-dnd" rows="3">${esc(n.dnd)}</textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">关联短信模板</label>
+          <select class="form-select" id="nf-template">
+            ${TEMPLATES.filter(function(t){ return t.status === '启用'; }).map(function(t){
+              return '<option value="' + t.id + '"' + (n.template === t.id ? ' selected' : '') + '>' + esc(t.name) + '（' + esc(t.scene) + '）</option>';
+            }).join('')}
+          </select>
+        </div>
+        <div class="form-item">
+          <label class="form-label">当前状态</label>
+          <input class="form-input" value="${n.enabled ? '已启用' : '已关闭'}" disabled />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveNotifyForm('${n.id}')">保存规则</button>
+    </div>
+  </div>`);
+}
+
+function saveNotifyForm(id){
+  var n = NOTIFY.find(function(x){ return x.id === id; });
+  if(!n) return;
+  var trigger = trimVal('nf-trigger');
+  var sendAt = trimVal('nf-sendat');
+  var dnd = trimVal('nf-dnd');
+  if(!trigger){ toast('请填写触发条件', 'error'); return; }
+  if(!sendAt){ toast('请填写发送时点', 'error'); return; }
+  if(!dnd){ toast('请填写免打扰规则', 'error'); return; }
+  n.trigger = trigger;
+  n.sendAt = sendAt;
+  n.dnd = dnd;
+  n.template = document.getElementById('nf-template').value;
+  closeActiveModal();
+  renderNotifyTab();
+  toast('「' + n.name + '」通知规则已保存', 'success');
+}
+
+/* ========== 初始化 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">短信通道与模板</div>
+        <div class="page-desc">统一管理短信服务商通道、消息模板与业务通知规则，支持主备通道自动切换与成功率告警</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="renderCurrentTab();toast('通道状态与成功率已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+        <button class="btn btn-primary" onclick="switchTab('channel');openChannelForm()"><i data-lucide="plus"></i>新增通道</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" id="tabbtn-channel" onclick="switchTab('channel')">短信通道</div>
+    <div class="tab" id="tabbtn-template" onclick="switchTab('template')">模板管理</div>
+    <div class="tab" id="tabbtn-notify" onclick="switchTab('notify')">业务通知配置</div>
+  </div>
+
+  <div id="tab-channel"></div>
+  <div id="tab-template" style="display:none"></div>
+  <div id="tab-notify" style="display:none"></div>
+`;
+
+renderChannelTab();
+refreshIcons();
+</script>
+</body>
+</html>

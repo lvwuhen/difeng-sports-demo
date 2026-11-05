@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>组织架构 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('org', '组织架构');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var currentOrgId = 'ALL';
+var empKeyword = '';
+var empStatus = '全部';
+var empPage = 1;
+var empPageSize = 8;
+var nextOrgNo = 13;
+var nextEmpNo = 10;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function maskPhone(p){
+  var v = String(p || '');
+  if(/^1\d{10}$/.test(v)) return v.slice(0,3) + '****' + v.slice(7);
+  return v;
+}
+
+/* ========== 数据 ========== */
+var ORGS = MOCK.orgs.map(function(o){
+  return Object.assign({}, o, { status: o.status || '启用' });
+});
+ORGS.push({id:'O008', name:'地丰网球中心', type:'场馆', parent:'O002', status:'启用'});
+ORGS.push({id:'O009', name:'地丰羽毛球馆', type:'场馆', parent:'O002', status:'启用'});
+ORGS.push({id:'O010', name:'篮球公园前台岗', type:'岗位', parent:'O005', status:'启用'});
+ORGS.push({id:'O011', name:'网球中心前台岗', type:'岗位', parent:'O008', status:'启用'});
+ORGS.push({id:'O012', name:'羽毛球馆前台岗', type:'岗位', parent:'O009', status:'启用'});
+
+var EMPLOYEES = MOCK.employees.map(function(e){
+  var hit = ORGS.filter(function(o){ return o.name === e.org; })[0];
+  return Object.assign({}, e, {
+    orgId: hit ? hit.id : 'O006',
+    phone: e.phone,
+    rawPhone: e.phone.replace('****', '0000')
+  });
+});
+EMPLOYEES.push({id:'E005', name:'周婷', org:'网球中心前台岗', orgId:'O011', venue:'网球中心', role:'前台', phone:'139****2005', rawPhone:'13900002005', status:'在职'});
+EMPLOYEES.push({id:'E006', name:'吴浩', org:'库管岗', orgId:'O007', venue:'总部', role:'库管', phone:'137****3006', rawPhone:'13700003006', status:'在职'});
+EMPLOYEES.push({id:'E007', name:'赵磊', org:'财务管理部', orgId:'O003', venue:'全部', role:'财务主管', phone:'136****4007', rawPhone:'13600004007', status:'在职'});
+EMPLOYEES.push({id:'E008', name:'孙悦', org:'羽毛球馆前台岗', orgId:'O012', venue:'羽毛球馆', role:'前台', phone:'135****5008', rawPhone:'13500005008', status:'在职'});
+EMPLOYEES.push({id:'E009', name:'林凯', org:'篮球公园前台岗', orgId:'O010', venue:'篮球公园', role:'场馆负责人', phone:'134****6009', rawPhone:'13400006009', status:'离职'});
+
+var ROLE_OPTIONS = ['前台','库管','财务','财务主管','场馆负责人','系统管理员'];
+var VENUE_OPTIONS = ['总部','篮球公园','网球中心','羽毛球馆','全部'];
+
+/* ========== 组织树 ========== */
+function orgChildren(pid){
+  return ORGS.filter(function(o){ return o.parent === pid; });
+}
+function orgDescendants(id){
+  var res = [];
+  (function walk(pid){
+    orgChildren(pid).forEach(function(o){ res.push(o); walk(o.id); });
+  })(id);
+  return res;
+}
+function venueShort(orgName){
+  if(orgName.indexOf('篮球公园') >= 0) return '篮球公园';
+  if(orgName.indexOf('网球中心') >= 0) return '网球中心';
+  if(orgName.indexOf('羽毛球馆') >= 0) return '羽毛球馆';
+  if(orgName.indexOf('体育中心') >= 0) return '总部';
+  return '';
+}
+function orgIcon(type){
+  if(type === '公司') return 'building-2';
+  if(type === '部门') return 'briefcase';
+  if(type === '场馆') return 'map-pin';
+  return 'user-round';
+}
+function treeNodes(pid, depth, out){
+  orgChildren(pid).forEach(function(o){
+    var active = o.id === currentOrgId;
+    out.push('<div onclick="selectOrg(\'' + o.id + '\')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;padding-left:' + (depth * 16 + 10) + 'px;border-radius:6px;cursor:pointer;font-size:13px;' +
+      (active ? 'background:var(--primary-bg);color:var(--primary);font-weight:600' : 'color:var(--text-2)') + '">' +
+      '<i data-lucide="' + orgIcon(o.type) + '" style="width:15px;height:15px;flex-shrink:0"></i>' +
+      '<span class="truncate" style="flex:1">' + esc(o.name) + '</span>' +
+      (o.status === '停用' ? '<span class="tag tag-gray" style="font-size:11px">停用</span>' : '') +
+      '</div>');
+    treeNodes(o.id, depth + 1, out);
+  });
+}
+function renderTree(){
+  var el = document.getElementById('org-tree');
+  if(!el) return;
+  var out = [];
+  out.push('<div onclick="selectOrg(\'ALL\')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;' +
+    (currentOrgId === 'ALL' ? 'background:var(--primary-bg);color:var(--primary);font-weight:600' : 'color:var(--text-2)') + '">' +
+    '<i data-lucide="layers" style="width:15px;height:15px"></i><span style="flex:1">全部组织</span><span class="tag tag-blue" style="font-size:11px">' + EMPLOYEES.length + ' 人</span></div>');
+  treeNodes(null, 0, out);
+  el.innerHTML = out.join('');
+  refreshIcons();
+}
+
+function selectOrg(id){
+  currentOrgId = id;
+  empPage = 1;
+  renderTree();
+  renderEmployeesSection();
+  var lab = document.getElementById('current-org-label');
+  if(lab) lab.textContent = id === 'ALL' ? '全部组织' : (ORGS.filter(function(o){ return o.id === id; })[0] || {}).name || '全部组织';
+  var btn = document.getElementById('btn-org-status');
+  if(btn){
+    var node = ORGS.filter(function(o){ return o.id === id; })[0];
+    btn.style.display = node ? 'inline-flex' : 'none';
+    if(node) btn.textContent = node.status === '停用' ? '启用节点' : '停用节点';
+  }
+}
+
+/* ========== 员工筛选 ========== */
+function employeesOfCurrentOrg(){
+  if(currentOrgId === 'ALL') return EMPLOYEES.slice();
+  var node = ORGS.filter(function(o){ return o.id === currentOrgId; })[0];
+  if(!node) return EMPLOYEES.slice();
+  var ids = [node.id].concat(orgDescendants(node.id).map(function(o){ return o.id; }));
+  var venues = [];
+  ids.forEach(function(id){
+    var o = ORGS.filter(function(x){ return x.id === id; })[0];
+    if(o){
+      var vs = venueShort(o.name);
+      if(vs) venues.push(vs);
+    }
+  });
+  return EMPLOYEES.filter(function(e){
+    return ids.indexOf(e.orgId) >= 0 || venues.indexOf(e.venue) >= 0;
+  });
+}
+function filteredEmployees(){
+  var kw = empKeyword.trim().toLowerCase();
+  return employeesOfCurrentOrg().filter(function(e){
+    if(empStatus !== '全部' && e.status !== empStatus) return false;
+    if(!kw) return true;
+    return (e.name + ' ' + e.phone + ' ' + e.role + ' ' + e.org + ' ' + e.venue).toLowerCase().indexOf(kw) >= 0;
+  });
+}
+function empRow(e){
+  var statusTag = e.status === '在职' ? '<span class="tag tag-green">在职</span>' : '<span class="tag tag-gray">离职</span>';
+  var actionLabel = e.status === '在职' ? '停用' : '启用';
+  var actionClass = e.status === '在职' ? 'btn-ghost' : 'btn-default';
+  return '<tr>' +
+    '<td><div class="font-medium">' + esc(e.name) + '</div><div class="mono text-muted" style="font-size:12px">' + esc(e.id) + '</div></td>' +
+    '<td>' + esc(e.org) + '</td>' +
+    '<td>' + esc(e.venue) + '</td>' +
+    '<td><span class="tag tag-blue">' + esc(e.role) + '</span></td>' +
+    '<td class="mono">' + esc(e.phone) + '</td>' +
+    '<td>' + statusTag + '</td>' +
+    '<td class="actions">' +
+      '<button class="btn btn-default btn-sm" onclick="openEmployeeForm(\'' + e.id + '\')">编辑</button>' +
+      '<button class="btn ' + actionClass + ' btn-sm" onclick="toggleEmployee(\'' + e.id + '\')">' + actionLabel + '</button>' +
+    '</td>' +
+  '</tr>';
+}
+function renderEmployeesSection(){
+  var el = document.getElementById('emp-section');
+  if(!el) return;
+  var list = filteredEmployees();
+  var total = list.length;
+  var pages = Math.max(1, Math.ceil(total / empPageSize));
+  if(empPage > pages) empPage = pages;
+  var start = (empPage - 1) * empPageSize;
+  var rows = list.slice(start, start + empPageSize).map(empRow).join('');
+  var body = rows || '<tr><td colspan="7"><div class="empty"><div class="empty-icon">👥</div><div class="empty-text">当前组织下暂无员工</div></div></td></tr>';
+  var pageBtns = '';
+  for(var i = 1; i <= pages; i++){
+    pageBtns += '<button class="page-btn ' + (i === empPage ? 'active' : '') + '" onclick="goEmpPage(' + i + ')">' + i + '</button>';
+  }
+  el.innerHTML =
+    '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th>姓名</th><th>所属岗位</th><th>所属场馆</th><th>角色</th><th>手机号（脱敏）</th><th>状态</th><th>操作</th>' +
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    '<div class="pagination"><div class="pagination-info">共 ' + total + ' 名员工，当前第 ' + empPage + ' / ' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+        '<button class="page-btn" ' + (empPage === 1 ? 'disabled' : '') + ' onclick="goEmpPage(' + (empPage - 1) + ')">上一页</button>' +
+        pageBtns +
+        '<button class="page-btn" ' + (empPage === pages ? 'disabled' : '') + ' onclick="goEmpPage(' + (empPage + 1) + ')">下一页</button>' +
+      '</div></div>';
+}
+function goEmpPage(p){
+  var pages = Math.max(1, Math.ceil(filteredEmployees().length / empPageSize));
+  if(p < 1 || p > pages) return;
+  empPage = p;
+  renderEmployeesSection();
+}
+function onEmpKeyword(v){
+  empKeyword = v;
+  empPage = 1;
+  renderEmployeesSection();
+}
+function onEmpStatus(v){
+  empStatus = v;
+  empPage = 1;
+  renderEmployeesSection();
+}
+
+/* ========== 员工操作 ========== */
+function toggleEmployee(id){
+  var e = EMPLOYEES.filter(function(x){ return x.id === id; })[0];
+  if(!e) return;
+  if(e.status === '在职'){
+    confirmDialog('确认停用员工「' + esc(e.name) + '」？停用后该员工退出登录，不再接收新单据指派，历史单据归属不变。', function(){
+      e.status = '离职';
+      renderEmployeesSection();
+      toast('员工「' + e.name + '」已停用', 'warning');
+    });
+  }else{
+    e.status = '在职';
+    renderEmployeesSection();
+    toast('员工「' + e.name + '」已启用', 'success');
+  }
+}
+
+function openEmployeeForm(id){
+  var emp = EMPLOYEES.filter(function(x){ return x.id === id; })[0];
+  var data = emp || {name:'', phone:'', orgId:'', venue:'总部', role:'前台', status:'在职'};
+  var postOptions = ORGS.filter(function(o){ return o.type === '岗位'; }).map(function(o){
+    return '<option value="' + o.id + '"' + (o.id === data.orgId ? ' selected' : '') + '>' + esc(o.name) + '</option>';
+  }).join('');
+  var venueOptions = VENUE_OPTIONS.map(function(v){
+    return '<option value="' + v + '"' + (v === data.venue ? ' selected' : '') + '>' + esc(v) + '</option>';
+  }).join('');
+  var roleChecks = ROLE_OPTIONS.map(function(r){
+    var checked = emp ? emp.role.split('、').indexOf(r) >= 0 : r === '前台';
+    return '<label style="display:inline-flex;align-items:center;gap:6px;margin:0 18px 8px 0;font-size:13px;color:var(--text-2);cursor:pointer">' +
+      '<input type="checkbox" name="emp-role" value="' + esc(r) + '"' + (checked ? ' checked' : '') + ' />' + esc(r) + '</label>';
+  }).join('');
+  activeModal = openModal('<div class="modal modal-lg">' +
+    '<div class="modal-header"><div class="modal-title">' + (emp ? '编辑员工' : '新增员工') + '</div>' +
+      '<div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">姓名 <span class="required">*</span></label>' +
+          '<input class="form-input" id="emp-name" value="' + esc(data.name) + '" placeholder="请输入员工姓名" /></div>' +
+        '<div class="form-item"><label class="form-label">手机号 <span class="required">*</span></label>' +
+          '<input class="form-input" id="emp-phone" value="' + esc(emp ? (emp.rawPhone || '') : '') + '" maxlength="11" placeholder="11 位手机号，列表展示脱敏" /></div>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">所属岗位 <span class="required">*</span></label>' +
+          '<select class="form-select" id="emp-post"><option value="">请选择岗位</option>' + postOptions + '</select></div>' +
+        '<div class="form-item"><label class="form-label">所属场馆 <span class="required">*</span></label>' +
+          '<select class="form-select" id="emp-venue">' + venueOptions + '</select></div>' +
+      '</div>' +
+      '<div class="form-item" style="margin-bottom:16px"><label class="form-label">角色（可多选，权限取并集）</label>' +
+        '<div style="padding:10px 12px;border:1px solid var(--border);border-radius:6px">' + roleChecks + '</div>' +
+        '<div class="form-hint">一个员工可关联多个角色，最终权限为全部角色的并集。</div></div>' +
+      '<div class="form-row"><div class="form-item"><label class="form-label">状态</label>' +
+        '<select class="form-select" id="emp-status">' +
+          '<option value="在职"' + (data.status === '在职' ? ' selected' : '') + '>在职</option>' +
+          '<option value="离职"' + (data.status === '离职' ? ' selected' : '') + '>离职</option>' +
+        '</select></div><div class="form-item"></div></div>' +
+      '<div class="card" style="background:var(--primary-bg);border-color:var(--primary)"><div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">' +
+        '手机号仅用于登录与业务通知，列表与导出默认脱敏展示；解密查看需具备隐私字段解密权限。' +
+      '</div></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="saveEmployeeForm(\'' + (emp ? emp.id : '') + '\')">保存</button></div>' +
+  '</div>');
+}
+
+function saveEmployeeForm(id){
+  var name = trimVal('emp-name');
+  var phone = trimVal('emp-phone');
+  var orgId = document.getElementById('emp-post').value;
+  var venue = document.getElementById('emp-venue').value;
+  var status = document.getElementById('emp-status').value;
+  var roles = Array.prototype.slice.call(document.querySelectorAll('input[name="emp-role"]:checked')).map(function(x){ return x.value; });
+  if(!name){ toast('请填写员工姓名', 'error'); return; }
+  if(!/^1\d{10}$/.test(phone)){ toast('请填写正确的 11 位手机号', 'error'); return; }
+  if(!orgId){ toast('请选择所属岗位', 'error'); return; }
+  if(!venue){ toast('请选择所属场馆', 'error'); return; }
+  if(!roles.length){ toast('请至少选择一个角色', 'error'); return; }
+  var post = ORGS.filter(function(o){ return o.id === orgId; })[0];
+  var payload = {
+    name: name,
+    org: post ? post.name : '',
+    orgId: orgId,
+    venue: venue,
+    role: roles.join('、'),
+    phone: maskPhone(phone),
+    rawPhone: phone,
+    status: status
+  };
+  if(id){
+    var emp = EMPLOYEES.filter(function(x){ return x.id === id; })[0];
+    if(emp) Object.assign(emp, payload);
+    toast('员工「' + name + '」信息已更新', 'success');
+  }else{
+    EMPLOYEES.push(Object.assign({id:'E0' + (nextEmpNo++), name:'', org:'', orgId:'', venue:'', role:'', phone:'', status:''}, payload));
+    empPage = 1;
+    toast('员工「' + name + '」已添加', 'success');
+  }
+  closeActiveModal();
+  renderTree();
+  renderEmployeesSection();
+}
+
+/* ========== 新增组织 ========== */
+function parentOptions(type){
+  var list;
+  if(type === '部门') list = ORGS.filter(function(o){ return o.type === '公司'; });
+  else if(type === '场馆') list = ORGS.filter(function(o){ return o.type === '部门' || o.type === '公司'; });
+  else if(type === '岗位') list = ORGS.filter(function(o){ return o.type === '场馆'; });
+  else list = [];
+  return list.map(function(o){ return '<option value="' + o.id + '">' + esc(o.name) + '（' + o.type + '）</option>'; }).join('');
+}
+function updateParentOptions(type){
+  var sel = document.getElementById('org-parent');
+  if(!sel) return;
+  sel.innerHTML = parentOptions(type);
+  var wrap = document.getElementById('org-parent-item');
+  if(wrap) wrap.style.display = (type === '公司' ? 'none' : '');
+}
+function openOrgForm(){
+  activeModal = openModal('<div class="modal">' +
+    '<div class="modal-header"><div class="modal-title">新增组织节点</div><div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-item" style="margin-bottom:16px"><label class="form-label">节点名称 <span class="required">*</span></label>' +
+        '<input class="form-input" id="org-name" placeholder="如：地丰游泳馆、游泳馆前台岗" /></div>' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">节点类型 <span class="required">*</span></label>' +
+          '<select class="form-select" id="org-type" onchange="updateParentOptions(this.value)">' +
+            '<option value="部门">部门</option><option value="场馆" selected>场馆</option><option value="岗位">岗位</option>' +
+          '</select></div>' +
+        '<div class="form-item" id="org-parent-item"><label class="form-label">上级节点 <span class="required">*</span></label>' +
+          '<select class="form-select" id="org-parent">' + parentOptions('场馆') + '</select></div>' +
+      '</div>' +
+      '<div class="form-hint" style="margin-bottom:12px">组织结构为「公司 → 子公司/部门 → 场馆 → 岗位 → 员工」五级模型，上级节点须与所选类型匹配。</div>' +
+      '<div class="card" style="background:var(--warning-bg);border-color:var(--warning)"><div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">' +
+        '组织停用后不参与新单据归属（不可选为下单、排期、库存等业务归属），历史单据归属保持不变。' +
+      '</div></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="saveOrgForm()">保存</button></div>' +
+  '</div>');
+}
+
+function saveOrgForm(){
+  var name = trimVal('org-name');
+  var type = document.getElementById('org-type').value;
+  var parentSel = document.getElementById('org-parent');
+  var parent = type === '公司' ? null : (parentSel ? parentSel.value : '');
+  if(!name){ toast('请填写节点名称', 'error'); return; }
+  if(type !== '公司' && !parent){ toast('请选择上级节点', 'error'); return; }
+  var dup = ORGS.some(function(o){ return o.name === name && o.type === type; });
+  if(dup){ toast('同类型下已存在同名节点', 'error'); return; }
+  ORGS.push({id:'O0' + (nextOrgNo++), name:name, type:type, parent:parent, status:'启用'});
+  closeActiveModal();
+  renderTree();
+  renderEmployeesSection();
+  toast('组织节点「' + name + '」已新增', 'success');
+}
+
+/* ========== 启停组织 ========== */
+function toggleOrgStatus(){
+  if(currentOrgId === 'ALL'){ toast('请先选择一个组织节点', 'warning'); return; }
+  var node = ORGS.filter(function(o){ return o.id === currentOrgId; })[0];
+  if(!node) return;
+  if(node.status === '启用'){
+    confirmDialog('确认停用「' + esc(node.name) + '」？<br><br>停用后该组织不参与新单据归属（下单、排期、库存、财务归属均不可选），历史单据归属不变。', function(){
+      node.status = '停用';
+      renderTree();
+      selectOrg(node.id);
+      toast('组织「' + node.name + '」已停用', 'warning');
+    });
+  }else{
+    node.status = '启用';
+    renderTree();
+    selectOrg(node.id);
+    toast('组织「' + node.name + '」已启用', 'success');
+  }
+}
+
+/* ========== 页面渲染 ========== */
+document.getElementById('page-content').innerHTML =
+  '<div class="page-header">' +
+    '<div class="page-title">组织架构</div>' +
+    '<div class="page-desc">维护公司、部门、场馆、岗位与员工的归属关系，组织关系同时决定单据归属与数据可见范围。</div>' +
+  '</div>' +
+
+  '<div class="card mb-16">' +
+    '<div class="card-header"><div class="card-title">五级组织模型</div>' +
+      '<span class="tag tag-blue">公司 → 子公司/部门 → 场馆 → 岗位 → 员工</span></div>' +
+    '<div class="card-body">' +
+      '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">' +
+        '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center"><div style="font-size:12px;color:var(--text-3)">第 1 级</div><div class="font-bold" style="margin:4px 0">公司</div><div style="font-size:12px;color:var(--text-3)">厦门地丰置业有限公司</div></div>' +
+        '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center"><div style="font-size:12px;color:var(--text-3)">第 2 级</div><div class="font-bold" style="margin:4px 0">子公司/部门</div><div style="font-size:12px;color:var(--text-3)">运营管理部、财务管理部</div></div>' +
+        '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center"><div style="font-size:12px;color:var(--text-3)">第 3 级</div><div class="font-bold" style="margin:4px 0">场馆</div><div style="font-size:12px;color:var(--text-3)">体育中心、篮球公园等</div></div>' +
+        '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center"><div style="font-size:12px;color:var(--text-3)">第 4 级</div><div class="font-bold" style="margin:4px 0">岗位</div><div style="font-size:12px;color:var(--text-3)">前台岗、库管岗等</div></div>' +
+        '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center"><div style="font-size:12px;color:var(--text-3)">第 5 级</div><div class="font-bold" style="margin:4px 0">员工</div><div style="font-size:12px;color:var(--text-3)">员工归属岗位与场馆</div></div>' +
+      '</div>' +
+      '<div style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+        '· 公司为一级归属主体，子公司与部门用于管理层级划分；场馆为业务归属主体，岗位为员工授权落点，员工必须归属到具体岗位与场馆。<br>' +
+        '· 系统不设外部承包主体：所有场地均由公司自营，场馆层不区分「自营」与「承包」，承包类业务如需接入按客商与合同管理处理。' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div style="display:flex;gap:16px;align-items:flex-start">' +
+    '<div class="card" style="width:320px;flex-shrink:0">' +
+      '<div class="card-header"><div class="card-title" style="font-size:15px">组织树</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="openOrgForm()"><i data-lucide="plus" style="width:14px"></i>新增节点</button></div>' +
+      '<div class="card-body" style="padding:10px" id="org-tree"></div>' +
+      '<div class="card-body" style="padding:12px 16px;border-top:1px solid var(--border-light);font-size:12px;color:var(--text-3)">点击节点筛选右侧员工；停用节点仍保留在树中用于追溯历史归属。</div>' +
+    '</div>' +
+
+    '<div class="card" style="flex:1;min-width:0">' +
+      '<div class="card-header"><div class="card-title">员工列表</div>' +
+        '<div class="flex items-center gap-8">' +
+          '<button class="btn btn-default btn-sm" id="btn-org-status" style="display:none" onclick="toggleOrgStatus()">停用节点</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="openEmployeeForm()"><i data-lucide="user-plus" style="width:14px"></i>新增员工</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div class="toolbar">' +
+          '<span class="text-muted" style="font-size:13px">当前节点：<b id="current-org-label" style="color:var(--text-1)">全部组织</b></span>' +
+          '<div class="spacer"></div>' +
+          '<input class="form-input" id="emp-keyword" placeholder="搜索姓名 / 手机 / 岗位" style="min-width:180px" oninput="onEmpKeyword(this.value)" />' +
+          '<select class="form-select" id="emp-status-filter" onchange="onEmpStatus(this.value)" style="min-width:110px">' +
+            '<option value="全部">全部状态</option><option value="在职">在职</option><option value="离职">离职</option>' +
+          '</select>' +
+        '</div>' +
+        '<div id="emp-section"></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+renderTree();
+renderEmployeesSection();
+refreshIcons();
+</script>
+</body>
+</html>

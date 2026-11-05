@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>财务/库存/多场馆分析 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('analytics-finance', '财务/库存/多场馆分析');
+
+/* ========== 工具 ========== */
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+
+const VENUE_RATIO = {'':1, '总部':0.49, '篮球公园':0.26, '网球中心':0.10, '羽毛球馆':0.15};
+const BIZ_TYPES = [
+  {key:'', label:'全部业务', f:1},
+  {key:'场地预约', label:'场地预约', f:0.58},
+  {key:'会员充值', label:'会员充值', f:0.17},
+  {key:'商品销售', label:'商品销售', f:0.13},
+  {key:'物品租赁', label:'物品租赁', f:0.07},
+  {key:'赛事收入', label:'赛事收入', f:0.05}
+];
+let activeModal = null;
+let finTab = 'channels';
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+<style>
+  .ff-donut{width:168px;height:168px;border-radius:50%;position:relative;margin:0 auto 16px}
+  .ff-donut::after{content:'';position:absolute;inset:28px;border-radius:50%;background:#fff}
+  .ff-donut-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2}
+  .ff-legend{display:flex;flex-direction:column;gap:9px}
+  .ff-legend .row{display:flex;align-items:center;gap:8px;font-size:13px}
+  .ff-legend .row .dot{width:8px;height:8px;border-radius:50%}
+  .ff-legend .row .nm{flex:1;color:var(--text-2)}
+  .ff-group{display:flex;align-items:flex-end;gap:14px;height:190px;padding:12px 0}
+  .ff-group .grp{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end}
+  .ff-group .bars{display:flex;align-items:flex-end;gap:4px;width:100%;height:100%;justify-content:center}
+  .ff-group .bars span{width:18%;max-width:18px;border-radius:3px 3px 0 0}
+  .ff-group .nm{font-size:11px;color:var(--text-3);text-align:center}
+  .ff-hbar-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px}
+  .ff-hbar-row .nm{width:150px;flex-shrink:0;color:var(--text-2)}
+  .ff-hbar-row .track{flex:1;height:10px;background:var(--border-light);border-radius:5px;overflow:hidden;display:flex;flex-direction:column;gap:2px}
+  .ff-hbar-row .val{width:90px;text-align:right;font-size:12px;color:var(--text-3)}
+  .ff-th{cursor:pointer;user-select:none}
+</style>
+<div class="page-header">
+  <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+    <div>
+      <div class="page-title">财务 / 库存 / 多场馆分析</div>
+      <div class="page-desc">渠道结构、权责发生制财务口径、库存健康度与多场馆横向对比 · 支持导出与打印</div>
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-default" onclick="exportReport('综合分析报表')"><i data-lucide="download"></i>导出全部</button>
+      <button class="btn btn-default" onclick="window.print()"><i data-lucide="printer"></i>打印</button>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-body" style="padding:14px 20px">
+    <div class="toolbar" style="margin-bottom:0">
+      <div class="filter-group">
+        <span class="text-muted" style="font-size:13px">场馆</span>
+        <select class="form-select" id="ff-venue" onchange="renderAll()">
+          <option value="">全部场馆</option>
+          <option value="总部">地丰体育中心（总部）</option>
+          <option value="篮球公园">地丰篮球公园</option>
+          <option value="网球中心">地丰网球中心</option>
+          <option value="羽毛球馆">地丰羽毛球馆</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="text-muted" style="font-size:13px">时间范围</span>
+        <input class="form-input" type="date" id="ff-from" value="2026-10-01" style="min-width:132px" onchange="renderAll()">
+        <span class="text-muted">至</span>
+        <input class="form-input" type="date" id="ff-to" value="2026-10-31" style="min-width:132px" onchange="renderAll()">
+      </div>
+      <div class="filter-group">
+        <span class="text-muted" style="font-size:13px">业务类型</span>
+        <select class="form-select" id="ff-biz" onchange="renderAll()">
+          ${BIZ_TYPES.map(b => `<option value="${b.key}">${b.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="spacer"></div>
+      <span class="tag tag-gray" id="ff-summary">全部场馆 · 2026-10-01 ~ 2026-10-31</span>
+    </div>
+  </div>
+</div>
+
+<div class="tabs" id="ff-tabs">
+  <div class="tab active" data-tab="channels" onclick="switchFinTab('channels')">渠道分析</div>
+  <div class="tab" data-tab="finance" onclick="switchFinTab('finance')">财务分析</div>
+  <div class="tab" data-tab="inventory" onclick="switchFinTab('inventory')">库存分析</div>
+  <div class="tab" data-tab="venues" onclick="switchFinTab('venues')">多场馆分析</div>
+  <div class="tab" data-tab="ledger" onclick="switchFinTab('ledger')">收入台账</div>
+</div>
+
+<div class="tab-panel" id="ff-panel-channels">
+  <div class="stats-grid" id="ff-ch-stats"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1.55fr;gap:16px" class="mb-16">
+    <div class="card">
+      <div class="card-header"><div class="card-title">渠道收入占比</div><span class="tag tag-blue" id="ff-ch-total"></span></div>
+      <div class="card-body">
+        <div class="ff-donut" id="ff-ch-donut"></div>
+        <div class="ff-legend" id="ff-ch-legend"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">渠道收入与订单</div>
+        <button class="btn btn-ghost btn-sm" onclick="exportReport('渠道分析')">导出</button>
+      </div>
+      <div class="card-body no-pad">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>渠道</th><th class="text-right">收入</th><th class="text-right">订单数</th><th class="text-right">收入占比</th><th class="text-right">手续费率</th><th>结算周期</th></tr></thead>
+            <tbody id="ff-ch-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">按场馆的渠道结构对比</div>
+      <span class="text-muted" style="font-size:12px">柱高按各场馆收入归一化 · 图例：小程序 / 线下 / 美团 / 抖音</span>
+    </div>
+    <div class="card-body">
+      <div class="ff-group" id="ff-ch-venue"></div>
+      <div class="flex gap-16" style="font-size:12px;color:var(--text-3);flex-wrap:wrap">
+        <span><span class="dot" style="background:#1677ff"></span>小程序</span>
+        <span><span class="dot" style="background:#10b981"></span>线下</span>
+        <span><span class="dot" style="background:#f59e0b"></span>美团</span>
+        <span><span class="dot" style="background:#8b5cf6"></span>抖音</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-panel" id="ff-panel-finance" style="display:none">
+  <div class="stats-grid" id="ff-fin-stats"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:16px" class="mb-16">
+    <div class="card">
+      <div class="card-header"><div class="card-title">含税 / 不含税 / 税额拆分</div><span class="tag tag-cyan">权责发生制</span></div>
+      <div class="card-body" id="ff-tax-split"></div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">五类财务口径</div>
+        <button class="btn btn-ghost btn-sm" onclick="exportReport('财务分析')">导出</button>
+      </div>
+      <div class="card-body no-pad">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>口径</th><th class="text-right">本期金额</th><th class="text-right">占比</th><th>说明</th></tr></thead>
+            <tbody id="ff-fin-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-header"><div class="card-title">分项目税额明细</div><span class="text-muted" style="font-size:12px">按业务项目拆分，含税金额倒算不含税与税额</span></div>
+    <div class="card-body no-pad">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>业务项目</th><th class="text-right">含税金额</th><th class="text-right">税率</th><th class="text-right">不含税金额</th><th class="text-right">税额</th></tr></thead>
+          <tbody id="ff-tax-rows"></tbody>
+          <tfoot><tr style="background:#fafafa;font-weight:600">
+            <td>合计</td><td class="text-right" id="ff-tax-total">—</td><td class="text-right">—</td>
+            <td class="text-right" id="ff-tax-excl">—</td><td class="text-right" id="ff-tax-amt">—</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body" style="display:flex;gap:14px;align-items:flex-start">
+      <span class="stat-icon blue" style="flex-shrink:0"><i data-lucide="scale"></i></span>
+      <div>
+        <div class="font-medium mb-8">财务口径说明</div>
+        <div class="text-muted" style="font-size:13px;line-height:1.8">
+          收入按权责发生制确认：服务实际发生即确认收入，不以收款时间为准；预收账款在服务完成前保留为负债，按实际消费逐期结转。
+          应收为已确认但未收款金额，实收为已到账金额，付款为对供应商及合作方的应付结算额。含税金额按适用税率倒算不含税与税额，尾差按四舍五入保留两位。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-panel" id="ff-panel-inventory" style="display:none">
+  <div class="toolbar">
+    <div class="filter-group">
+      <span class="text-muted" style="font-size:13px">仓库</span>
+      <select class="form-select" id="ff-wh" onchange="renderInventory()">
+        <option value="">全部仓库</option>
+        <option>总部主仓库</option><option>篮球公园仓</option><option>网球中心仓</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="text-muted" style="font-size:13px">商品分类</span>
+      <select class="form-select" id="ff-cat" onchange="renderInventory()">
+        <option value="">全部分类</option>
+        <option>饮料</option><option>食品</option><option>球类</option><option>运动用品</option>
+      </select>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-default" onclick="exportReport('库存分析')"><i data-lucide="download"></i>导出库存分析</button>
+  </div>
+
+  <div class="stats-grid" id="ff-inv-stats"></div>
+
+  <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px" class="mb-16">
+    <div class="card">
+      <div class="card-header"><div class="card-title">库存余额</div><span class="text-muted" style="font-size:12px" id="ff-inv-count"></span></div>
+      <div class="card-body no-pad">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>商品</th><th>分类</th><th>仓库</th><th class="text-right">数量</th><th class="text-right">成本单价</th><th class="text-right">库存金额</th></tr></thead>
+            <tbody id="ff-inv-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">库存预警</div><span class="tag tag-red" id="ff-alert-badge">—</span></div>
+      <div class="card-body" id="ff-alert-list"></div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card">
+      <div class="card-header"><div class="card-title">出入库汇总</div><span class="tag tag-blue">按单据类型</span></div>
+      <div class="card-body no-pad">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>类型</th><th>商品</th><th class="text-right">数量</th><th>仓库</th><th>时间</th></tr></thead>
+            <tbody id="ff-flow-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">盘盈盘亏</div><span class="text-muted" style="font-size:12px">按盘点单汇总</span></div>
+      <div class="card-body no-pad">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>盘点单</th><th>仓库</th><th class="text-right">账面</th><th class="text-right">实盘</th><th class="text-right">差异金额</th><th>状态</th></tr></thead>
+            <tbody id="ff-take-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-panel" id="ff-panel-venues" style="display:none">
+  <div class="stats-grid" id="ff-v-stats"></div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">场馆收入 / 成本对比</div>
+      <span class="text-muted" style="font-size:12px">深色为收入，浅色为成本</span>
+    </div>
+    <div class="card-body" id="ff-v-bar"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">多场馆横向比较</div>
+      <div class="flex gap-8">
+        <button class="btn btn-ghost btn-sm" onclick="exportReport('多场馆对比')">导出</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('已按收入降序排列','info')">按收入排序</button>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>公司</th><th>场馆</th><th>项目</th><th class="text-right">收入</th><th class="text-right">成本</th><th class="text-right">毛利</th>
+            <th class="text-right">客流</th><th class="text-right">使用率</th><th class="text-right">人均消费</th><th>操作</th>
+          </tr></thead>
+          <tbody id="ff-v-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-panel" id="ff-panel-ledger" style="display:none">
+  <div class="stats-grid" id="ff-lg-stats"></div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">收入台账明细</div>
+      <div class="flex gap-8 items-center">
+        <span class="text-muted" style="font-size:12px" id="ff-lg-count"></span>
+        <button class="btn btn-default btn-sm" onclick="exportReport('收入台账对账底稿')"><i data-lucide="file-down"></i>导出对账底稿</button>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>发生时间</th><th>业务单号</th><th>客户</th><th class="text-right">金额</th><th>支付方式</th>
+            <th>开票状态</th><th>财务单据号</th><th>核对状态</th><th>操作</th>
+          </tr></thead>
+          <tbody id="ff-lg-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="text-muted mt-12" style="font-size:12px">
+    核对口径：业务单号金额与财务应收/实收逐笔比对；差额需在下期对账中说明原因。点击行可查看逐笔核对明细。
+  </div>
+</div>
+
+`;
+
+/* ========== 数据 ========== */
+const CHANNELS = [
+  {name:'小程序', color:'#1677ff', share:45, fee:0.6, settle:'T+1'},
+  {name:'线下',   color:'#10b981', share:28, fee:0,   settle:'实时'},
+  {name:'美团',   color:'#f59e0b', share:18, fee:8,   settle:'T+7'},
+  {name:'抖音',   color:'#8b5cf6', share:9,  fee:6,   settle:'T+7'}
+];
+const FIN_PROJECTS = [
+  {name:'体育服务收入', share:0.52, rate:6},
+  {name:'商品销售收入', share:0.22, rate:13},
+  {name:'赛事活动收入', share:0.17, rate:6},
+  {name:'物品租赁收入', share:0.09, rate:13}
+];
+const LEDGER = [
+  {time:'2026-10-30 18:02', no:'ORD20261030001', customer:'陈晓明', amount:240, pay:'微信支付', invoice:'已开票', finNo:'NCC-AR-20261030-001', check:'已核对', venue:'总部', biz:'场地预约'},
+  {time:'2026-10-30 16:40', no:'RC20261030002', customer:'陈晓明', amount:800, pay:'微信支付', invoice:'未开票', finNo:'NCC-RC-20261030-002', check:'已核对', venue:'总部', biz:'会员充值'},
+  {time:'2026-10-30 15:20', no:'ORD20261029003', customer:'散客', amount:200, pay:'现金', invoice:'已开票', finNo:'NCC-AR-20261029-003', check:'已核对', venue:'篮球公园', biz:'场地预约'},
+  {time:'2026-10-30 11:00', no:'AR20261030', customer:'厦门建工集团有限公司', amount:12500, pay:'对公转账', invoice:'已开票', finNo:'NCC-AR-20261030-005', check:'待核对', venue:'总部', biz:'赛事收入'},
+  {time:'2026-10-29 19:00', no:'ORD20261029003', customer:'散客', amount:200, pay:'渠道结算', invoice:'申请中', finNo:'NCC-AR-20261029-004', check:'差异待处理', venue:'篮球公园', biz:'场地预约'},
+  {time:'2026-10-29 14:10', no:'ORD20261028005', customer:'鹭岛篮球俱乐部', amount:240, pay:'次卡', invoice:'未开票', finNo:'NCC-AR-20261028-006', check:'已核对', venue:'篮球公园', biz:'场地预约'},
+  {time:'2026-10-28 10:30', no:'EV002', customer:'厦门市网球协会', amount:18600, pay:'对公转账', invoice:'已红冲', finNo:'NCC-AR-20261027-007', check:'差异待处理', venue:'网球中心', biz:'赛事收入'},
+  {time:'2026-10-27 20:15', no:'ORD20261027006', customer:'王志强', amount:80, pay:'在线支付', invoice:'开具失败', finNo:'', check:'待核对', venue:'总部', biz:'场地预约'},
+  {time:'2026-10-26 16:20', no:'ORD20261026008', customer:'林雅婷', amount:80, pay:'储值余额', invoice:'未开票', finNo:'NCC-RC-20261026-008', check:'已核对', venue:'网球中心', biz:'物品租赁'},
+  {time:'2026-10-25 09:40', no:'ORD20261025009', customer:'散客', amount:60, pay:'现金', invoice:'未开票', finNo:'NCC-AR-20261025-009', check:'已核对', venue:'羽毛球馆', biz:'商品销售'}
+];
+
+/* ========== 筛选 ========== */
+function filters(){
+  return {
+    venue: document.getElementById('ff-venue')?.value || '',
+    from: document.getElementById('ff-from')?.value || '2026-10-01',
+    to: document.getElementById('ff-to')?.value || '2026-10-31',
+    biz: document.getElementById('ff-biz')?.value || ''
+  };
+}
+function dateFactor(){
+  const f = filters();
+  const days = Math.max(1, Math.round((new Date(f.to) - new Date(f.from)) / 86400000) + 1);
+  return Math.min(6, Math.max(0.2, days / 31));
+}
+function totalFactor(){
+  const f = filters();
+  const bf = BIZ_TYPES.find(b => b.key === f.biz)?.f || 1;
+  return (f.venue ? VENUE_RATIO[f.venue] : 1) * bf * dateFactor();
+}
+
+function switchFinTab(tab){
+  finTab = tab;
+  document.querySelectorAll('#ff-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  ['channels','finance','inventory','venues','ledger'].forEach(k => {
+    const p = document.getElementById('ff-panel-' + k);
+    if(p) p.style.display = k === tab ? 'block' : 'none';
+  });
+  renderAll();
+}
+
+function renderAll(){
+  const f = filters();
+  const vm = f.venue || '全部场馆';
+  const sum = document.getElementById('ff-summary');
+  if(sum) sum.textContent = `${vm} · ${f.from} ~ ${f.to} · ${BIZ_TYPES.find(b => b.key === f.biz)?.label || '全部业务'}`;
+  renderChannels();
+  renderFinance();
+  renderInventory();
+  renderVenues();
+  renderLedger();
+  refreshIcons();
+}
+
+/* ========== 渠道分析 ========== */
+function renderChannels(){
+  const factor = totalFactor();
+  const revenue = MOCK_EXT.financeAnalytics.revenue * factor;
+  const orders = Math.round(revenue / 209);
+  const fee = CHANNELS.reduce((s, c) => s + revenue * c.share / 100 * c.fee / 100, 0);
+  const el = document.getElementById('ff-ch-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">渠道收入 <span class="stat-icon blue"><i data-lucide="share-2"></i></span></div>
+      <div class="stat-value">¥${money(revenue)}</div>
+      <div class="stat-trend up"><i data-lucide="trending-up" style="width:14px"></i>环比 +8.3%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">渠道订单 <span class="stat-icon green"><i data-lucide="receipt"></i></span></div>
+      <div class="stat-value">${orders.toLocaleString()}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 单</span></div>
+      <div class="stat-trend up"><i data-lucide="arrow-up" style="width:14px"></i>线上占比 63%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">渠道手续费 <span class="stat-icon orange"><i data-lucide="percent"></i></span></div>
+      <div class="stat-value">¥${money(fee)}</div>
+      <div class="stat-trend down"><i data-lucide="info" style="width:14px"></i>占收入 ${(fee / revenue * 100).toFixed(2)}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">预计净结算 <span class="stat-icon purple"><i data-lucide="banknote"></i></span></div>
+      <div class="stat-value">¥${money(revenue - fee)}</div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>按各渠道结算周期到账</div>
+    </div>`;
+
+  let cum = 0;
+  const gradient = CHANNELS.map(c => {
+    const seg = `${c.color} ${cum}% ${cum + c.share}%`;
+    cum += c.share;
+    return seg;
+  }).join(', ');
+  document.getElementById('ff-ch-total').textContent = '合计 ¥' + money(revenue);
+  document.getElementById('ff-ch-donut').style.background = `conic-gradient(${gradient})`;
+  document.getElementById('ff-ch-donut').innerHTML = `<div class="ff-donut-c">
+    <div style="font-size:11px;color:var(--text-3)">渠道收入</div>
+    <div style="font-size:20px;font-weight:700">${(revenue / 10000).toFixed(1)}万</div>
+  </div>`;
+  document.getElementById('ff-ch-legend').innerHTML = CHANNELS.map(c => `<div class="row">
+    <span class="dot" style="background:${c.color}"></span>
+    <span class="nm">${c.name}</span>
+    <span class="font-medium">¥${money(revenue * c.share / 100)}</span>
+    <span class="text-muted" style="width:42px;text-align:right">${c.share}%</span>
+  </div>`).join('');
+  document.getElementById('ff-ch-rows').innerHTML = CHANNELS.map(c => `<tr>
+    <td><span class="dot" style="background:${c.color}"></span>${c.name}</td>
+    <td class="text-right font-medium">¥${money(revenue * c.share / 100)}</td>
+    <td class="text-right">${Math.round(orders * c.share / 100)}</td>
+    <td class="text-right">${c.share}%</td>
+    <td class="text-right">${c.fee}%</td>
+    <td><span class="tag tag-gray">${c.settle}</span></td>
+  </tr>`).join('');
+
+  const f = filters();
+  const venues = MOCK_EXT.venueCompare.filter(v => !f.venue || v.venue.includes(f.venue));
+  const maxAmt = Math.max(...venues.flatMap(v => CHANNELS.map(c => v.revenue * c.share / 100)), 1);
+  document.getElementById('ff-ch-venue').innerHTML = venues.map(v => `<div class="grp" title="${v.venue}">
+    <div class="bars">
+      ${CHANNELS.map(c => `<span title="${c.name} ¥${money(v.revenue * c.share / 100)}" style="height:${Math.max(4, Math.round(v.revenue * c.share / 100 / maxAmt * 100))}%;background:${c.color}"></span>`).join('')}
+    </div>
+    <div class="nm">${v.venue.replace('地丰体育中心（总部）','总部').replace('地丰','').replace('（','').replace('）','')}</div>
+  </div>`).join('');
+}
+
+/* ========== 财务分析 ========== */
+function renderFinance(){
+  const factor = totalFactor();
+  const fin = MOCK_EXT.financeAnalytics;
+  const revenue = fin.revenue * factor;
+  const receivable = fin.receivable * factor;
+  const received = fin.received * factor;
+  const preReceived = fin.preReceived * factor;
+  const payable = fin.payable * factor;
+  const taxAmount = fin.taxAmount * factor;
+  const taxExcl = revenue - taxAmount;
+  const el = document.getElementById('ff-fin-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">收入（权责） <span class="stat-icon blue"><i data-lucide="trending-up"></i></span></div>
+      <div class="stat-value">¥${money(revenue)}</div>
+      <div class="stat-trend up"><i data-lucide="check-circle" style="width:14px"></i>已确认收入，含税口径</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">应收账款 <span class="stat-icon orange"><i data-lucide="file-text"></i></span></div>
+      <div class="stat-value">¥${money(receivable)}</div>
+      <div class="stat-trend"><i data-lucide="clock" style="width:14px;color:var(--text-3)"></i>已确认未收款</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">实收账款 <span class="stat-icon green"><i data-lucide="banknote"></i></span></div>
+      <div class="stat-value">¥${money(received)}</div>
+      <div class="stat-trend up"><i data-lucide="trending-up" style="width:14px"></i>回款率 ${(received / receivable * 100).toFixed(1)}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">预收账款 <span class="stat-icon purple"><i data-lucide="wallet"></i></span></div>
+      <div class="stat-value">¥${money(preReceived)}</div>
+      <div class="stat-trend down"><i data-lucide="info" style="width:14px"></i>属负债，服务完成后结转</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">付款金额 <span class="stat-icon red"><i data-lucide="arrow-up-circle"></i></span></div>
+      <div class="stat-value">¥${money(payable)}</div>
+      <div class="stat-trend"><i data-lucide="info" style="width:14px;color:var(--text-3)"></i>供应商及合作方结算</div>
+    </div>`;
+
+  document.getElementById('ff-tax-split').innerHTML = `
+    <div class="kv-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
+      <div class="kv-item"><div class="k">含税金额</div><div class="v font-bold" style="font-size:16px">¥${money(revenue)}</div></div>
+      <div class="kv-item"><div class="k">不含税金额</div><div class="v font-bold" style="font-size:16px">¥${money(taxExcl)}</div></div>
+      <div class="kv-item"><div class="k">税额</div><div class="v font-bold" style="font-size:16px;color:var(--warning)">¥${money(taxAmount)}</div></div>
+    </div>
+    <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--border-light)">
+      <div title="不含税 ${(taxExcl / revenue * 100).toFixed(1)}%" style="width:${(taxExcl / revenue * 100)}%;background:#1677ff"></div>
+      <div title="税额 ${(taxAmount / revenue * 100).toFixed(1)}%" style="width:${(taxAmount / revenue * 100)}%;background:#f59e0b"></div>
+    </div>
+    <div class="flex justify-between mt-8" style="font-size:12px;color:var(--text-3)">
+      <span><span class="dot" style="background:#1677ff"></span>不含税 ${(taxExcl / revenue * 100).toFixed(1)}%</span>
+      <span><span class="dot" style="background:#f59e0b"></span>税额 ${(taxAmount / revenue * 100).toFixed(1)}%</span>
+    </div>
+    <div class="divider"></div>
+    <div class="text-muted" style="font-size:12px">综合税负率 ${(taxAmount / revenue * 100).toFixed(2)}%，按各业务项目适用税率加权计算。</div>`;
+
+  const rows = [
+    {name:'营业收入', val:revenue, desc:'按服务实际发生确认，含税'},
+    {name:'应收账款', val:receivable, desc:'已确认未收款，含渠道待结算'},
+    {name:'实收账款', val:received, desc:'银行/现金/储值实际到账'},
+    {name:'预收账款', val:preReceived, desc:'会员储值及次卡未消费部分'},
+    {name:'应付账款', val:payable, desc:'采购及供应商待结算金额'}
+  ];
+  const maxVal = Math.max(...rows.map(r => r.val), 1);
+  document.getElementById('ff-fin-rows').innerHTML = rows.map(r => `<tr>
+    <td class="font-medium">${r.name}</td>
+    <td class="text-right font-medium">¥${money(r.val)}</td>
+    <td class="text-right" style="min-width:130px">
+      <div class="flex items-center gap-8">
+        <div class="progress flex-1"><div class="progress-bar" style="width:${r.val / maxVal * 100}%"></div></div>
+        <span class="text-muted" style="font-size:12px">${(r.val / maxVal * 100).toFixed(0)}%</span>
+      </div>
+    </td>
+    <td class="text-muted" style="font-size:12px">${r.desc}</td>
+  </tr>`).join('');
+
+  let sumIncl = 0, sumExcl = 0, sumTax = 0;
+  const taxRows = FIN_PROJECTS.map(p => {
+    const incl = revenue * p.share;
+    const excl = incl / (1 + p.rate / 100);
+    const tax = incl - excl;
+    sumIncl += incl; sumExcl += excl; sumTax += tax;
+    return {p, incl, excl, tax};
+  });
+  document.getElementById('ff-tax-rows').innerHTML = taxRows.map(x => `<tr>
+    <td class="font-medium">${x.p.name}</td>
+    <td class="text-right">¥${money(x.incl)}</td>
+    <td class="text-right"><span class="tag tag-gray">${x.p.rate}%</span></td>
+    <td class="text-right">¥${money(x.excl)}</td>
+    <td class="text-right text-warning">¥${money(x.tax)}</td>
+  </tr>`).join('');
+  document.getElementById('ff-tax-total').textContent = '¥' + money(sumIncl);
+  document.getElementById('ff-tax-excl').textContent = '¥' + money(sumExcl);
+  document.getElementById('ff-tax-amt').textContent = '¥' + money(sumTax);
+}
+
+/* ========== 库存分析 ========== */
+function renderInventory(){
+  const wh = document.getElementById('ff-wh')?.value || '';
+  const cat = document.getElementById('ff-cat')?.value || '';
+  const stocks = MOCK_EXT.stockList.filter(s =>
+    (!wh || s.warehouse === wh) && (!cat || s.category === cat));
+  const balance = stocks.reduce((s, x) => s + x.qty * x.cost, 0);
+  const df = dateFactor();
+  const inv = MOCK_EXT.inventoryAnalytics;
+  const gain = MOCK_EXT.stocktakes.filter(s => !wh || s.warehouse === wh).reduce((s, x) => s + x.gain, 0);
+  const loss = MOCK_EXT.stocktakes.filter(s => !wh || s.warehouse === wh).reduce((s, x) => s + x.loss, 0);
+  const alerts = MOCK_EXT.stockAlerts.filter(a => {
+    if(wh && a.warehouse !== wh) return false;
+    if(cat){
+      const g = MOCK_EXT.stockList.find(s => s.name === a.goods);
+      return g && g.category === cat;
+    }
+    return true;
+  });
+  const el = document.getElementById('ff-inv-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">库存余额 <span class="stat-icon blue"><i data-lucide="warehouse"></i></span></div>
+      <div class="stat-value">¥${money(balance)}</div>
+      <div class="stat-trend"><i data-lucide="package" style="width:14px;color:var(--text-3)"></i>${stocks.length} 个商品批次</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">本期入库 <span class="stat-icon green"><i data-lucide="arrow-down-to-line"></i></span></div>
+      <div class="stat-value">¥${money(inv.inAmount * df)}</div>
+      <div class="stat-trend up"><i data-lucide="trending-up" style="width:14px"></i>采购入库与调拨入库</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">本期出库 <span class="stat-icon orange"><i data-lucide="arrow-up-from-line"></i></span></div>
+      <div class="stat-value">¥${money(inv.outAmount * df)}</div>
+      <div class="stat-trend"><i data-lucide="info" style="width:14px;color:var(--text-3)"></i>销售/调拨/报损合计</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">盘盈 / 盘亏 <span class="stat-icon purple"><i data-lucide="clipboard-list"></i></span></div>
+      <div class="stat-value" style="font-size:22px"><span class="text-success">${gain}</span> / <span class="text-error">${loss}</span></div>
+      <div class="stat-trend"><i data-lucide="scale" style="width:14px;color:var(--text-3)"></i>数量口径，差异金额见盘点表</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">库存预警 <span class="stat-icon red"><i data-lucide="alert-triangle"></i></span></div>
+      <div class="stat-value">${alerts.length}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend down"><i data-lucide="alert-circle" style="width:14px"></i>最低库存与临期预警</div>
+    </div>`;
+
+  const cnt = document.getElementById('ff-inv-count');
+  if(cnt) cnt.textContent = `共 ${stocks.length} 条批次`;
+  document.getElementById('ff-inv-rows').innerHTML = stocks.length ? stocks.map(s => `<tr>
+    <td class="font-medium">${s.name}</td>
+    <td><span class="tag tag-gray">${s.category}</span></td>
+    <td>${s.warehouse}</td>
+    <td class="text-right ${s.qty === 0 ? 'text-error' : ''}">${s.qty}</td>
+    <td class="text-right">¥${money(s.cost)}</td>
+    <td class="text-right font-medium">¥${money(s.qty * s.cost)}</td>
+  </tr>`).join('') : `<tr><td colspan="6"><div class="empty"><div class="empty-icon"><i data-lucide="package-search"></i></div><div class="empty-text">当前仓库/分类下暂无库存</div></div></td></tr>`;
+
+  const badge = document.getElementById('ff-alert-badge');
+  if(badge) badge.textContent = `${alerts.length} 条预警`;
+  document.getElementById('ff-alert-list').innerHTML = alerts.length ? alerts.map(a => `<div class="list-row">
+    <span class="stat-icon ${a.level === '严重' ? 'red' : 'orange'}" style="width:30px;height:30px;flex-shrink:0">
+      <i data-lucide="${a.level === '严重' ? 'alert-octagon' : 'alert-triangle'}"></i></span>
+    <div style="flex:1">
+      <div class="font-medium" style="font-size:13px">${a.goods} · ${a.type}</div>
+      <div class="text-muted" style="font-size:12px">${a.warehouse} · 当前 ${a.current} / 阈值 ${a.threshold}</div>
+    </div>
+    <span class="tag ${a.level === '严重' ? 'tag-red' : 'tag-orange'}">${a.level}</span>
+  </div>`).join('') : `<div class="empty" style="padding:30px"><div class="empty-text">暂无库存预警</div></div>`;
+
+  const flows = MOCK_EXT.stockFlows.filter(x => !wh || x.warehouse === wh);
+  const flowTag = {'采购入库':'tag-green','销售出库':'tag-blue','调拨出库':'tag-cyan','报损出库':'tag-red','盘点调整':'tag-orange'};
+  document.getElementById('ff-flow-rows').innerHTML = flows.map(x => `<tr>
+    <td><span class="tag ${flowTag[x.type] || 'tag-gray'}">${x.type}</span></td>
+    <td>${x.goods}</td>
+    <td class="text-right ${x.type.includes('入') ? 'text-success' : 'text-error'}">${x.type.includes('入') ? '+' : '-'}${x.qty}</td>
+    <td style="font-size:12px">${x.warehouse}</td>
+    <td style="font-size:12px">${x.time.slice(5, 16)}</td>
+  </tr>`).join('') || `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="empty-text">该仓库暂无出入库记录</div></div></td></tr>`;
+
+  const takes = MOCK_EXT.stocktakes.filter(s => !wh || s.warehouse === wh);
+  document.getElementById('ff-take-rows').innerHTML = takes.map(s => `<tr>
+    <td class="mono" style="font-size:12px">${s.id}</td>
+    <td>${s.warehouse}</td>
+    <td class="text-right">${s.bookQty}</td>
+    <td class="text-right">${s.actualQty}</td>
+    <td class="text-right ${s.diffAmount < 0 ? 'text-error' : s.diffAmount > 0 ? 'text-success' : ''}">¥${money(s.diffAmount)}</td>
+    <td><span class="tag ${s.status === '已调整' ? 'tag-green' : 'tag-orange'}">${s.status}</span></td>
+  </tr>`).join('') || `<tr><td colspan="6"><div class="empty" style="padding:30px"><div class="empty-text">暂无盘点记录</div></div></td></tr>`;
+  refreshIcons();
+}
+
+/* ========== 多场馆分析 ========== */
+function renderVenues(){
+  const f = filters();
+  const cf = (BIZ_TYPES.find(b => b.key === f.biz)?.f || 1) * dateFactor();
+  let rows = MOCK_EXT.venueCompare.map(v => ({
+    ...v,
+    revenue: v.revenue * cf,
+    cost: v.cost * cf,
+    profit: (v.revenue - v.cost) * cf,
+    company: v.venue.includes('总部') ? '厦门地丰置业有限公司' : '厦门地丰体育文化有限公司',
+    project: v.venue.includes('总部') ? '综合场馆 + 赛事' : v.venue.includes('篮球') ? '篮球场馆 + 青训' : v.venue.includes('网球') ? '网球培训 + 场地' : '羽毛球场地 + 商品'
+  }));
+  const allRows = rows;
+  if(f.venue) rows = rows.filter(v => v.venue.includes(f.venue));
+  rows.sort((a, b) => b.revenue - a.revenue);
+  const totalRev = rows.reduce((s, v) => s + v.revenue, 0);
+  const totalCost = rows.reduce((s, v) => s + v.cost, 0);
+  const avgUsage = rows.length ? rows.reduce((s, v) => s + v.usage, 0) / rows.length : 0;
+  const best = [...rows].sort((a, b) => b.usage - a.usage)[0];
+  const el = document.getElementById('ff-v-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">场馆总收入 <span class="stat-icon blue"><i data-lucide="building-2"></i></span></div>
+      <div class="stat-value">¥${money(totalRev)}</div>
+      <div class="stat-trend up"><i data-lucide="trending-up" style="width:14px"></i>环比 +8.3%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">场馆总成本 <span class="stat-icon orange"><i data-lucide="receipt"></i></span></div>
+      <div class="stat-value">¥${money(totalCost)}</div>
+      <div class="stat-trend"><i data-lucide="percent" style="width:14px;color:var(--text-3)"></i>成本率 ${(totalCost / totalRev * 100).toFixed(1)}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">综合毛利率 <span class="stat-icon green"><i data-lucide="pie-chart"></i></span></div>
+      <div class="stat-value">${((totalRev - totalCost) / totalRev * 100).toFixed(1)}%</div>
+      <div class="stat-trend up"><i data-lucide="arrow-up" style="width:14px"></i>同比 +2.1 个百分点</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">平均场地使用率 <span class="stat-icon purple"><i data-lucide="activity"></i></span></div>
+      <div class="stat-value">${avgUsage.toFixed(1)}%</div>
+      <div class="stat-trend"><i data-lucide="award" style="width:14px;color:var(--text-3)"></i>最高：${best ? best.venue.replace('地丰体育中心（总部）','总部') : '—'}</div>
+    </div>`;
+
+  const maxRev = Math.max(...allRows.map(v => v.revenue), 1);
+  document.getElementById('ff-v-bar').innerHTML = allRows.map(v => `<div class="ff-hbar-row">
+    <span class="nm">${v.venue.replace('地丰体育中心（总部）','总部')}</span>
+    <div class="track" style="height:26px;background:transparent;gap:3px">
+      <div style="height:12px"><div style="height:100%;width:${v.revenue / maxRev * 100}%;background:linear-gradient(90deg,#1677ff,#4096ff);border-radius:3px"></div></div>
+      <div style="height:8px"><div style="height:100%;width:${v.cost / maxRev * 100}%;background:#bfdbfe;border-radius:3px"></div></div>
+    </div>
+    <span class="val">¥${(v.revenue / 10000).toFixed(2)}万 / ¥${(v.cost / 10000).toFixed(2)}万</span>
+  </div>`).join('');
+
+  document.getElementById('ff-v-rows').innerHTML = rows.map(v => `<tr>
+    <td style="font-size:12px;color:var(--text-3)">${v.company}</td>
+    <td class="font-medium">${v.venue}${f.venue ? ' <span class="tag tag-blue">已筛选</span>' : ''}</td>
+    <td><span class="tag tag-cyan">${v.project}</span></td>
+    <td class="text-right font-medium">¥${money(v.revenue)}</td>
+    <td class="text-right">¥${money(v.cost)}</td>
+    <td class="text-right ${v.profit > 0 ? 'text-success' : 'text-error'}">¥${money(v.profit)}</td>
+    <td class="text-right">${v.customers}</td>
+    <td class="text-right" style="min-width:120px">
+      <div class="flex items-center gap-8">
+        <div class="progress flex-1"><div class="progress-bar" style="width:${v.usage}%;background:${v.usage >= 60 ? 'var(--success)' : 'var(--primary)'}"></div></div>
+        <span style="font-size:12px">${v.usage}%</span>
+      </div>
+    </td>
+    <td class="text-right">¥${Math.round(v.perCapita)}</td>
+    <td><button class="btn btn-ghost btn-sm" onclick="openVenueMetrics('${v.venue}')">下钻</button></td>
+  </tr>`).join('');
+}
+
+/* ========== 收入台账 ========== */
+let lastLedger = [];
+function renderLedger(){
+  const f = filters();
+  const list = LEDGER.filter(x => {
+    const d = x.time.slice(0, 10);
+    if(f.venue && x.venue !== f.venue) return false;
+    if(f.biz && x.biz !== f.biz) return false;
+    if(d < f.from || d > f.to) return false;
+    return true;
+  });
+  lastLedger = list;
+  const total = list.reduce((s, x) => s + x.amount, 0);
+  const checked = list.filter(x => x.check === '已核对').reduce((s, x) => s + x.amount, 0);
+  const diff = list.filter(x => x.check === '差异待处理').reduce((s, x) => s + x.amount, 0);
+  const invoiced = list.filter(x => x.invoice === '已开票').length;
+  const el = document.getElementById('ff-lg-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">业务金额合计 <span class="stat-icon blue"><i data-lucide="file-text"></i></span></div>
+      <div class="stat-value">¥${money(total)}</div>
+      <div class="stat-trend"><i data-lucide="list" style="width:14px;color:var(--text-3)"></i>${list.length} 笔业务单据</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">已核对金额 <span class="stat-icon green"><i data-lucide="check-check"></i></span></div>
+      <div class="stat-value">¥${money(checked)}</div>
+      <div class="stat-trend up"><i data-lucide="trending-up" style="width:14px"></i>核对率 ${(list.length ? list.filter(x => x.check === '已核对').length / list.length * 100 : 0).toFixed(0)}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">差异待处理金额 <span class="stat-icon red"><i data-lucide="alert-triangle"></i></span></div>
+      <div class="stat-value">¥${money(diff)}</div>
+      <div class="stat-trend down"><i data-lucide="clock" style="width:14px"></i>需在下期对账说明原因</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">开票覆盖 <span class="stat-icon purple"><i data-lucide="file-invoice"></i></span></div>
+      <div class="stat-value">${invoiced} / ${list.length}</div>
+      <div class="stat-trend"><i data-lucide="percent" style="width:14px;color:var(--text-3)"></i>已开票单据占比 ${(list.length ? invoiced / list.length * 100 : 0).toFixed(0)}%</div>
+    </div>`;
+
+  const cnt = document.getElementById('ff-lg-count');
+  if(cnt) cnt.textContent = `共 ${list.length} 条 · 合计 ¥${money(total)}`;
+  const invTag = {'已开票':'tag-green','未开票':'tag-gray','申请中':'tag-blue','开具失败':'tag-red','已红冲':'tag-purple'};
+  const chkTag = {'已核对':'tag-green','待核对':'tag-orange','差异待处理':'tag-red'};
+  document.getElementById('ff-lg-rows').innerHTML = list.length ? list.map((x, i) => `<tr style="cursor:pointer" onclick="openLedgerDrill(${i})">
+    <td style="font-size:12px;white-space:nowrap">${x.time}</td>
+    <td class="mono" style="font-size:12px">${x.no}</td>
+    <td>${x.customer}</td>
+    <td class="text-right font-medium">¥${money(x.amount)}</td>
+    <td>${x.pay}</td>
+    <td><span class="tag ${invTag[x.invoice] || 'tag-gray'}">${x.invoice}</span></td>
+    <td class="mono" style="font-size:12px">${x.finNo || '—'}</td>
+    <td><span class="tag ${chkTag[x.check] || 'tag-gray'}">${x.check}</span></td>
+    <td><button class="btn btn-ghost btn-sm">核对</button></td>
+  </tr>`).join('') : `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="file-search"></i></div><div class="empty-text">当前筛选条件下暂无台账记录</div></div></td></tr>`;
+  refreshIcons();
+}
+
+/* ========== 下钻弹窗 ========== */
+function openLedgerDrill(i){
+  closeActiveModal();
+  const x = lastLedger[i];
+  if(!x) return;
+  const finAmount = x.check === '差异待处理' ? x.amount - 70 : x.check === '已红冲' ? 0 : x.amount;
+  const diff = x.amount - finAmount;
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">收入台账核对 · ${x.no}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kv-item"><div class="k">发生时间</div><div class="v" style="font-size:13px">${x.time}</div></div>
+        <div class="kv-item"><div class="k">客户</div><div class="v" style="font-size:13px">${x.customer}</div></div>
+        <div class="kv-item"><div class="k">业务类型</div><div class="v" style="font-size:13px">${x.biz}</div></div>
+        <div class="kv-item"><div class="k">场馆</div><div class="v" style="font-size:13px">${x.venue}</div></div>
+        <div class="kv-item"><div class="k">支付方式</div><div class="v" style="font-size:13px">${x.pay}</div></div>
+        <div class="kv-item"><div class="k">开票状态</div><div class="v" style="font-size:13px">${x.invoice}</div></div>
+        <div class="kv-item"><div class="k">财务单据号</div><div class="v mono" style="font-size:12px">${x.finNo || '—'}</div></div>
+        <div class="kv-item"><div class="k">核对状态</div><div class="v" style="font-size:13px">${x.check}</div></div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>核对项</th><th>来源</th><th class="text-right">金额</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td class="font-medium">业务收款金额</td><td>业务台账</td><td class="text-right">¥${money(x.amount)}</td><td>支付方式：${x.pay}</td></tr>
+            <tr><td class="font-medium">财务确认金额</td><td>${x.finNo || '未生成凭证'}</td><td class="text-right">¥${money(finAmount)}</td><td>按实收/应收确认</td></tr>
+            <tr><td class="font-medium">核对差额</td><td>系统比对</td><td class="text-right ${diff !== 0 ? 'text-error' : 'text-success'}">¥${money(diff)}</td><td>${diff !== 0 ? '渠道手续费或红冲导致，需下期说明' : '账实一致'}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="text-muted mt-12" style="font-size:12px">${diff !== 0 ? '该笔存在差异，建议核对渠道结算单与红冲凭证后再确认收入。' : '该笔业务金额与财务凭证一致，可归档。'}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="exportReport('${x.no}核对底稿')">导出核对底稿</button>
+    </div>
+  </div>`);
+}
+
+function openVenueMetrics(venue){
+  closeActiveModal();
+  const v = MOCK_EXT.venueCompare.find(x => x.venue === venue);
+  if(!v) return;
+  const factor = (BIZ_TYPES.find(b => b.key === filters().biz)?.f || 1) * dateFactor();
+  const revenue = v.revenue * factor;
+  const chRows = CHANNELS.map(c => `<div class="list-row">
+    <span class="dot" style="background:${c.color}"></span>
+    <span class="flex-1">${c.name}</span>
+    <span class="text-muted" style="font-size:12px">${c.share}%</span>
+    <span class="font-medium">¥${money(revenue * c.share / 100)}</span>
+  </div>`).join('');
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">${venue} · 多场馆指标下钻</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kv-item"><div class="k">收入</div><div class="v font-bold">¥${money(revenue)}</div></div>
+        <div class="kv-item"><div class="k">成本</div><div class="v">¥${money(v.cost * factor)}</div></div>
+        <div class="kv-item"><div class="k">毛利率</div><div class="v">${((revenue - v.cost * factor) / revenue * 100).toFixed(1)}%</div></div>
+        <div class="kv-item"><div class="k">客流</div><div class="v">${v.customers} 人</div></div>
+        <div class="kv-item"><div class="k">使用率</div><div class="v">${v.usage}%</div></div>
+        <div class="kv-item"><div class="k">人均消费</div><div class="v">¥${Math.round(v.perCapita)}</div></div>
+        <div class="kv-item"><div class="k">订单数</div><div class="v">${v.orders} 单</div></div>
+        <div class="kv-item"><div class="k">公司主体</div><div class="v" style="font-size:12px">${v.venue.includes('总部') ? '地丰置业' : '地丰体育文化'}</div></div>
+      </div>
+      <div class="font-medium mb-12">渠道结构</div>
+      ${chRows}
+      <div class="divider"></div>
+      <div class="text-muted" style="font-size:12px">成本含人工、场地维护、能耗与分摊费用；毛利率为简化核算口径，最终以财务月结为准。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="exportReport('${venue}指标明细')">导出</button>
+    </div>
+  </div>`);
+}
+
+/* ========== 导出 ========== */
+function exportReport(scope){
+  const f = filters();
+  const vm = f.venue || '全部场馆';
+  const bm = BIZ_TYPES.find(b => b.key === f.biz)?.label || '全部业务';
+  toast(`已生成「${scope || '综合分析报表'}」导出任务：${vm} · ${f.from} ~ ${f.to} · ${bm}，请在下载中心查看`, 'success');
+}
+
+/* ========== 初始化 ========== */
+renderAll();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

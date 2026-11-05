@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>收款单与核销 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('finance-payment', '收款单与核销');
+
+/* ========== 工具 ========== */
+const PAGE_SIZE = 6;
+const TODAY = '2026-11-05';
+let activeTab = 'receipts';
+let pg = { receipts: 1, records: 1 };
+let seq = 0;
+let activeModal = null;
+let verifyCtx = null;
+let selectedARs = new Set();
+let selectedReceipts = new Set();
+
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function nowStr(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${TODAY} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function genNo(prefix){
+  seq++;
+  return prefix + TODAY.replace(/-/g, '') + String(seq).padStart(3, '0');
+}
+function genFinNo(){
+  seq++;
+  return 'NCC-SK-' + TODAY.replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+
+const R_STATUS_TAG = { '待推送':'tag-orange', '已推送':'tag-blue', '已核销':'tag-green' };
+const METHOD_TAG = { '在线支付':'tag-blue', '前台收款':'tag-orange', '个人转账':'tag-purple', '对公转账':'tag-cyan' };
+const V_STATUS_TAG = { '已核销':'tag-green', '已反核销':'tag-red' };
+
+/* ========== 数据 ========== */
+/* 应收单：基于 MOCK_EXT.receivables 扩展，补充可演示多对多核销的应收单 */
+let ARS = MOCK_EXT.receivables.map(r => ({
+  id: r.id,
+  venue: r.venue,
+  date: r.date,
+  amount: r.amount,
+  detail: r.detail,
+  baseStatus: r.status
+}));
+ARS.push(
+  { id:'AR20261025', venue:'网球中心', date:'2026-10-25', amount:4320.00, detail:14, baseStatus:'待推送' },
+  { id:'AR20261024', venue:'羽毛球馆', date:'2026-10-24', amount:2860.00, detail:9, baseStatus:'已推送' }
+);
+ARS.sort((a, b) => b.date.localeCompare(a.date));
+
+/* 收款单：基于 MOCK_EXT.financeReceipts 扩展；收款方式按渠道归一为在线支付/前台收款/个人转账/对公转账 */
+const METHOD_MAP = { '微信支付':'在线支付', '现金':'前台收款', '对公转账':'对公转账' };
+let RCPTS = MOCK_EXT.financeReceipts.map(r => ({
+  id: 'SKD' + r.id.slice(2),
+  amount: r.amount,
+  fee: r.fee,
+  net: r.net,
+  method: METHOD_MAP[r.channel] || '在线支付',
+  venue: r.venue,
+  merchant: r.merchant,
+  finNo: r.status === '待推送' ? '' : 'NCC-SK-' + r.id.slice(2),
+  baseStatus: r.status === '待推送' ? '待推送' : '已推送',
+  time: r.time
+}));
+RCPTS.push(
+  { id:'SKD20261029006', amount:9820.00, fee:0, net:9820.00, method:'对公转账', venue:'篮球公园', merchant:'鹭岛篮球俱乐部', finNo:'NCC-SK-20261029-006', baseStatus:'已推送', time:'2026-10-29 09:40' },
+  { id:'SKD20261027007', amount:3600.00, fee:0, net:3600.00, method:'对公转账', venue:'网球中心', merchant:'厦门市网球协会', finNo:'NCC-SK-20261027-007', baseStatus:'已推送', time:'2026-10-27 22:30' },
+  { id:'SKD20261027008', amount:80.00, fee:0, net:80.00, method:'个人转账', venue:'网球中心', merchant:'陈晓明', finNo:'NCC-SK-20261027-008', baseStatus:'已推送', time:'2026-10-27 21:10' },
+  { id:'SKD20261025009', amount:1720.00, fee:0, net:1720.00, method:'个人转账', venue:'网球中心', merchant:'林雅婷', finNo:'NCC-SK-20261025-009', baseStatus:'已推送', time:'2026-10-25 15:50' },
+  { id:'SKD20261020011', amount:520.00, fee:0, net:520.00, method:'对公转账', venue:'羽毛球馆', merchant:'厦门市羽毛球协会', finNo:'NCC-SK-20261020-011', baseStatus:'已推送', time:'2026-10-20 15:00' },
+  { id:'SKD20261105010', amount:60.00, fee:0.39, net:59.61, method:'在线支付', venue:'总部', merchant:'林雅婷', finNo:'', baseStatus:'待推送', time:'2026-11-05 10:26' }
+);
+
+/* 核销记录（allocations 记录每笔核销在应收/收款上的分摊，用于计算剩余可核销金额） */
+let VERIFICATIONS = [
+  {
+    id:'HX20261027001', arIds:['AR20261027'], receiptIds:['SKD20261027007','SKD20261027008'],
+    amount:3680.00, user:'王财务', time:'2026-10-27 23:10', status:'已核销',
+    allocations:[{ arId:'AR20261027', amount:3680.00 }],
+    receiptAllocs:[{ id:'SKD20261027007', amount:3600.00 },{ id:'SKD20261027008', amount:80.00 }]
+  },
+  {
+    id:'HX20261029002', arIds:['AR20261028'], receiptIds:['SKD20261029006'],
+    amount:9820.00, user:'王财务', time:'2026-10-29 10:20', status:'已核销',
+    allocations:[{ arId:'AR20261028', amount:9820.00 }],
+    receiptAllocs:[{ id:'SKD20261029006', amount:9820.00 }]
+  },
+  {
+    id:'HX20261025003', arIds:['AR20261025','AR20261024'], receiptIds:['SKD20261025009'],
+    amount:1720.00, user:'王财务', time:'2026-10-25 16:20', status:'已核销',
+    allocations:[{ arId:'AR20261025', amount:1200.00 },{ arId:'AR20261024', amount:520.00 }],
+    receiptAllocs:[{ id:'SKD20261025009', amount:1720.00 }]
+  },
+  {
+    id:'HX20261020004', arIds:['AR20261024'], receiptIds:['SKD20261020011'],
+    amount:520.00, user:'李财务', time:'2026-10-20 16:10', status:'已反核销',
+    allocations:[{ arId:'AR20261024', amount:520.00 }],
+    receiptAllocs:[{ id:'SKD20261020011', amount:520.00 }]
+  }
+];
+
+/* ========== 金额计算 ========== */
+function findAR(id){ return ARS.find(a => a.id === id); }
+function findRCPT(id){ return RCPTS.find(r => r.id === id); }
+
+function arUsed(id){
+  return VERIFICATIONS.filter(v => v.status === '已核销').reduce((s, v) => {
+    const item = (v.allocations || []).find(x => x.arId === id);
+    return s + (item ? item.amount : 0);
+  }, 0);
+}
+function receiptUsed(id){
+  return VERIFICATIONS.filter(v => v.status === '已核销').reduce((s, v) => {
+    const item = (v.receiptAllocs || []).find(x => x.id === id);
+    return s + (item ? item.amount : 0);
+  }, 0);
+}
+function arRemaining(ar){ return Math.max(0, +(ar.amount - arUsed(ar.id)).toFixed(2)); }
+function receiptRemaining(r){ return Math.max(0, +(r.amount - receiptUsed(r.id)).toFixed(2)); }
+function arStatus(ar){
+  if(ar.baseStatus === '已冲销') return '已冲销';
+  if(arRemaining(ar) <= 0.004) return '已核销';
+  return ar.baseStatus;
+}
+function receiptStatus(r){
+  if(receiptRemaining(r) <= 0.004) return '已核销';
+  return r.baseStatus;
+}
+function arSelectable(ar){
+  const st = arStatus(ar);
+  return arRemaining(ar) > 0.004 && (st === '待推送' || st === '已推送');
+}
+function receiptSelectable(r){
+  return receiptRemaining(r) > 0.004 && receiptStatus(r) !== '已核销';
+}
+
+/* ========== 页签 / 分页 ========== */
+function switchTab(name){
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => { p.style.display = p.dataset.panel === name ? 'block' : 'none'; });
+  refreshIcons();
+}
+
+function gotoReceiptPage(p){ pg.receipts = p; renderReceipts(); }
+function gotoRecordPage(p){ pg.records = p; renderRecords(); }
+
+function buildPager(key, total, elId, gotoFnName){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg[key] > pages) pg[key] = pages;
+  if(pg[key] < 1) pg[key] = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg[key] ? 'active' : ''}" onclick="${gotoFnName}(${i})">${i}</button>`;
+  }
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg[key]}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg[key] <= 1 ? 'disabled' : ''} onclick="${gotoFnName}(${pg[key] - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg[key] >= pages ? 'disabled' : ''} onclick="${gotoFnName}(${pg[key] + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 收款单列表 ========== */
+function filteredReceipts(){
+  const kw = (document.getElementById('rcp-kw')?.value || '').trim();
+  const method = document.getElementById('rcp-method')?.value || '';
+  const st = document.getElementById('rcp-status')?.value || '';
+  const venue = document.getElementById('rcp-venue')?.value || '';
+  return RCPTS.filter(r => {
+    if(method && r.method !== method) return false;
+    if(venue && r.venue !== venue) return false;
+    if(st && receiptStatus(r) !== st) return false;
+    if(kw && !(r.id.includes(kw) || r.merchant.includes(kw) || (r.finNo || '').includes(kw))) return false;
+    return true;
+  });
+}
+function resetReceipts(){ pg.receipts = 1; renderReceipts(); }
+
+function renderReceipts(){
+  const list = filteredReceipts();
+  const start = (pg.receipts - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(r => {
+    const st = receiptStatus(r);
+    const acts = [];
+    if(st === '待推送') acts.push(`<button class="btn btn-primary btn-sm" onclick="pushReceipt('${r.id}')">推送</button>`);
+    acts.push(`<button class="btn btn-default btn-sm" onclick="viewReceipt('${r.id}')">查看</button>`);
+    return `<tr>
+      <td class="mono" style="font-size:13px">${r.id}</td>
+      <td class="text-right font-medium">¥${money(r.amount)}</td>
+      <td class="text-right text-muted">¥${money(r.fee)}</td>
+      <td class="text-right">¥${money(r.net)}</td>
+      <td><span class="tag ${METHOD_TAG[r.method] || 'tag-gray'}">${r.method}</span></td>
+      <td>${r.venue}</td>
+      <td>${r.merchant}</td>
+      <td class="mono" style="font-size:12px">${r.finNo || '<span class="text-muted">—</span>'}</td>
+      <td><span class="tag ${R_STATUS_TAG[st] || 'tag-gray'}">${st}</span></td>
+      <td class="actions">${acts.join('')}</td>
+    </tr>`;
+  }).join('');
+  const tb = document.getElementById('rcp-rows');
+  if(tb){
+    tb.innerHTML = rows || `<tr><td colspan="10"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">当前筛选条件下暂无收款单</div></div></td></tr>`;
+  }
+  buildPager('receipts', list.length, 'rcp-pager', 'gotoReceiptPage');
+}
+
+function pushReceipt(id){
+  const r = findRCPT(id);
+  if(!r) return;
+  if(receiptStatus(r) !== '待推送'){ toast('该收款单无需推送或已核销', 'warning'); return; }
+  r.baseStatus = '已推送';
+  if(!r.finNo) r.finNo = genFinNo();
+  renderAll();
+  toast(`收款单 ${r.id} 已推送至用友NCC，财务单据号 ${r.finNo}`, 'success');
+}
+
+function viewReceipt(id){
+  const r = findRCPT(id);
+  if(!r) return;
+  closeActiveModal();
+  const used = VERIFICATIONS.filter(v => v.status === '已核销' && (v.receiptAllocs || []).some(x => x.id === id));
+  const usedRows = used.map(v => {
+    const alloc = (v.receiptAllocs || []).find(x => x.id === id);
+    return `<tr>
+      <td class="mono" style="font-size:12px">${v.id}</td>
+      <td class="mono" style="font-size:12px">${v.arIds.join('、')}</td>
+      <td class="text-right">¥${money(alloc ? alloc.amount : 0)}</td>
+      <td>${v.user}</td>
+      <td style="font-size:13px">${v.time}</td>
+      <td><span class="tag ${V_STATUS_TAG[v.status] || 'tag-gray'}">${v.status}</span></td>
+    </tr>`;
+  }).join('');
+  activeModal = openModal(`
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div class="modal-title">收款单详情 · ${r.id}</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="kv-grid mb-20">
+          <div class="kv-item"><span class="k">收款单号</span><span class="v mono">${r.id}</span></div>
+          <div class="kv-item"><span class="k">状态</span><span class="v"><span class="tag ${R_STATUS_TAG[receiptStatus(r)] || 'tag-gray'}">${receiptStatus(r)}</span></span></div>
+          <div class="kv-item"><span class="k">收款金额 / 手续费 / 实收</span><span class="v">¥${money(r.amount)} / ¥${money(r.fee)} / ¥${money(r.net)}</span></div>
+          <div class="kv-item"><span class="k">收款方式</span><span class="v">${r.method}</span></div>
+          <div class="kv-item"><span class="k">场馆 / 客商</span><span class="v">${r.venue} · ${r.merchant}</span></div>
+          <div class="kv-item"><span class="k">财务单据号</span><span class="v mono">${r.finNo || '未推送'}</span></div>
+          <div class="kv-item"><span class="k">可核销金额</span><span class="v">¥${money(receiptRemaining(r))}</span></div>
+          <div class="kv-item"><span class="k">收款时间</span><span class="v">${r.time}</span></div>
+        </div>
+        <div class="card-title mb-12" style="font-size:14px">核销情况</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>核销单号</th><th>应收单</th><th class="text-right">本次核销金额</th><th>核销人</th><th>时间</th><th>状态</th></tr></thead>
+            <tbody>${usedRows || `<tr><td colspan="6"><div class="empty" style="padding:24px"><div class="empty-text">该收款单暂未参与核销</div></div></td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    </div>`);
+}
+
+/* ========== 核销工作台 ========== */
+function toggleAR(id){
+  if(selectedARs.has(id)) selectedARs.delete(id); else selectedARs.add(id);
+  renderVerify();
+  renderSummary();
+}
+function toggleReceipt(id){
+  if(selectedReceipts.has(id)) selectedReceipts.delete(id); else selectedReceipts.add(id);
+  renderVerify();
+  renderSummary();
+}
+function clearSelection(){
+  selectedARs.clear();
+  selectedReceipts.clear();
+  renderVerify();
+  renderSummary();
+}
+
+function renderVerify(){
+  const ars = ARS.filter(arSelectable);
+  const rcpts = RCPTS.filter(receiptSelectable);
+  const arRows = ars.map(ar => {
+    const checked = selectedARs.has(ar.id) ? 'checked' : '';
+    return `<label class="list-row" style="cursor:pointer;padding:10px 0">
+      <input type="checkbox" ${checked} onchange="toggleAR('${ar.id}')" style="margin-top:2px" />
+      <div class="flex-1">
+        <div class="font-medium">${ar.id} <span class="text-muted" style="font-size:12px;font-weight:400">${ar.venue} · ${ar.date}</span></div>
+        <div class="text-muted" style="font-size:12px">应收 ¥${money(ar.amount)} · 已核销 ¥${money(arUsed(ar.id))}</div>
+      </div>
+      <span class="tag tag-orange">剩余 ¥${money(arRemaining(ar))}</span>
+    </label>`;
+  }).join('') || `<div class="empty" style="padding:30px 10px"><div class="empty-text">暂无可核销应收单</div></div>`;
+
+  const rcRows = rcpts.map(r => {
+    const checked = selectedReceipts.has(r.id) ? 'checked' : '';
+    return `<label class="list-row" style="cursor:pointer;padding:10px 0">
+      <input type="checkbox" ${checked} onchange="toggleReceipt('${r.id}')" style="margin-top:2px" />
+      <div class="flex-1">
+        <div class="font-medium">${r.id} <span class="text-muted" style="font-size:12px;font-weight:400">${r.venue} · ${r.method}</span></div>
+        <div class="text-muted" style="font-size:12px">收款 ¥${money(r.amount)} · 已核销 ¥${money(receiptUsed(r.id))}</div>
+      </div>
+      <span class="tag tag-blue">剩余 ¥${money(receiptRemaining(r))}</span>
+    </label>`;
+  }).join('') || `<div class="empty" style="padding:30px 10px"><div class="empty-text">暂无可核销收款单</div></div>`;
+
+  const panel = document.getElementById('verify-panel');
+  if(!panel) return;
+  panel.innerHTML = `
+    <div class="card" style="box-shadow:none;border:1px solid var(--border)">
+      <div class="card-header" style="padding:12px 16px">
+        <div class="card-title" style="font-size:14px">应收单（可核销）</div>
+        <span class="tag tag-orange">${ars.length} 张</span>
+      </div>
+      <div class="card-body" style="padding:4px 16px;max-height:380px;overflow-y:auto">${arRows}</div>
+    </div>
+    <div class="card" style="box-shadow:none;border:1px solid var(--border)">
+      <div class="card-header" style="padding:12px 16px">
+        <div class="card-title" style="font-size:14px">收款单（可核销）</div>
+        <span class="tag tag-blue">${rcpts.length} 张</span>
+      </div>
+      <div class="card-body" style="padding:4px 16px;max-height:380px;overflow-y:auto">${rcRows}</div>
+    </div>`;
+  refreshIcons();
+}
+
+function renderSummary(){
+  const arIds = Array.from(selectedARs);
+  const rcIds = Array.from(selectedReceipts);
+  const arTotal = arIds.reduce((s, id) => s + (findAR(id) ? arRemaining(findAR(id)) : 0), 0);
+  const rcTotal = rcIds.reduce((s, id) => s + (findRCPT(id) ? receiptRemaining(findRCPT(id)) : 0), 0);
+  const el = document.getElementById('verify-summary');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="flex gap-16 items-center" style="flex-wrap:wrap">
+      <div class="text-muted" style="font-size:13px">
+        已选 <b class="text-primary">${arIds.length}</b> 张应收（可核销 ¥${money(arTotal)}） ·
+        已选 <b class="text-primary">${rcIds.length}</b> 张收款（可核销 ¥${money(rcTotal)}）
+      </div>
+      <div class="spacer" style="flex:1"></div>
+      <button class="btn btn-default" onclick="clearSelection()">清空选择</button>
+      <button class="btn btn-primary" onclick="openVerifyModal()"><i data-lucide="link"></i>生成核销关系</button>
+    </div>`;
+  refreshIcons();
+}
+
+function openVerifyModal(){
+  if(!selectedARs.size || !selectedReceipts.size){
+    toast('请至少勾选一笔应收单和一笔收款单', 'warning');
+    return;
+  }
+  const arIds = Array.from(selectedARs);
+  const rcIds = Array.from(selectedReceipts);
+  const arTotal = arIds.reduce((s, id) => s + arRemaining(findAR(id)), 0);
+  const rcTotal = rcIds.reduce((s, id) => s + receiptRemaining(findRCPT(id)), 0);
+  const max = +Math.min(arTotal, rcTotal).toFixed(2);
+  if(max <= 0){ toast('所选单据可核销金额为 0', 'error'); return; }
+  verifyCtx = { arIds, rcIds, max };
+  closeActiveModal();
+  const arList = arIds.map(id => `<div class="list-row" style="padding:6px 0"><span class="mono flex-1">${id}</span><span class="text-muted">剩余 ¥${money(arRemaining(findAR(id)))}</span></div>`).join('');
+  const rcList = rcIds.map(id => `<div class="list-row" style="padding:6px 0"><span class="mono flex-1">${id}</span><span class="text-muted">剩余 ¥${money(receiptRemaining(findRCPT(id)))}</span></div>`).join('');
+  activeModal = openModal(`
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">生成核销关系</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">应收单（${arIds.length} 张）</label>
+            <div class="card" style="box-shadow:none"><div class="card-body" style="padding:4px 12px">${arList}</div></div>
+          </div>
+          <div class="form-item">
+            <label class="form-label">收款单（${rcIds.length} 张）</label>
+            <div class="card" style="box-shadow:none"><div class="card-body" style="padding:4px 12px">${rcList}</div></div>
+          </div>
+        </div>
+        <div class="form-item mt-16">
+          <label class="form-label">本次核销金额<span class="required">*</span></label>
+          <input class="form-input" type="number" id="verify-amount" value="${max}" min="0.01" max="${max}" step="0.01" />
+          <div class="form-hint">可核销上限 ¥${money(max)}。支持一笔应收对多笔收款、一笔收款跨多笔应收，系统按所选顺序自动分摊。</div>
+        </div>
+        <div class="form-hint">核销后应收单与收款单的剩余金额将自动扣减；已核销的收款单不可再次核销。</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="submitVerify()">确认核销</button>
+      </div>
+    </div>`);
+}
+
+function allocateAR(arIds, amount){
+  const out = [];
+  let left = amount;
+  for(const id of arIds){
+    if(left <= 0.004) break;
+    const ar = findAR(id);
+    if(!ar) continue;
+    const avail = arRemaining(ar);
+    const take = +Math.min(avail, left).toFixed(2);
+    if(take > 0){ out.push({ arId:id, amount:take }); left = +(left - take).toFixed(2); }
+  }
+  return out;
+}
+function allocateReceipt(rcIds, amount){
+  const out = [];
+  let left = amount;
+  for(const id of rcIds){
+    if(left <= 0.004) break;
+    const r = findRCPT(id);
+    if(!r) continue;
+    const avail = receiptRemaining(r);
+    const take = +Math.min(avail, left).toFixed(2);
+    if(take > 0){ out.push({ id:id, amount:take }); left = +(left - take).toFixed(2); }
+  }
+  return out;
+}
+
+function submitVerify(){
+  if(!verifyCtx){ toast('核销上下文已失效，请重新勾选', 'error'); return; }
+  const raw = document.getElementById('verify-amount')?.value;
+  const amount = Number(raw);
+  if(!raw || isNaN(amount) || amount <= 0){ toast('请输入有效的核销金额', 'error'); return; }
+  if(amount > verifyCtx.max + 0.001){ toast(`核销金额不能超过上限 ¥${money(verifyCtx.max)}`, 'error'); return; }
+
+  const { arIds, rcIds } = verifyCtx;
+  const arAllocs = allocateAR(arIds, amount);
+  const rcAllocs = allocateReceipt(rcIds, amount);
+  if(!arAllocs.length || !rcAllocs.length){ toast('核销金额分摊失败，请检查单据剩余金额', 'error'); return; }
+
+  const rec = {
+    id: genNo('HX'),
+    arIds: arAllocs.map(a => a.arId),
+    receiptIds: rcAllocs.map(a => a.id),
+    amount: +amount.toFixed(2),
+    user: '王财务',
+    time: nowStr(),
+    status: '已核销',
+    allocations: arAllocs,
+    receiptAllocs: rcAllocs
+  };
+  VERIFICATIONS.unshift(rec);
+  selectedARs.clear();
+  selectedReceipts.clear();
+  verifyCtx = null;
+  closeActiveModal();
+  renderAll();
+  toast(`核销成功，核销单 ${rec.id}，核销金额 ¥${money(rec.amount)}`, 'success');
+}
+
+/* ========== 核销记录 ========== */
+function filteredRecords(){
+  const kw = (document.getElementById('vr-kw')?.value || '').trim();
+  const st = document.getElementById('vr-status')?.value || '';
+  return VERIFICATIONS.filter(v => {
+    if(st && v.status !== st) return false;
+    if(kw && !(v.id.includes(kw) || v.arIds.join(',').includes(kw) || v.receiptIds.join(',').includes(kw))) return false;
+    return true;
+  });
+}
+function resetRecords(){ pg.records = 1; renderRecords(); }
+
+function renderRecords(){
+  const list = filteredRecords();
+  const start = (pg.records - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(v => `
+    <tr>
+      <td class="mono" style="font-size:13px">${v.id}</td>
+      <td class="mono" style="font-size:12px">${v.arIds.join('、')}</td>
+      <td class="mono" style="font-size:12px">${v.receiptIds.join('、')}</td>
+      <td class="text-right font-medium">¥${money(v.amount)}</td>
+      <td>${v.user}</td>
+      <td style="font-size:13px;white-space:nowrap">${v.time}</td>
+      <td><span class="tag ${V_STATUS_TAG[v.status] || 'tag-gray'}">${v.status}</span></td>
+      <td class="actions">${v.status === '已核销' ? `<button class="btn btn-ghost btn-sm" onclick="reverseVerification('${v.id}')">反核销</button>` : '<span class="text-muted">—</span>'}</td>
+    </tr>`).join('');
+  const tb = document.getElementById('vr-rows');
+  if(tb){
+    tb.innerHTML = rows || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="check-check"></i></div><div class="empty-text">暂无核销记录</div></div></td></tr>`;
+  }
+  buildPager('records', list.length, 'vr-pager', 'gotoRecordPage');
+}
+
+function reverseVerification(id){
+  const v = VERIFICATIONS.find(x => x.id === id);
+  if(!v) return;
+  if(v.status !== '已核销'){ toast('该核销记录已反核销', 'warning'); return; }
+  confirmDialog(`确定反核销核销单 <b>${v.id}</b>（金额 ¥${money(v.amount)}）吗？反核销后应收单与收款单将恢复可核销金额。`, function(){
+    v.status = '已反核销';
+    renderAll();
+    toast(`核销单 ${v.id} 已反核销，单据金额已恢复`, 'success');
+  });
+}
+
+/* ========== 全量渲染 ========== */
+function renderAll(){
+  renderReceipts();
+  renderVerify();
+  renderSummary();
+  renderRecords();
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">收款单与核销</div>
+        <div class="page-desc">收款单推送财务，并支持应收单与收款单多对多核销、反核销与核销记录追踪</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="toast('收款单与核销记录已导出为 Excel','success')"><i data-lucide="download"></i>导出</button>
+        <button class="btn btn-default" onclick="renderAll();toast('核销数据已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body" style="padding-bottom:0">
+      <div class="tabs" style="margin-bottom:0">
+        <div class="tab active" data-tab="receipts" onclick="switchTab('receipts')"><i data-lucide="receipt" style="width:16px;vertical-align:middle"></i> 收款单</div>
+        <div class="tab" data-tab="verify" onclick="switchTab('verify')"><i data-lucide="check-check" style="width:16px;vertical-align:middle"></i> 应收核销</div>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-panel="receipts" style="display:block">
+      <div class="card-body">
+        <div class="toolbar">
+          <input class="form-input" id="rcp-kw" placeholder="搜索收款单号 / 客商 / 财务单据号" oninput="resetReceipts()" style="min-width:240px" />
+          <select class="form-select" id="rcp-method" onchange="resetReceipts()">
+            <option value="">全部收款方式</option>
+            <option value="在线支付">在线支付</option>
+            <option value="前台收款">前台收款</option>
+            <option value="个人转账">个人转账</option>
+            <option value="对公转账">对公转账</option>
+          </select>
+          <select class="form-select" id="rcp-venue" onchange="resetReceipts()">
+            <option value="">全部场馆</option>
+            <option value="总部">总部</option>
+            <option value="篮球公园">篮球公园</option>
+            <option value="网球中心">网球中心</option>
+            <option value="羽毛球馆">羽毛球馆</option>
+          </select>
+          <select class="form-select" id="rcp-status" onchange="resetReceipts()">
+            <option value="">全部状态</option>
+            <option value="待推送">待推送</option>
+            <option value="已推送">已推送</option>
+            <option value="已核销">已核销</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>收款单号</th>
+                <th class="text-right">金额</th>
+                <th class="text-right">手续费</th>
+                <th class="text-right">实收</th>
+                <th>收款方式</th>
+                <th>场馆</th>
+                <th>客商</th>
+                <th>财务单据号</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="rcp-rows"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="rcp-pager"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-panel="verify" style="display:none">
+      <div class="card-body">
+        <div class="text-muted mb-16" style="font-size:13px">
+          勾选左侧应收单与右侧收款单，点击「生成核销关系」。支持一笔应收对多笔收款、一笔收款跨多笔应收。
+        </div>
+        <div id="verify-panel" style="display:grid;grid-template-columns:1fr 1fr;gap:16px"></div>
+        <div class="divider"></div>
+        <div id="verify-summary"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-header">
+      <div class="card-title">核销记录</div>
+      <div class="toolbar" style="margin:0">
+        <input class="form-input" id="vr-kw" placeholder="搜索核销单 / 应收单 / 收款单" oninput="resetRecords()" style="width:220px" />
+        <select class="form-select" id="vr-status" onchange="resetRecords()" style="width:auto;min-width:130px">
+          <option value="">全部状态</option>
+          <option value="已核销">已核销</option>
+          <option value="已反核销">已反核销</option>
+        </select>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>核销单号</th>
+              <th>应收单</th>
+              <th>收款单</th>
+              <th class="text-right">核销金额</th>
+              <th>核销人</th>
+              <th>时间</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="vr-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="vr-pager"></div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-header">
+      <div class="card-title">核销规则说明</div>
+      <span class="tag tag-gray">规则说明</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="wallet"></i></span>
+        <div>
+          <div class="font-medium">预充值收款来源</div>
+          <div class="text-muted" style="font-size:13px">预充值收款来源包含在线支付、前台收款、个人转账、对公转账；收款单按实际到账金额与手续费入账，核销时以实收金额参与分摊。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon green" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="git-merge"></i></span>
+        <div>
+          <div class="font-medium">多对多核销</div>
+          <div class="text-muted" style="font-size:13px">支持一笔应收对应多笔收款（分期/分笔到账），也支持一笔收款跨多笔应收（合并收款），核销金额按勾选单据顺序自动分摊。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="rotate-ccw"></i></span>
+        <div>
+          <div class="font-medium">反核销</div>
+          <div class="text-muted" style="font-size:13px">已核销记录支持反核销，反核销后应收单与收款单恢复可核销金额；反核销操作留存记录，便于审计追溯。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>角色与数据权限 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('role', '角色与数据权限');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var currentTab = 'roles';
+var rolePage = 1;
+var rolePageSize = 5;
+var roleKeyword = '';
+var nextRoleNo = 6;
+var MATRIX_OVERRIDE = {};
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function nowStr(){
+  var d = new Date();
+  function p(n){ return n < 10 ? '0' + n : String(n); }
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function pushLog(action, object, detail){
+  MOCK.systemLog.unshift({
+    id:'L' + (9000 + MOCK.systemLog.length), time:nowStr(), user:'admin', terminal:'PC-00',
+    action:action, object:object, detail:detail
+  });
+}
+
+/* ========== 数据 ========== */
+var ROLES = MOCK.roles.map(function(r){
+  return {
+    id:r.id, name:r.name, menus:r.menus.slice(), dataScope:r.dataScope,
+    venues:[], users:r.users, actions:[]
+  };
+});
+ROLES[3].dataScope = '指定场馆';
+ROLES[3].venues = ['总部','网球中心'];
+ROLES[0].actions = ['代客下单','核销'];
+ROLES[1].actions = ['库存调整','盘点提交'];
+ROLES[2].actions = ['审核退款','应收推送','对账确认'];
+
+var VENUES = ['总部','篮球公园','网球中心','羽毛球馆'];
+
+var MENU_GROUPS = [
+  {name:'工作台', items:[
+    {name:'工作台', buttons:[]}
+  ]},
+  {name:'场馆运营', items:[
+    {name:'场馆及场地管理', buttons:['新增场地','编辑场地','停用场地']},
+    {name:'场地管理', buttons:['新增场地','编辑场地']},
+    {name:'场地排期与锁定', buttons:['锁定时段','释放时段']},
+    {name:'排期', buttons:['批量排期']},
+    {name:'预约下单', buttons:['代客下单','改价','取消订单']},
+    {name:'订单管理', buttons:['查看','导出']},
+    {name:'取消与退款', buttons:['审核退款','原路退回']},
+    {name:'预约核销', buttons:['核销','撤销核销']},
+    {name:'核销', buttons:['核销','撤销核销']}
+  ]},
+  {name:'会员客户', items:[
+    {name:'客户档案', buttons:['新增客户','编辑','导出']},
+    {name:'会员卡与权益', buttons:['开卡','退卡']},
+    {name:'储值/积分/优惠', buttons:['充值','调整积分']},
+    {name:'次卡管理', buttons:['发卡','延期']},
+    {name:'客户消费记录', buttons:['导出']}
+  ]},
+  {name:'赛事活动', items:[
+    {name:'赛事档案与场地', buttons:['新增赛事','编辑']},
+    {name:'赛事', buttons:['新增赛事']},
+    {name:'赛事账单与收款', buttons:['收款登记']},
+    {name:'线上赛事报名', buttons:['发布报名']}
+  ]},
+  {name:'商品租赁', items:[
+    {name:'商品销售', buttons:['销售开单','退货']},
+    {name:'商品', buttons:['新增商品','调价']},
+    {name:'物品租赁', buttons:['租出','归还']},
+    {name:'押金/归还/赔偿', buttons:['收押金','退押金','赔偿登记']}
+  ]},
+  {name:'仓储进销存', items:[
+    {name:'商品档案', buttons:['新增商品','编辑商品']},
+    {name:'仓库管理', buttons:['新增仓库','停用仓库']},
+    {name:'采购管理', buttons:['新建采购','审核采购']},
+    {name:'销售/调拨/盘点', buttons:['调拨','盘点']},
+    {name:'盘点管理', buttons:['发起盘点','审核盘点']}
+  ]},
+  {name:'业财一体化', items:[
+    {name:'业财一体化', buttons:['应收推送','收款登记']},
+    {name:'收款流水', buttons:['导出']},
+    {name:'应收单管理', buttons:['生成应收','推送财务']},
+    {name:'收款单与核销', buttons:['核销','反核销']},
+    {name:'付款单管理', buttons:['新建付款','审核付款']},
+    {name:'收入确认', buttons:['确认收入']},
+    {name:'财务对账', buttons:['对账','导出对账单']},
+    {name:'对账', buttons:['对账']}
+  ]},
+  {name:'发票通知', items:[
+    {name:'电子发票', buttons:['开票','红冲']},
+    {name:'短信通道与模板', buttons:['编辑模板','发送短信']}
+  ]},
+  {name:'渠道接口', items:[
+    {name:'商品套餐同步', buttons:['同步']},
+    {name:'订单接入与核销', buttons:['核销','退款']}
+  ]},
+  {name:'经营分析', items:[
+    {name:'经营分析', buttons:['查看','导出']},
+    {name:'报表', buttons:['导出报表']}
+  ]},
+  {name:'系统管理', items:[
+    {name:'组织架构', buttons:['新增节点','停用节点']},
+    {name:'角色与数据权限', buttons:['新增角色','编辑权限']},
+    {name:'系统基础配置', buttons:['编辑参数']},
+    {name:'操作日志审计', buttons:['查看日志','导出日志']},
+    {name:'隐私数据安全管控', buttons:['配置脱敏','解密查看']},
+    {name:'数据备份与灾备', buttons:['立即备份','恢复备份']}
+  ]}
+];
+
+var MATRIX_EMPS = MOCK.employees.map(function(e){ return {id:e.id, name:e.name, venue:e.venue, role:e.role}; });
+MATRIX_EMPS.push({id:'M001', name:'刘洋', venue:'总部', role:'场馆负责人'});
+MATRIX_EMPS.push({id:'M002', name:'陈晨', venue:'网球中心', role:'前台'});
+MATRIX_EMPS.push({id:'M003', name:'黄静', venue:'全部', role:'财务主管'});
+MATRIX_EMPS.push({id:'M004', name:'admin', venue:'全部', role:'系统管理员'});
+
+/* ========== Tab ========== */
+function switchTab(name){
+  currentTab = name;
+  ['roles','matrix'].forEach(function(k){
+    var btn = document.getElementById('tabbtn-' + k);
+    var panel = document.getElementById('tab-' + k);
+    if(!btn || !panel) return;
+    btn.className = 'tab' + (k === name ? ' active' : '');
+    panel.style.display = k === name ? '' : 'none';
+  });
+  if(name === 'roles') renderRoleList();
+  else renderMatrix();
+}
+
+/* ========== 角色列表 ========== */
+function scopeTag(role){
+  if(role.dataScope === '全部场馆') return '<span class="tag tag-purple">全部场馆</span>';
+  if(role.dataScope === '指定场馆') return '<span class="tag tag-orange">指定场馆</span>';
+  return '<span class="tag tag-blue">本场馆</span>';
+}
+function menuSummary(role){
+  if(role.menus.indexOf('全部') >= 0) return '<span class="tag tag-red">全部菜单</span>';
+  return '菜单 ' + role.menus.length + ' 项' + (role.actions.length ? ' / 按钮 ' + role.actions.length + ' 项' : '');
+}
+function roleRows(){
+  var kw = roleKeyword.trim().toLowerCase();
+  var list = ROLES.filter(function(r){
+    return !kw || (r.name + ' ' + r.dataScope).toLowerCase().indexOf(kw) >= 0;
+  });
+  var pages = Math.max(1, Math.ceil(list.length / rolePageSize));
+  if(rolePage > pages) rolePage = pages;
+  var start = (rolePage - 1) * rolePageSize;
+  var rows = list.slice(start, start + rolePageSize).map(function(r){
+    var scopeNote = r.dataScope === '指定场馆' && r.venues.length
+      ? '<div class="text-muted" style="font-size:12px;margin-top:2px">' + esc(r.venues.join('、')) + '</div>' : '';
+    return '<tr>' +
+      '<td><div class="font-medium">' + esc(r.name) + '</div><div class="mono text-muted" style="font-size:12px">' + esc(r.id) + '</div></td>' +
+      '<td>' + menuSummary(r) + '</td>' +
+      '<td>' + scopeTag(r) + scopeNote + '</td>' +
+      '<td>' + r.users + ' 人</td>' +
+      '<td class="actions" style="flex-wrap:wrap">' +
+        '<button class="btn btn-default btn-sm" onclick="openRoleForm(\'' + r.id + '\')">编辑权限</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="copyRole(\'' + r.id + '\')">复制</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="deleteRole(\'' + r.id + '\')">删除</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+  var body = rows || '<tr><td colspan="5"><div class="empty"><div class="empty-icon">🔐</div><div class="empty-text">未找到匹配的角色</div></div></td></tr>';
+  var pageBtns = '';
+  for(var i = 1; i <= pages; i++){
+    pageBtns += '<button class="page-btn ' + (i === rolePage ? 'active' : '') + '" onclick="goRolePage(' + i + ')">' + i + '</button>';
+  }
+  return '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th>角色名称</th><th>功能权限摘要</th><th>数据范围</th><th>关联员工数</th><th>操作</th>' +
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    '<div class="pagination"><div class="pagination-info">共 ' + list.length + ' 个角色，当前第 ' + rolePage + ' / ' + pages + ' 页</div>' +
+      '<div class="pagination-pages">' +
+        '<button class="page-btn" ' + (rolePage === 1 ? 'disabled' : '') + ' onclick="goRolePage(' + (rolePage - 1) + ')">上一页</button>' +
+        pageBtns +
+        '<button class="page-btn" ' + (rolePage === pages ? 'disabled' : '') + ' onclick="goRolePage(' + (rolePage + 1) + ')">下一页</button>' +
+      '</div></div>';
+}
+function renderRoleList(){
+  var el = document.getElementById('role-list');
+  if(el) el.innerHTML = roleRows();
+}
+function goRolePage(p){
+  var pages = Math.max(1, Math.ceil(ROLES.length / rolePageSize));
+  if(p < 1 || p > pages) return;
+  rolePage = p;
+  renderRoleList();
+}
+function onRoleSearch(v){
+  roleKeyword = v;
+  rolePage = 1;
+  renderRoleList();
+}
+
+/* ========== 角色表单 ========== */
+function roleMenuChecks(role){
+  var isAll = role.menus.indexOf('全部') >= 0;
+  var html = '';
+  MENU_GROUPS.forEach(function(g, gi){
+    var groupItems = g.items.map(function(item){
+      var checked = isAll || role.menus.indexOf(item.name) >= 0;
+      var btnHtml = item.buttons.map(function(b){
+        var bCheck = isAll || role.actions.indexOf(item.name + '|' + b) >= 0;
+        return '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:12px;color:var(--text-3);cursor:pointer">' +
+          '<input type="checkbox" name="role-btn" value="' + esc(item.name + '|' + b) + '"' + (bCheck ? ' checked' : '') + ' />' + esc(b) + '</label>';
+      }).join('');
+      return '<div style="padding:7px 0;border-bottom:1px dashed var(--border-light)">' +
+        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">' +
+          '<input type="checkbox" name="role-menu" value="' + esc(item.name) + '"' + (checked ? ' checked' : '') + ' />' +
+          '<span class="font-medium">' + esc(item.name) + '</span>' +
+        '</label>' +
+        (btnHtml ? '<div style="padding:6px 0 0 22px">' + btnHtml + '</div>' : '') +
+      '</div>';
+    }).join('');
+    html += '<div class="card mb-12" id="grp-' + gi + '">' +
+      '<div class="card-header" style="padding:10px 14px">' +
+        '<div class="card-title" style="font-size:13px">' + esc(g.name) + '</div>' +
+        '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3);cursor:pointer">' +
+          '<input type="checkbox" onchange="toggleGroup(this,' + gi + ')" /> 全选本组</label>' +
+      '</div>' +
+      '<div class="card-body" style="padding:4px 14px">' + groupItems + '</div>' +
+    '</div>';
+  });
+  return html;
+}
+function toggleGroup(cb, gi){
+  var box = document.getElementById('grp-' + gi);
+  if(!box) return;
+  Array.prototype.forEach.call(box.querySelectorAll('input[name="role-menu"]'), function(x){ x.checked = cb.checked; });
+}
+function onScopeChange(){
+  var scope = document.querySelector('input[name="role-scope"]:checked');
+  var box = document.getElementById('role-venue-box');
+  if(box) box.style.display = (scope && scope.value === '指定场馆') ? '' : 'none';
+}
+function openRoleForm(id){
+  var role = ROLES.filter(function(r){ return r.id === id; })[0];
+  var data = role || {id:'', name:'', menus:[], dataScope:'本场馆', venues:[], actions:[]};
+  var isAll = data.menus.indexOf('全部') >= 0;
+  var scopeRadios = ['本场馆','指定场馆','全部场馆'].map(function(s){
+    return '<label style="display:inline-flex;align-items:center;gap:6px;margin-right:20px;font-size:13px;color:var(--text-2);cursor:pointer">' +
+      '<input type="radio" name="role-scope" value="' + s + '"' + (data.dataScope === s ? ' checked' : '') + ' onchange="onScopeChange()" />' + s + '</label>';
+  }).join('');
+  var venueChecks = VENUES.map(function(v){
+    return '<label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:13px;color:var(--text-2);cursor:pointer">' +
+      '<input type="checkbox" name="role-venue" value="' + v + '"' + (data.venues.indexOf(v) >= 0 ? ' checked' : '') + ' />' + v + '</label>';
+  }).join('');
+  activeModal = openModal('<div class="modal modal-xl">' +
+    '<div class="modal-header"><div class="modal-title">' + (role ? '编辑角色权限' : '新增角色') + '</div>' +
+      '<div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">角色名称 <span class="required">*</span></label>' +
+          '<input class="form-input" id="role-name" value="' + esc(data.name) + '" placeholder="如：场馆负责人" /></div>' +
+        '<div class="form-item"></div>' +
+      '</div>' +
+      '<div class="card mb-16" style="background:var(--primary-bg);border-color:var(--primary)">' +
+        '<div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2)">' +
+          '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600">' +
+            '<input type="checkbox" id="role-menu-all"' + (isAll ? ' checked' : '') + ' onchange="toggleAllMenus(this)" /> 全部菜单（超级权限，包含后续新增菜单）' +
+          '</label>' +
+        '</div>' +
+      '</div>' +
+      '<label class="form-label">功能菜单与按钮权限 <span class="required">*</span></label>' +
+      '<div id="role-menu-box" style="max-height:360px;overflow-y:auto;padding-right:6px">' + roleMenuChecks(data) + '</div>' +
+      '<div class="divider"></div>' +
+      '<label class="form-label">数据权限范围 <span class="required">*</span></label>' +
+      '<div style="margin-bottom:10px">' + scopeRadios + '</div>' +
+      '<div id="role-venue-box" style="margin-bottom:12px;' + (data.dataScope === '指定场馆' ? '' : 'display:none') + '">' +
+        '<label class="form-label" style="font-size:12px">可访问场馆（可多选）</label>' + venueChecks +
+      '</div>' +
+      '<div class="form-hint">本场馆角色仅能查看所属场馆数据；指定场馆用于跨场馆管理岗；全部场馆仅授予财务汇总、系统管理员等岗位。</div>' +
+      '<div class="card mt-16" style="background:var(--warning-bg);border-color:var(--warning)">' +
+        '<div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2);line-height:1.8">' +
+          '· 一个员工可关联多个角色，最终权限取各角色并集；<br>' +
+          '· 不设按人、按次的临时授权，临时需求通过新建角色或调整角色数据范围实现；<br>' +
+          '· 权限变更（菜单、按钮、数据范围）均写入操作日志，可按操作人与时间追溯。' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="saveRoleForm(\'' + (role ? role.id : '') + '\')">保存</button></div>' +
+  '</div>');
+  refreshIcons();
+}
+function toggleAllMenus(cb){
+  var box = document.getElementById('role-menu-box');
+  if(!box) return;
+  Array.prototype.forEach.call(box.querySelectorAll('input[name="role-menu"], input[name="role-btn"]'), function(x){ x.checked = cb.checked; });
+}
+function saveRoleForm(id){
+  var name = trimVal('role-name');
+  if(!name){ toast('请填写角色名称', 'error'); return; }
+  var allChecked = document.getElementById('role-menu-all').checked;
+  var menus = Array.prototype.slice.call(document.querySelectorAll('input[name="role-menu"]:checked')).map(function(x){ return x.value; });
+  var actions = Array.prototype.slice.call(document.querySelectorAll('input[name="role-btn"]:checked')).map(function(x){ return x.value; });
+  if(!allChecked && !menus.length){ toast('请至少勾选一个功能菜单', 'error'); return; }
+  var scopeEl = document.querySelector('input[name="role-scope"]:checked');
+  var scope = scopeEl ? scopeEl.value : '本场馆';
+  var venues = Array.prototype.slice.call(document.querySelectorAll('input[name="role-venue"]:checked')).map(function(x){ return x.value; });
+  if(scope === '指定场馆' && !venues.length){ toast('指定场馆授权时请至少选择一个场馆', 'error'); return; }
+  var payload = {
+    name:name,
+    menus: allChecked ? ['全部'] : menus,
+    actions: actions,
+    dataScope: scope,
+    venues: scope === '指定场馆' ? venues : []
+  };
+  if(id){
+    var role = ROLES.filter(function(r){ return r.id === id; })[0];
+    if(role) Object.assign(role, payload);
+    pushLog('权限变更', '角色:' + payload.name, '调整菜单 ' + (allChecked ? '全部' : payload.menus.length + ' 项') + '，数据范围：' + scope);
+    toast('角色「' + name + '」权限已更新，变更已记录日志', 'success');
+  }else{
+    ROLES.push(Object.assign({id:'RL00' + (nextRoleNo++), users:0}, payload));
+    rolePage = 1;
+    pushLog('权限变更', '角色:' + name, '新增角色，数据范围：' + scope);
+    toast('角色「' + name + '」已创建', 'success');
+  }
+  closeActiveModal();
+  renderRoleList();
+  renderMatrix();
+}
+function copyRole(id){
+  var r = ROLES.filter(function(x){ return x.id === id; })[0];
+  if(!r) return;
+  ROLES.push({
+    id:'RL00' + (nextRoleNo++), name:r.name + '（副本）', menus:r.menus.slice(),
+    actions:r.actions.slice(), dataScope:r.dataScope, venues:r.venues.slice(), users:0
+  });
+  pushLog('权限变更', '角色:' + r.name, '复制生成角色副本');
+  renderRoleList();
+  renderMatrix();
+  toast('已复制角色「' + r.name + '」，副本默认无关联员工', 'success');
+}
+function deleteRole(id){
+  var r = ROLES.filter(function(x){ return x.id === id; })[0];
+  if(!r) return;
+  if(r.id === 'RL005'){ toast('系统管理员为内置角色，不可删除', 'warning'); return; }
+  if(r.users > 0){ toast('该角色仍关联 ' + r.users + ' 名员工，请先调整员工角色后再删除', 'warning'); return; }
+  confirmDialog('确认删除角色「' + esc(r.name) + '」？删除后不可恢复，历史权限变更日志仍保留。', function(){
+    ROLES.splice(ROLES.indexOf(r), 1);
+    pushLog('权限变更', '角色:' + r.name, '删除角色');
+    renderRoleList();
+    renderMatrix();
+    toast('角色「' + r.name + '」已删除', 'warning');
+  });
+}
+
+/* ========== 数据权限矩阵 ========== */
+function roleIdFor(emp){
+  if(emp.role.indexOf('系统管理员') >= 0) return 'RL005';
+  if(emp.role.indexOf('场馆负责人') >= 0) return 'RL004';
+  if(emp.role.indexOf('财务') >= 0) return 'RL003';
+  if(emp.role.indexOf('库管') >= 0) return 'RL002';
+  return 'RL001';
+}
+function baseVisible(emp, venue){
+  var role = ROLES.filter(function(r){ return r.id === roleIdFor(emp); })[0];
+  if(!role) return false;
+  if(role.dataScope === '全部场馆') return true;
+  if(emp.venue === '全部') return true;
+  if(role.dataScope === '本场馆') return emp.venue === venue;
+  if(role.dataScope === '指定场馆') return role.venues.indexOf(venue) >= 0;
+  return false;
+}
+function matrixVisible(emp, venue){
+  var key = emp.id + '|' + venue;
+  if(MATRIX_OVERRIDE[key] !== undefined) return MATRIX_OVERRIDE[key];
+  return baseVisible(emp, venue);
+}
+function toggleMatrix(empId, venue){
+  var emp = MATRIX_EMPS.filter(function(e){ return e.id === empId; })[0];
+  if(!emp) return;
+  if(roleIdFor(emp) === 'RL005'){ toast('系统管理员默认拥有全部场馆权限，不支持单独调整', 'info'); return; }
+  var key = empId + '|' + venue;
+  var current = matrixVisible(emp, venue);
+  MATRIX_OVERRIDE[key] = !current;
+  pushLog('权限变更', '员工:' + emp.name, (current ? '收回' : '授予') + '「' + venue + '」数据访问权限');
+  renderMatrix();
+  toast('已' + (current ? '收回' : '授予') + '「' + emp.name + '」对「' + venue + '」的数据权限，并记录权限变更日志', current ? 'warning' : 'success');
+}
+function renderMatrix(){
+  var el = document.getElementById('matrix');
+  if(!el) return;
+  var head = '<tr><th>员工</th><th>当前角色数据范围</th>' + VENUES.map(function(v){ return '<th class="text-center">' + v + '</th>'; }).join('') + '</tr>';
+  var body = MATRIX_EMPS.map(function(emp){
+    var role = ROLES.filter(function(r){ return r.id === roleIdFor(emp); })[0];
+    var scope = role ? role.dataScope : '-';
+    var cells = VENUES.map(function(v){
+      var on = matrixVisible(emp, v);
+      return '<td class="text-center"><span onclick="toggleMatrix(\'' + emp.id + '\',\'' + v + '\')" style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:6px;cursor:pointer;font-weight:600;' +
+        (on ? 'color:var(--success);background:var(--success-bg)' : 'color:var(--text-4);background:var(--border-light)') + '">' + (on ? '✓' : '—') + '</span></td>';
+    }).join('');
+    return '<tr><td><div class="font-medium">' + esc(emp.name) + '</div><div class="text-muted" style="font-size:12px">' + esc(emp.venue) + '</div></td>' +
+      '<td><span class="tag ' + (scope === '全部场馆' ? 'tag-purple' : scope === '指定场馆' ? 'tag-orange' : 'tag-blue') + '">' + scope + '</span></td>' +
+      cells + '</tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table class="data-table"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>' +
+    '<div class="form-hint" style="margin-top:10px">✓ 表示可见，— 表示不可见。点击 ✓/— 可快速授予或收回单个场馆的数据权限，调整结果同步记录到权限变更日志。</div>';
+}
+
+/* ========== 页面渲染 ========== */
+document.getElementById('page-content').innerHTML =
+  '<div class="page-header"><div class="page-title">角色与数据权限</div>' +
+    '<div class="page-desc">通过角色统一管理功能菜单、按钮权限与数据可见范围，员工按岗位关联角色，多角色权限取并集。</div></div>' +
+
+  '<div class="tabs">' +
+    '<div class="tab active" id="tabbtn-roles" onclick="switchTab(\'roles\')">角色配置</div>' +
+    '<div class="tab" id="tabbtn-matrix" onclick="switchTab(\'matrix\')">数据权限矩阵</div>' +
+  '</div>' +
+
+  '<div id="tab-roles">' +
+    '<div class="card mb-16" style="border-color:var(--primary);background:var(--primary-bg)">' +
+      '<div class="card-body" style="padding:12px 20px;font-size:13px;color:var(--text-2);line-height:1.9">' +
+        '· 一个员工可关联多个角色，最终功能权限与数据范围取所有角色的并集；<br>' +
+        '· 不设按人、按次的临时授权：临时跨场馆需求通过调整角色数据范围或新建角色实现；<br>' +
+        '· 菜单、按钮、数据范围的任何变更均记录操作日志，可按操作人、对象、时间检索。' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">角色列表</div>' +
+        '<div class="flex items-center gap-8">' +
+          '<input class="form-input" placeholder="搜索角色名称" style="width:180px" oninput="onRoleSearch(this.value)" />' +
+          '<button class="btn btn-primary btn-sm" onclick="openRoleForm()"><i data-lucide="plus" style="width:14px"></i>新增角色</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card-body"><div id="role-list"></div></div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div id="tab-matrix" style="display:none">' +
+    '<div class="card mb-16">' +
+      '<div class="card-header"><div class="card-title">数据可见范围说明</div><span class="tag tag-blue">员工 × 场馆</span></div>' +
+      '<div class="card-body" style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+        '· 各场馆前台、库管等操作员默认只能查看本场馆数据，跨场馆查询需由管理岗角色授权；<br>' +
+        '· 财务汇总、系统管理员等管理岗可按「全部场馆」或「指定场馆」授权，用于跨场馆对账与集中管理；<br>' +
+        '· 角色数据范围与个人授权叠加时取并集，不产生拒绝规则；员工离职或调岗后按新角色即时生效。' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">员工 × 场馆可见范围矩阵</div>' +
+        '<span class="text-muted" style="font-size:13px">点击单元格可快速调整</span></div>' +
+      '<div class="card-body"><div id="matrix"></div></div>' +
+    '</div>' +
+  '</div>';
+
+renderRoleList();
+renderMatrix();
+refreshIcons();
+</script>
+</body>
+</html>

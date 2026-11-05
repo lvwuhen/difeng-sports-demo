@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>储值/积分/优惠 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('stored-value', '储值/积分/优惠');
+
+// 储值流水
+const balanceFlows = [
+  {id:'SV001', time:'2026-10-30 14:32', customer:'陈晓明', cardNo:'VIP20240315001', type:'充值', principal:1000, gift:100, beforeP:2350, afterP:3350, beforeG:180, afterG:280, orderNo:'RCH20261030001', operator:'张敏'},
+  {id:'SV002', time:'2026-10-29 19:15', customer:'陈晓明', cardNo:'VIP20240315001', type:'消费', principal:-240, gift:0, beforeP:2590, afterP:2350, beforeG:180, afterG:180, orderNo:'ORD20261030001', operator:'系统'},
+  {id:'SV003', time:'2026-10-28 10:08', customer:'林雅婷', cardNo:'VIP20240520002', type:'充值', principal:500, gift:25, beforeP:860, afterP:1360, beforeG:0, afterG:25, orderNo:'RCH20261028003', operator:'张敏'},
+  {id:'SV004', time:'2026-10-27 16:20', customer:'厦门建工集团', cardNo:'VIP20231108003', type:'余额转入', principal:2000, gift:0, beforeP:10500, afterP:12500, beforeG:1200, afterG:1200, orderNo:'TR20261027001', operator:'王财务'},
+  {id:'SV005', time:'2026-10-26 11:45', customer:'陈晓明', cardNo:'VIP20240315001', type:'退款', principal:80, gift:0, beforeP:2510, afterP:2590, beforeG:180, afterG:180, orderNo:'ORD20261027006', operator:'王财务'},
+  {id:'SV006', time:'2026-10-25 09:30', customer:'林雅婷', cardNo:'VIP20240520002', type:'消费', principal:-60, gift:0, beforeP:920, afterP:860, beforeG:0, afterG:0, orderNo:'ORD20261030002', operator:'系统'},
+];
+const typeTagMap = { '充值':'tag-green', '消费':'tag-blue', '退款':'tag-orange', '余额转入':'tag-purple', '余额转出':'tag-red', '积分兑换':'tag-cyan' };
+
+// 积分流水
+const pointFlows = [
+  {id:'PT001', time:'2026-10-30 14:32', customer:'陈晓明', type:'消费获取', points:+10, balance:1280, orderNo:'RCH20261030001', operator:'系统', reason:''},
+  {id:'PT002', time:'2026-10-29 19:15', customer:'陈晓明', type:'消费获取', points:+24, balance:1270, orderNo:'ORD20261030001', operator:'系统', reason:''},
+  {id:'PT003', time:'2026-10-28 15:00', customer:'陈晓明', type:'手工调整', points:-100, balance:1246, orderNo:'-', operator:'李运营', reason:'积分错误冲正'},
+  {id:'PT004', time:'2026-10-27 10:20', customer:'林雅婷', type:'消费获取', points:+6, balance:560, orderNo:'ORD20261030002', operator:'系统', reason:''},
+];
+
+// 优惠券
+const coupons = [
+  {id:'CP001', name:'满100减20券', type:'面额券', value:20, minAmount:100, scope:'全场', validFrom:'2026-10-01', validTo:'2026-12-31', total:500, used:128, method:'活动自动', status:'启用', refundRule:'未使用可退'},
+  {id:'CP002', name:'8.5折场地券', type:'折扣券', value:8.5, minAmount:0, scope:'场地预约', validFrom:'2026-11-01', validTo:'2026-11-30', total:200, used:45, method:'手工发放', status:'启用', refundRule:'未使用可退'},
+  {id:'CP003', name:'满200减50券', type:'面额券', value:50, minAmount:200, scope:'商品+场地', validFrom:'2026-09-01', validTo:'2026-10-31', total:300, used:298, method:'活动自动', status:'已过期', refundRule:'已过期不退'},
+  {id:'CP004', name:'7折羽毛球券', type:'折扣券', value:7, minAmount:0, scope:'羽毛球场地', validFrom:'2026-11-15', validTo:'2026-12-15', total:100, used:0, method:'手工发放', status:'未开始', refundRule:'未使用可退'},
+];
+const couponTagMap = { '启用':'tag-green', '已过期':'tag-gray', '未开始':'tag-orange' };
+
+// 积分规则配置
+const pointConfig = {
+  earnRate: 1, // 消费1元=1积分
+  earnScene: ['场地预约','商品购买','物品租赁'],
+  useRate: 100, // 100积分=1元
+  maxDeduct: 30, // 单笔抵扣上限百分比
+  validDays: 365,
+};
+
+let curFlowPage = 1, flowPageSize = 10;
+
+function renderFlows(){
+  const tp = document.getElementById('flType')?.value||'';
+  const kw = (document.getElementById('flKw')?.value||'').trim();
+  let list = balanceFlows;
+  if(tp) list = list.filter(f=>f.type===tp);
+  if(kw) list = list.filter(f=>f.customer.includes(kw)||f.cardNo.includes(kw)||f.orderNo.includes(kw));
+  const total = list.length;
+  const start = (curFlowPage-1)*flowPageSize;
+  const rows = list.slice(start,start+flowPageSize).map(f=>`
+    <tr>
+      <td style="font-size:13px">${f.time}</td>
+      <td><div class="font-medium">${f.customer}</div><div class="text-muted mono" style="font-size:12px">${f.cardNo}</div></td>
+      <td><span class="tag ${typeTagMap[f.type]}">${f.type}</span></td>
+      <td class="text-right">
+        <div ${f.principal>=0?'class="text-success"':'class="text-error"'}>${f.principal>=0?'+':''}¥${f.principal}</div>
+        ${f.gift?`<div class="text-warning" style="font-size:12px">赠送 +¥${f.gift}</div>`:''}
+      </td>
+      <td class="text-right text-muted" style="font-size:13px">本金 ¥${f.beforeP} → ¥${f.afterP}</td>
+      <td class="text-right text-muted" style="font-size:13px">赠送 ¥${f.beforeG} → ¥${f.afterG}</td>
+      <td class="mono" style="font-size:12px">${f.orderNo}</td>
+      <td>${f.operator}</td>
+    </tr>`).join('') || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="list"></i></div><div class="empty-text">暂无流水</div></div></td></tr>`;
+  document.getElementById('flowTbody').innerHTML = rows;
+  document.getElementById('flowPag').innerHTML = `<div class="pagination-info">共 ${total} 条</div>`;
+  if(window.lucide) lucide.createIcons();
+}
+
+// 充值
+window.recharge = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">会员充值</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">选择会员<span class="required">*</span></label>
+          <select class="form-select" id="rcCust" onchange="updateCurBalance()">
+            ${MOCK.members.map(m=>{const c=MOCK.customers.find(x=>x.id===m.customerId);return `<option value="${m.id}" data-balance="${m.balance}" data-gift="${m.giftBalance}">${c?c.name:'-'}（${m.cardNo}）余额 ¥${m.balance}</option>`;}).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">当前余额</label>
+          <input class="form-input" id="rcCurBal" value="¥2350（赠送 ¥180）" disabled>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">充值本金（元）<span class="required">*</span></label>
+          <input type="number" class="form-input" id="rcPrincipal" value="1000" oninput="calcRecharge()">
+        </div>
+        <div class="form-item"><label class="form-label">赠送金额（元，自动）</label>
+          <input type="number" class="form-input" id="rcGift" value="100" disabled>
+          <div class="form-hint">按会员权益配置自动计算</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">收款方式<span class="required">*</span></label>
+          <select class="form-select" id="rcPay">
+            <option>前台收款 - 现金</option>
+            <option>前台收款 - 微信扫码</option>
+            <option>前台收款 - 支付宝扫码</option>
+            <option>前台收款 - 银行卡</option>
+            <option>小程序在线支付</option>
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">充值后余额</label>
+          <input class="form-input" id="rcAfter" value="本金 ¥3350 / 赠送 ¥280" disabled>
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">备注</label><input class="form-input" placeholder="如：前台现金充值"></div>
+      <div style="background:var(--primary-bg);padding:12px 16px;border-radius:6px;color:var(--primary);font-size:13px">
+        <i data-lucide="info" style="width:14px;vertical-align:-2px"></i> 充值金额将分本金与赠送两笔额度分别记录，消费时优先扣减赠送金额。退款不收取手续费。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('充值成功：本金 ¥'+document.getElementById('rcPrincipal').value+'，赠送 ¥'+document.getElementById('rcGift').value,'success');this.closest('.modal-overlay').remove()">确认充值</button>
+    </div>
+  </div>`;
+  openModal(html);
+  window.updateCurBalance = function(){
+    const sel = document.getElementById('rcCust');
+    const opt = sel.options[sel.selectedIndex];
+    document.getElementById('rcCurBal').value = `¥${opt.dataset.balance}（赠送 ¥${opt.dataset.gift}）`;
+    calcRecharge();
+  };
+  window.calcRecharge = function(){
+    const sel = document.getElementById('rcCust');
+    const opt = sel.options[sel.selectedIndex];
+    const p = parseFloat(document.getElementById('rcPrincipal').value)||0;
+    let g = 0;
+    if(p>=5000) g=Math.round(p*0.15); else if(p>=2000) g=Math.round(p*0.10); else if(p>=1000) g=Math.round(p*0.08); else if(p>=500) g=Math.round(p*0.05);
+    document.getElementById('rcGift').value = g;
+    document.getElementById('rcAfter').value = `本金 ¥${(parseFloat(opt.dataset.balance)+p).toFixed(0)} / 赠送 ¥${(parseFloat(opt.dataset.gift)+g).toFixed(0)}`;
+  };
+  window.updateCurBalance();
+};
+
+// 余额转让
+window.transferBalance = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">余额转让（后台发起，需审批）</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">转出会员<span class="required">*</span></label>
+          <select class="form-select" id="tfFrom">
+            ${MOCK.members.map(m=>{const c=MOCK.customers.find(x=>x.id===m.customerId);return `<option value="${m.id}" data-balance="${m.balance}" data-gift="${m.giftBalance}">${c?c.name:'-'}（余额 ¥${m.balance} / 赠送 ¥${m.giftBalance}）</option>`;}).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">转入会员<span class="required">*</span></label>
+          <select class="form-select" id="tfTo">
+            ${MOCK.members.map(m=>{const c=MOCK.customers.find(x=>x.id===m.customerId);return `<option value="${m.id}">${c?c.name:'-'}</option>`;}).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">转出本金（元）<span class="required">*</span></label>
+          <input type="number" class="form-input" id="tfP" value="0">
+        </div>
+        <div class="form-item"><label class="form-label">转出赠送金（元）<span class="required">*</span></label>
+          <input type="number" class="form-input" id="tfG" value="0">
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">转让原因<span class="required">*</span></label>
+        <textarea class="form-textarea" id="tfReason" placeholder="如：客户换号、合并账户等"></textarea>
+      </div>
+      <div style="background:var(--warning-bg);padding:12px 16px;border-radius:6px;color:var(--warning);font-size:13px">
+        <i data-lucide="alert-triangle" style="width:14px;vertical-align:-2px"></i> 余额转让需审批生效。提交后将记录本金与赠送金的拆分变动，操作全程留痕。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('余额转让申请已提交，等待审批','success');this.closest('.modal-overlay').remove()">提交申请</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 退款
+window.refundBalance = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">储值退款（不收取手续费）</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">选择会员<span class="required">*</span></label>
+          <select class="form-select" id="rfCust">
+            ${MOCK.members.map(m=>{const c=MOCK.customers.find(x=>x.id===m.customerId);return `<option value="${m.id}" data-balance="${m.balance}" data-gift="${m.giftBalance}">${c?c.name:'-'}（本金 ¥${m.balance} / 赠送 ¥${m.giftBalance}）</option>`;}).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">可退本金</label>
+          <input class="form-input" id="rfMaxP" value="¥2350" disabled>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">退款本金（元）<span class="required">*</span></label>
+          <input type="number" class="form-input" id="rfAmount" value="0">
+          <div class="form-hint">赠送金额不可退，仅退还本金部分</div>
+        </div>
+        <div class="form-item"><label class="form-label">退款方式<span class="required">*</span></label>
+          <select class="form-select"><option>原路退回</option><option>现金</option><option>对公转账</option></select>
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">退款原因<span class="required">*</span></label>
+        <textarea class="form-textarea" placeholder="请填写退款原因"></textarea>
+      </div>
+      <div style="background:var(--success-bg);padding:12px 16px;border-radius:6px;color:var(--success);font-size:13px">
+        <i data-lucide="check-circle" style="width:14px;vertical-align:-2px"></i> 储值退款不收取任何手续费，全额退还本金。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-danger" onclick="toast('退款已受理，将原路退回 ¥'+document.getElementById('rfAmount').value,'success');this.closest('.modal-overlay').remove()">确认退款</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 积分手工调整
+window.adjustPoints = function(){
+  const html = `<div class="modal" style="max-width:480px">
+    <div class="modal-header"><div class="modal-title">积分手工调整</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-item"><label class="form-label">选择会员<span class="required">*</span></label>
+        <select class="form-select">
+          ${MOCK.members.map(m=>{const c=MOCK.customers.find(x=>x.id===m.customerId);return `<option>${c?c.name:'-'}（当前积分 ${m.points}）</option>`;}).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">调整方式</label>
+          <select class="form-select"><option>增加</option><option>扣减</option></select>
+        </div>
+        <div class="form-item"><label class="form-label">积分数量<span class="required">*</span></label>
+          <input type="number" class="form-input" value="0">
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">调整原因<span class="required">*</span></label>
+        <textarea class="form-textarea" placeholder="请填写原因，将作为审计留痕"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('积分调整成功','success');this.closest('.modal-overlay').remove()">确认调整</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 优惠券发放
+window.issueCoupon = function(id){
+  const c = id ? coupons.find(x=>x.id===id) : null;
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">${c?'发放优惠券：'+c.name:'新建优惠券'}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      ${c?`
+        <div style="background:linear-gradient(135deg,#f59e0b,#ef4444);border-radius:8px;padding:16px;color:#fff;margin-bottom:16px">
+          <div style="font-size:18px;font-weight:700">${c.type==='面额券'?'¥'+c.value:c.value+'折'}</div>
+          <div style="font-size:13px;opacity:.9">${c.name} · ${c.scope}</div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">发放对象</label>
+            <select class="form-select"><option>指定会员</option><option>全部会员</option><option>按标签筛选</option></select>
+          </div>
+          <div class="form-item"><label class="form-label">发放数量</label>
+            <input type="number" class="form-input" value="1">
+          </div>
+        </div>
+        <div class="form-item"><label class="form-label">选择会员</label>
+          <select class="form-select" multiple size="4">
+            ${MOCK.customers.map(c=>`<option>${c.name}</option>`).join('')}
+          </select>
+        </div>
+      `:`
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">券名称<span class="required">*</span></label><input class="form-input" placeholder="如：满100减20券"></div>
+          <div class="form-item"><label class="form-label">券类型<span class="required">*</span></label>
+            <select class="form-select" id="cpType" onchange="toggleCpType()"><option>面额券</option><option>折扣券</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label" id="cpValLabel">面额（元）<span class="required">*</span></label><input type="number" class="form-input" value="20"></div>
+          <div class="form-item"><label class="form-label">最低消费（元）</label><input type="number" class="form-input" value="0"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">使用范围</label>
+            <select class="form-select"><option>全场通用</option><option>仅场地预约</option><option>仅商品购买</option><option>场地+商品</option><option>指定运动项目</option></select>
+          </div>
+          <div class="form-item"><label class="form-label">发放方式</label>
+            <select class="form-select"><option>手工发放</option><option>活动自动发放</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">有效期起</label><input type="date" class="form-input"></div>
+          <div class="form-item"><label class="form-label">有效期止</label><input type="date" class="form-input"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-item"><label class="form-label">发行总量</label><input type="number" class="form-input" value="100"></div>
+          <div class="form-item"><label class="form-label">退券规则</label>
+            <select class="form-select"><option>未使用可退</option><option>已过期不退</option><option>不可退</option></select>
+          </div>
+        </div>
+      `}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('${c?'优惠券已发放':'优惠券已创建'}','success');this.closest('.modal-overlay').remove()">${c?'确认发放':'创建'}</button>
+    </div>
+  </div>`;
+  openModal(html);
+  window.toggleCpType = function(){
+    const t = document.getElementById('cpType').value;
+    document.getElementById('cpValLabel').textContent = t==='面额券'?'面额（元）':'折扣（如 8.5）';
+  };
+};
+
+// 积分规则配置
+window.editPointConfig = function(){
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">积分规则配置</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="font-medium mb-12">获取规则</div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">消费获取比例</label>
+          <div class="input-group"><input type="number" class="form-input" value="${pointConfig.earnRate}"><span class="btn btn-default" style="border-color:var(--border)">积分/元</span></div>
+          <div class="form-hint">消费 1 元可获得 ${pointConfig.earnRate} 积分</div>
+        </div>
+        <div class="form-item"><label class="form-label">适用场景</label>
+          <select class="form-select" multiple size="3">
+            <option selected>场地预约</option><option selected>商品购买</option><option selected>物品租赁</option><option>赛事报名</option><option>培训</option>
+          </select>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="font-medium mb-12">使用规则</div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">积分抵扣比例</label>
+          <div class="input-group"><input type="number" class="form-input" value="${pointConfig.useRate}"><span class="btn btn-default" style="border-color:var(--border)">积分=1元</span></div>
+        </div>
+        <div class="form-item"><label class="form-label">单笔抵扣上限（%）</label>
+          <input type="number" class="form-input" value="${pointConfig.maxDeduct}">
+          <div class="form-hint">单笔订单积分抵扣金额不超过订单总额的 ${pointConfig.maxDeduct}%</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">积分有效期（天）</label>
+          <input type="number" class="form-input" value="${pointConfig.validDays}">
+          <div class="form-hint">积分自获取之日起 ${pointConfig.validDays} 天内有效，到期自动清零</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('积分规则配置已保存','success');this.closest('.modal-overlay').remove()">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+  if(name==='point') renderPointFlows();
+  if(name==='coupon') renderCoupons();
+}
+
+function renderPointFlows(){
+  document.getElementById('pointTbody').innerHTML = pointFlows.map(f=>`
+    <tr>
+      <td style="font-size:13px">${f.time}</td>
+      <td>${f.customer}</td>
+      <td><span class="tag ${f.type==='消费获取'?'tag-blue':f.type==='手工调整'?'tag-orange':'tag-gray'}">${f.type}</span></td>
+      <td class="text-right ${f.points>0?'text-success':'text-error'}">${f.points>0?'+':''}${f.points}</td>
+      <td class="text-right">${f.balance}</td>
+      <td class="mono" style="font-size:12px">${f.orderNo}</td>
+      <td>${f.operator}</td>
+      <td style="font-size:12px;color:var(--text-3)">${f.reason||'-'}</td>
+    </tr>`).join('');
+}
+
+function renderCoupons(){
+  document.getElementById('cpTbody').innerHTML = coupons.map(c=>`
+    <tr>
+      <td><div class="font-medium">${c.name}</div><div class="text-muted" style="font-size:12px">${c.id}</div></td>
+      <td><span class="tag ${c.type==='面额券'?'tag-orange':'tag-purple'}">${c.type}</span></td>
+      <td class="text-center font-medium">${c.type==='面额券'?'¥'+c.value:c.value+'折'}</td>
+      <td style="font-size:13px">${c.scope}</td>
+      <td style="font-size:12px">${c.validFrom}<br>~ ${c.validTo}</td>
+      <td class="text-center">${c.used}/${c.total}</td>
+      <td><span class="tag ${c.method==='手工发放'?'tag-cyan':'tag-blue'}">${c.method}</span></td>
+      <td><span class="tag ${couponTagMap[c.status]}">${c.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="issueCoupon('${c.id}')">发放</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('查看 ${c.name} 使用明细','info')">明细</button>
+      </td>
+    </tr>`).join('');
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">储值 / 积分 / 优惠</div>
+  <div class="page-desc">储值充值与流水管理、积分规则与调整、优惠券发放与使用（退款不收手续费，客户级折扣保留不启用）</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">储值本金总额 <span class="stat-icon blue"><i data-lucide="wallet"></i></span></div><div class="stat-value" style="font-size:22px">¥${MOCK.members.reduce((s,m)=>s+m.balance,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">赠送金总额 <span class="stat-icon orange"><i data-lucide="gift"></i></span></div><div class="stat-value" style="font-size:22px;color:var(--warning)">¥${MOCK.members.reduce((s,m)=>s+m.giftBalance,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">积分总数 <span class="stat-icon purple"><i data-lucide="star"></i></span></div><div class="stat-value" style="font-size:22px">${MOCK.members.reduce((s,m)=>s+m.points,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">在发优惠券 <span class="stat-icon green"><i data-lucide="ticket"></i></span></div><div class="stat-value" style="font-size:22px">${coupons.filter(c=>c.status==='启用').length}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="balance" onclick="switchTab('balance')">储值管理</div>
+      <div class="tab" data-tab="point" onclick="switchTab('point')">积分管理</div>
+      <div class="tab" data-tab="coupon" onclick="switchTab('coupon')">优惠管理</div>
+    </div>
+  </div>
+
+  <!-- 储值管理 -->
+  <div class="tab-panel" data-panel="balance">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="flType" onchange="curFlowPage=1;renderFlows()">
+            <option value="">全部类型</option><option>充值</option><option>消费</option><option>退款</option><option>余额转入</option><option>余额转出</option>
+          </select>
+        </div>
+        <input class="form-input" id="flKw" placeholder="客户/卡号/单号" style="width:220px" oninput="renderFlows()">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出储值流水','success')"><i data-lucide="download"></i> 导出流水</button>
+        <button class="btn btn-default" onclick="refundBalance()"><i data-lucide="rotate-ccw"></i> 退款</button>
+        <button class="btn btn-default" onclick="transferBalance()"><i data-lucide="arrow-left-right"></i> 余额转让</button>
+        <button class="btn btn-primary" onclick="recharge()"><i data-lucide="plus"></i> 充值</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>时间</th><th>客户/卡号</th><th>类型</th><th class="text-right">变动金额</th><th class="text-right">本金余额</th><th class="text-right">赠送余额</th><th>关联单号</th><th>操作人</th></tr></thead>
+          <tbody id="flowTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="flowPag"></div>
+    </div>
+  </div>
+
+  <!-- 积分管理 -->
+  <div class="tab-panel" data-panel="point" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select"><option>全部类型</option><option>消费获取</option><option>手工调整</option><option>积分兑换</option></select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="editPointConfig()"><i data-lucide="settings"></i> 积分规则</button>
+        <button class="btn btn-default" onclick="toast('已导出积分流水','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="adjustPoints()"><i data-lucide="plus"></i> 手工调整</button>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+        <div class="stat-card"><div class="stat-label">获取比例</div><div class="stat-value" style="font-size:20px;color:var(--primary)">${pointConfig.earnRate} 积分/元</div></div>
+        <div class="stat-card"><div class="stat-label">抵扣比例</div><div class="stat-value" style="font-size:20px;color:var(--success)">${pointConfig.useRate} 积分=1元</div></div>
+        <div class="stat-card"><div class="stat-label">单笔抵扣上限</div><div class="stat-value" style="font-size:20px;color:var(--warning)">${pointConfig.maxDeduct}%</div></div>
+        <div class="stat-card"><div class="stat-label">有效期</div><div class="stat-value" style="font-size:20px;color:var(--purple)">${pointConfig.validDays} 天</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>时间</th><th>客户</th><th>类型</th><th class="text-right">变动积分</th><th class="text-right">余额</th><th>关联单号</th><th>操作人</th><th>原因</th></tr></thead>
+          <tbody id="pointTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 优惠管理 -->
+  <div class="tab-panel" data-panel="coupon" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select"><option>全部类型</option><option>面额券</option><option>折扣券</option></select>
+          <select class="form-select"><option>全部状态</option><option>启用</option><option>未开始</option><option>已过期</option></select>
+        </div>
+        <div class="spacer"></div>
+        <div style="background:var(--warning-bg);padding:6px 12px;border-radius:6px;color:var(--warning);font-size:12px">
+          <i data-lucide="alert-triangle" style="width:12px;vertical-align:-2px"></i> 客户级折扣功能保留，本期不启用
+        </div>
+        <button class="btn btn-default" onclick="toast('已导出优惠券','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="issueCoupon('')"><i data-lucide="plus"></i> 新建优惠券</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>券名称</th><th>类型</th><th class="text-center">面值/折扣</th><th>使用范围</th><th>有效期</th><th class="text-center">已用/总量</th><th>发放方式</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="cpTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderFlows();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

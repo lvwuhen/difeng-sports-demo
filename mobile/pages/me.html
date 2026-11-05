@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 我的</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="light">
+<div class="app" style="padding-top:0">
+  <div class="scroll">
+    <div class="me-hero">
+      <div class="me-profile">
+        <div class="avatar" id="avatar">陈</div>
+        <div class="flex1" onclick="M.go('member.html')" style="cursor:pointer">
+          <div class="me-name"><span id="uname">陈晓明</span><span class="vip" id="level">普通会员</span></div>
+          <div class="me-phone" id="uphone">138****1234</div>
+        </div>
+        <button class="nav-act" id="setBtn" style="color:#fff;background:rgba(255,255,255,.16);border-radius:50%;width:34px;height:34px">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 3V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 17 4.6a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 9h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 2z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="me-assets">
+      <a class="asset" href="member.html">
+        <div class="a-value" id="assetBalance">0</div><div class="a-label">余额（元）</div>
+      </a>
+      <a class="asset" href="timecard.html">
+        <div class="a-value" id="assetCards">0</div><div class="a-label">次卡剩余</div>
+      </a>
+      <div class="asset" id="pointsAsset" style="cursor:pointer">
+        <div class="a-value" id="assetPoints">0</div><div class="a-label">积分</div>
+      </div>
+      <div class="asset" id="couponAsset" style="cursor:pointer">
+        <div class="a-value">0</div><div class="a-label">优惠券</div>
+      </div>
+    </div>
+
+    <div class="section tight" style="margin-top:14px">
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:14px">
+        <div style="width:38px;height:38px;border-radius:10px;background:var(--m-primary-bg);color:var(--m-primary);display:grid;place-items:center;flex-shrink:0">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.4" y="3.4" width="6.8" height="6.8" rx="1"/><rect x="13.8" y="3.4" width="6.8" height="6.8" rx="1"/><rect x="3.4" y="13.8" width="6.8" height="6.8" rx="1"/><path d="M14 14h2.6v2.6h-2.6zM19 19h2"/></svg>
+        </div>
+        <div class="flex1">
+          <div style="font-size:14px;font-weight:500">我的核销码</div>
+          <div class="tiny" id="qrHint">暂无待使用的预约</div>
+        </div>
+        <span id="qrEntry"></span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="menu-list">
+        <a class="menu-item" href="orders.html">
+          <span class="m-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z"/><path d="M9 8h6M9 12h6"/></svg></span>
+          <span class="m-label">我的订单</span>
+          <span class="badge" id="pendingBadge" style="display:none">0</span>
+          <span class="chev">›</span>
+        </a>
+        <a class="menu-item" href="orders.html?tab=paid">
+          <span class="m-ico green"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8.2A2.2 2.2 0 0 1 6.2 6h11.6A2.2 2.2 0 0 1 20 8.2v.6a2.4 2.4 0 0 0 0 4.8v.6a2.2 2.2 0 0 1-2.2 2.2H6.2A2.2 2.2 0 0 1 4 15.8v-.6a2.4 2.4 0 0 0 0-4.8v-.6z"/><path d="M12 7.4v2.2M12 12v2.2"/></svg></span>
+          <span class="m-label">待使用订单</span>
+          <span class="m-value" id="paidCount">0 笔</span>
+          <span class="chev">›</span>
+        </a>
+        <a class="menu-item" href="events.html">
+          <span class="m-ico orange"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 4h8v5.2a4 4 0 0 1-8 0V4z"/><path d="M8 5.6H5.2A2.8 2.8 0 0 0 8 8.4M16 5.6h2.8A2.8 2.8 0 0 1 16 8.4"/><path d="M12 13.4v3.4M9 20.6h6"/></svg></span>
+          <span class="m-label">赛事活动</span>
+          <span class="m-value">报名与回顾</span>
+          <span class="chev">›</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="menu-list">
+        <div class="menu-item" id="invoiceMenuItem">
+          <span class="m-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
+          <span class="m-label">电子发票</span>
+          <span class="m-value" id="invoiceCount">0 张</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="menu-item" id="invoiceInfoItem">
+          <span class="m-ico purple"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 14h4"/></svg></span>
+          <span class="m-label">开票信息</span>
+          <span class="m-value" id="invoiceTitle">个人 · 陈晓明</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="menu-item" id="contactsItem">
+          <span class="m-ico green"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="3.4"/><path d="M2.2 20c0-3.2 3-5.4 6.8-5.4s6.8 2.2 6.8 5.4"/><path d="M16.2 5.6a3.4 3.4 0 0 1 0 6.8"/></svg></span>
+          <span class="m-label">常用联系人</span>
+          <span class="m-value" id="contactCount">0 人</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="menu-item" id="msgItem">
+          <span class="m-ico orange"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M18 16.2V11a6 6 0 1 0-12 0v5.2L4 19h16l-2-2.8z"/><path d="M9.6 19.5a2.4 2.4 0 0 0 4.8 0"/></svg></span>
+          <span class="m-label">消息中心</span>
+          <span class="badge" id="msgBadge" style="display:none">0</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="menu-item" id="verifyItem">
+          <span class="m-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3 20 6v6c0 4.8-3.4 7.8-8 9-4.6-1.2-8-4.2-8-9V6l8-3z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <span class="m-label">实名认证</span>
+          <span class="m-value" id="verifyState">已认证</span>
+          <span class="chev">›</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="menu-list">
+        <div class="menu-item" id="serviceItem">
+          <span class="m-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.2 3h3l1.8 4.8-2 1.2a12 12 0 0 0 5 5l1.2-2 4.8 1.8v3a2 2 0 0 1-2.2 2A16.8 16.8 0 0 1 5 5.2 2 2 0 0 1 7.2 3z"/></svg></span>
+          <span class="m-label">联系客服</span>
+          <span class="m-value">400-888-6688</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="menu-item" id="aboutItem">
+          <span class="m-ico purple"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8.8"/><path d="M12 8h.01M11 11.2h1v5"/></svg></span>
+          <span class="m-label">关于地丰体育</span>
+          <span class="m-value">v1.0 演示版</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="menu-item" id="resetItem">
+          <span class="m-ico orange"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></svg></span>
+          <span class="m-label">重置演示数据</span>
+          <span class="m-value">恢复初始状态</span>
+          <span class="chev">›</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-bottom:4px">
+      <button class="btn btn-line btn-block" id="logoutBtn">退出登录</button>
+    </div>
+    <div style="text-align:center;padding:14px 0 6px" class="tiny">地丰体育场馆预约与管理系统 · C 端演示</div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var m = M.state.member;
+  var paidOrders = M.state.orders.filter(function(o){ return o.status === 'paid'; });
+  var latestPaid = paidOrders[0];
+
+  M.$('#uname').textContent = m.name;
+  M.$('#avatar').textContent = m.name.slice(0, 1);
+  M.$('#level').textContent = m.level;
+  M.$('#uphone').textContent = m.phone;
+  M.$('#assetBalance').textContent = M.rmb(m.balance + m.gift);
+  var cardRemain = M.state.cards.reduce(function(n, c){ return n + (c.status === '有效' ? Math.max(0, c.total - c.used) : 0); }, 0);
+  M.$('#assetCards').textContent = cardRemain;
+  M.$('#assetPoints').textContent = m.points;
+  M.$('#pendingBadge').textContent = M.state.orders.filter(function(o){ return o.status === 'pending'; }).length;
+  M.$('#pendingBadge').style.display = M.state.orders.filter(function(o){ return o.status === 'pending'; }).length ? 'grid' : 'none';
+  M.$('#paidCount').textContent = paidOrders.length + ' 笔';
+  M.$('#contactCount').textContent = M.state.contacts.length + ' 人';
+  M.$('#invoiceCount').textContent = M.state.orders.filter(function(o){ return o.invoice && o.invoice.status === '已开具'; }).length + ' 张';
+  M.$('#invoiceTitle').textContent = M.state.invoiceInfo.type + ' · ' + M.state.invoiceInfo.title;
+  M.$('#verifyState').textContent = m.verified ? '已认证' : '未认证';
+
+  var unread = M.state.messages.filter(function(x){ return !x.read; }).length;
+  M.$('#msgBadge').textContent = unread;
+  M.$('#msgBadge').style.display = unread ? 'grid' : 'none';
+
+  if (latestPaid){
+    M.$('#qrHint').textContent = '最近待使用：' + latestPaid.title + ' · ' + M.dateCN(latestPaid.date);
+    M.$('#qrEntry').innerHTML = '<a class="btn btn-primary btn-sm" href="order-detail.html?id=' + latestPaid.id + '">查看核销码</a>';
+  } else {
+    M.$('#qrEntry').innerHTML = '<a class="btn btn-line btn-sm" href="venues.html">去订场</a>';
+  }
+
+  M.$('#pointsAsset').addEventListener('click', function(){
+    M.modal({ title:'我的积分', text:'当前积分 <b style="color:#141b26;font-size:18px">' + m.points + '</b><br>消费 1 元累积 1 分；积分抵现、换券、换礼品规则按运营配置执行。', confirmText:'知道了', cancelText:false });
+  });
+  M.$('#couponAsset').addEventListener('click', function(){
+    M.modal({ title:'优惠券', text:'当前暂无可用优惠券。<br>方案中优惠券在本期仅保留配置能力，未上线发放与使用规则，原型不虚构券活动。', confirmText:'知道了', cancelText:false });
+  });
+
+  M.$('#msgItem').addEventListener('click', function(){
+    var app = M.$('.app');
+    var el = document.createElement('div');
+    el.className = 'overlay';
+    el.innerHTML = '<div class="sheet">' +
+      '<div class="sheet-grab"></div>' +
+      '<div class="between"><div class="sheet-title" style="text-align:left;margin:0">消息中心</div>' +
+        '<button class="btn btn-ghost btn-sm" id="readAll">全部已读</button></div>' +
+      '<div class="sheet-body" id="msgList"></div></div>';
+    app.appendChild(el);
+    el.addEventListener('click', function(e){ if (e.target === el) el.remove(); });
+    function paint(){
+      M.$('#msgList', el).innerHTML = M.state.messages.map(function(x){
+        return '<div class="list-row" style="align-items:flex-start">' +
+          '<div style="width:34px;height:34px;border-radius:9px;background:' + (x.read ? '#f4f6fa' : 'var(--m-primary-bg)') + ';color:' + (x.read ? '#9aa3b2' : 'var(--m-primary)') + ';display:grid;place-items:center;flex-shrink:0">' + M.icon('bell', 17) + '</div>' +
+          '<div class="flex1"><div class="between"><b style="font-size:13px">' + x.title + '</b><span class="tiny">' + x.time + '</span></div>' +
+            '<div class="sub" style="margin-top:2px">' + x.content + '</div></div>' +
+        '</div>';
+      }).join('');
+    }
+    paint();
+    M.$('#readAll', el).addEventListener('click', function(){
+      M.state.messages.forEach(function(x){ x.read = true; });
+      M.save();
+      paint();
+      M.$('#msgBadge').style.display = 'none';
+      M.toast('已全部标记为已读');
+    });
+  });
+
+  M.$('#invoiceMenuItem').addEventListener('click', function(){
+    var list = M.state.orders.filter(function(o){ return o.invoice && o.invoice.status !== '未开具'; });
+    var text = list.length
+      ? list.slice(0, 5).map(function(o){
+          return '• ' + o.title + '<br>&nbsp;&nbsp;¥' + M.rmb(o.amount) + ' · ' + o.invoice.status + (o.invoice.no ? '<br>&nbsp;&nbsp;发票号 ' + o.invoice.no : '');
+        }).join('<br><br>')
+      : '暂无可查看的发票。订单完成支付后可在订单详情申请开票，开具后推送至预留邮箱。';
+    M.modal({ title:'电子发票', text:text, confirmText:'知道了', cancelText:false });
+  });
+
+  M.$('#invoiceInfoItem').addEventListener('click', function(){
+    var info = M.state.invoiceInfo;
+    var app = M.$('.app');
+    var el = document.createElement('div');
+    el.className = 'overlay';
+    el.innerHTML = '<div class="sheet">' +
+      '<div class="sheet-grab"></div>' +
+      '<div class="sheet-title">开票信息</div>' +
+      '<div class="sheet-sub">用于场馆预约、赛事报名等订单开具电子发票</div>' +
+      '<div class="sheet-body"><div class="card" style="box-shadow:none;border:1px solid var(--m-line);padding:4px 14px">' +
+        '<div class="form-item"><span class="f-label">抬头类型</span><input class="form-input" id="invType" value="' + info.type + '" readonly></div>' +
+        '<div class="form-item"><span class="f-label">发票抬头</span><input class="form-input" id="invTitle" value="' + info.title + '"></div>' +
+        '<div class="form-item"><span class="f-label">税号</span><input class="form-input" id="invTax" placeholder="个人抬头可不填" value="' + (info.taxNo || '') + '"></div>' +
+        '<div class="form-item" style="border-bottom:0"><span class="f-label">接收邮箱</span><input class="form-input" id="invEmail" value="' + (info.email || '') + '"></div>' +
+      '</div><div class="notice-box" style="margin-top:12px"><span style="flex-shrink:0">说明</span><span>开票信息保存后，后续订单申请开票默认使用本信息。</span></div></div>' +
+      '<div class="sheet-foot"><button class="btn btn-primary btn-block" id="saveInv">保存开票信息</button></div></div>';
+    app.appendChild(el);
+    el.addEventListener('click', function(e){ if (e.target === el) el.remove(); });
+    M.$('#saveInv', el).addEventListener('click', function(){
+      var title = M.$('#invTitle', el).value.trim();
+      if (!title){ M.toast('请填写发票抬头'); return; }
+      info.title = title;
+      info.taxNo = M.$('#invTax', el).value.trim();
+      info.email = M.$('#invEmail', el).value.trim();
+      M.save();
+      M.$('#invoiceTitle').textContent = info.type + ' · ' + info.title;
+      el.remove();
+      M.toast('开票信息已保存', 'success');
+    });
+  });
+
+  M.$('#contactsItem').addEventListener('click', function(){
+    M.modal({
+      title:'常用联系人',
+      text: M.state.contacts.map(function(c){ return c.name + '　' + c.phone; }).join('<br>') +
+        '<br><br>预约时自动带入默认联系人，可在下单确认页修改备注。',
+      confirmText:'知道了', cancelText:false
+    });
+  });
+
+  M.$('#verifyItem').addEventListener('click', function(){
+    M.modal({
+      title:'实名认证',
+      text:'姓名：' + M.state.member.realName + '<br>证件：身份证 3502**********1234<br>认证时间：2024-03-15<br><br>实名信息用于场馆入场核验与赛事报名。',
+      confirmText:'知道了', cancelText:false
+    });
+  });
+
+  M.$('#serviceItem').addEventListener('click', function(){
+    M.modal({ title:'联系客服', text:'客服热线：400-888-6688<br>服务时间：09:00-21:00<br>也可在订单详情中联系场馆。', confirmText:'知道了', cancelText:false });
+  });
+  M.$('#aboutItem').addEventListener('click', function(){
+    M.modal({ title:'关于地丰体育', text:'地丰体育场馆预约与管理系统 · C 端原型<br>覆盖在线订场、赛事报名、会员储值、次卡、订单与核销。<br>数据为本地 Mock，仅用于交互演示。', confirmText:'知道了', cancelText:false });
+  });
+  M.$('#resetItem').addEventListener('click', function(){
+    M.modal({
+      title:'重置演示数据', text:'将清空本地订单、余额、次卡等变更，并恢复初始演示数据。',
+      confirmText:'确认重置', onConfirm:function(){ M.reset(); }
+    });
+  });
+  M.$('#setBtn').addEventListener('click', function(){
+    M.modal({ title:'设置', text:'账号：' + m.phone + '<br>版本：v1.0 演示版<br>登录状态由微信授权维护。', confirmText:'知道了', cancelText:false });
+  });
+  M.$('#logoutBtn').addEventListener('click', function(){
+    M.modal({
+      title:'退出登录', text:'退出后需重新进行微信授权登录。演示环境将保留当前数据与登录状态。',
+      confirmText:'退出', onConfirm:function(){ M.toast('演示环境已忽略退出，数据保留'); }
+    });
+  });
+
+  M.init({ tab:'me' });
+})();
+</script>
+</body>
+</html>

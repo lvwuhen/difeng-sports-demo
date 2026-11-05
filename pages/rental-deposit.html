@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>押金/归还/赔偿 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('rental-deposit', '押金/归还/损坏赔偿');
+
+/* ========== 数据 ========== */
+// 租赁订单（待归还）
+let RENTAL_ORDERS = [
+  {id:'ZL20261101001', item:'网球拍出租', qty:2, rent:60, deposit:400, customer:'陈晓明', phone:'138****1234', channel:'小程序', startTime:'2026-11-01 14:00', status:'租赁中', depositStatus:'已收取(冻结中)'},
+  {id:'ZL20261101002', item:'篮球出租', qty:1, rent:10, deposit:100, customer:'散客', phone:'-', channel:'后台代客', startTime:'2026-11-01 10:00', status:'租赁中', depositStatus:'已收取(冻结中)'},
+  {id:'ZL20261101003', item:'护膝套装', qty:1, rent:25, deposit:80, customer:'林雅婷', phone:'139****5678', channel:'小程序', startTime:'2026-11-01 15:30', status:'租赁中', depositStatus:'已收取(冻结中)'},
+  {id:'ZL20261030004', item:'羽毛球拍出租', qty:2, rent:36, deposit:300, customer:'鹭岛俱乐部', phone:'137****9012', channel:'后台代客', startTime:'2026-10-30 09:00', status:'已归还', depositStatus:'已退还'},
+];
+
+// 归还记录
+let RETURNS = [
+  {id:'GH20261030001', orderId:'ZL20261030004', item:'羽毛球拍出租', qty:2, returnTime:'2026-10-30 18:00', status:'完好', inspector:'刘芳', remark:'无损坏', depositRefund:300},
+  {id:'GH20261029002', orderId:'ZL20261029005', item:'篮球出租', qty:1, returnTime:'2026-10-29 21:30', status:'损坏', inspector:'李强', remark:'球皮磨损', depositRefund:50},
+];
+
+// 押金记录
+let DEPOSITS = [
+  {id:'YJ20261101001', orderId:'ZL20261101001', item:'网球拍出租', customer:'陈晓明', amount:400, status:'已收取(冻结中)', collectTime:'2026-11-01 14:00', refundTime:'-', payMethod:'微信支付'},
+  {id:'YJ20261101002', orderId:'ZL20261101002', item:'篮球出租', customer:'散客', amount:100, status:'已收取(冻结中)', collectTime:'2026-11-01 10:00', refundTime:'-', payMethod:'现金'},
+  {id:'YJ20261101003', orderId:'ZL20261101003', item:'护膝套装', customer:'林雅婷', amount:80, status:'已收取(冻结中)', collectTime:'2026-11-01 15:30', refundTime:'-', payMethod:'微信支付'},
+  {id:'YJ20261030004', orderId:'ZL20261030004', item:'羽毛球拍出租', customer:'鹭岛俱乐部', amount:300, status:'已退还', collectTime:'2026-10-30 09:00', refundTime:'2026-10-30 18:05', payMethod:'微信支付'},
+  {id:'YJ20261029005', orderId:'ZL20261029005', item:'篮球出租', customer:'散客', amount:100, status:'已抵扣', collectTime:'2026-10-29 10:00', refundTime:'-', payMethod:'现金', deductAmt:50, refundAmt:50},
+];
+
+// 赔偿记录
+let COMPENSATIONS = [
+  {id:'PC20261029001', orderId:'ZL20261029005', item:'篮球出租', customer:'散客', damage:'球皮磨损，影响使用', assessAmt:50, payMethod:'扣押金', deductAmt:50, extraAmt:0, refundAmt:50, handler:'李强', time:'2026-10-29 21:35', status:'已处理'},
+];
+
+let activeTab = 'orders';
+
+function switchTab(name){
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+window.switchTab = switchTab;
+
+function statusTag(s){
+  const map = {'完好':'tag-green','损坏':'tag-red','丢失':'tag-red','部分归还':'tag-orange','已收取(冻结中)':'tag-blue','已抵扣':'tag-purple','已退还':'tag-gray','已处理':'tag-green','处理中':'tag-orange'};
+  return `<span class="tag ${map[s]||'tag-gray'}">${s}</span>`;
+}
+
+/* ========== 租赁订单 ========== */
+function renderOrders(){
+  const rows = RENTAL_ORDERS.map(o=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${o.id}</td>
+      <td>${o.item}</td>
+      <td class="text-right">${o.qty}</td>
+      <td class="text-right">¥${o.deposit}</td>
+      <td>${o.customer}</td>
+      <td><span class="tag ${o.channel==='小程序'?'tag-cyan':'tag-purple'}">${o.channel}</span></td>
+      <td>${o.startTime}</td>
+      <td>${statusTag(o.depositStatus)}</td>
+      <td><span class="tag ${o.status==='租赁中'?'tag-orange':'tag-green'}">${o.status}</span></td>
+      <td class="text-center">
+        ${o.status==='租赁中' ? `<button class="btn btn-primary btn-sm" onclick="openReturnModal('${o.id}')">归还登记</button>` : `<button class="btn btn-ghost btn-sm" onclick="viewOrder('${o.id}')">查看</button>`}
+      </td>
+    </tr>`).join('');
+  document.getElementById('order-rows').innerHTML = rows || `<tr><td colspan="10" class="text-center text-muted">暂无订单</td></tr>`;
+}
+
+window.viewOrder = function(id){
+  const o = RENTAL_ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  const html = `<div class="modal" style="max-width:480px">
+    <div class="modal-header"><div class="modal-title">租赁订单详情</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid">
+        <div class="kv-item"><div class="k">订单号</div><div class="v mono">${o.id}</div></div>
+        <div class="kv-item"><div class="k">物品</div><div class="v">${o.item}</div></div>
+        <div class="kv-item"><div class="k">数量</div><div class="v">${o.qty}</div></div>
+        <div class="kv-item"><div class="k">租金</div><div class="v">¥${o.rent}</div></div>
+        <div class="kv-item"><div class="k">押金</div><div class="v">¥${o.deposit}</div></div>
+        <div class="kv-item"><div class="k">客户</div><div class="v">${o.customer}</div></div>
+        <div class="kv-item"><div class="k">渠道</div><div class="v">${o.channel}</div></div>
+        <div class="kv-item"><div class="k">押金状态</div><div class="v">${statusTag(o.depositStatus)}</div></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>
+  </div>`;
+  openModal(html);
+};
+
+/* ========== 归还登记 ========== */
+let currentOrder = null;
+window.openReturnModal = function(id){
+  const o = RENTAL_ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  currentOrder = o;
+  const html = `<div class="modal" style="max-width:560px">
+    <div class="modal-header"><div class="modal-title">归还登记 - ${o.item}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">订单号</div><div class="v mono">${o.id}</div></div>
+        <div class="kv-item"><div class="k">客户</div><div class="v">${o.customer}</div></div>
+        <div class="kv-item"><div class="k">出租数量</div><div class="v">${o.qty}</div></div>
+        <div class="kv-item"><div class="k">押金</div><div class="v">¥${o.deposit}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">归还数量<span class="required">*</span></label>
+          <input type="number" class="form-input" id="rt-qty" value="${o.qty}" min="1" max="${o.qty}">
+        </div>
+        <div class="form-item"><label class="form-label">归还状态<span class="required">*</span></label>
+          <select class="form-select" id="rt-status" onchange="onStatusChange()">
+            <option value="完好">完好</option>
+            <option value="损坏">损坏</option>
+            <option value="丢失">丢失</option>
+            <option value="部分归还">部分归还</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">归还时间</label>
+          <input class="form-input" value="${new Date().toLocaleString('zh-CN')}" readonly>
+        </div>
+        <div class="form-item"><label class="form-label">验收人</label>
+          <select class="form-select"><option>刘芳</option><option>李强</option><option>张敏</option></select>
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">验收备注</label>
+        <textarea class="form-textarea" id="rt-remark" placeholder="物品状态说明..."></textarea>
+      </div>
+      <div id="damage-block" style="display:none">
+        <div class="divider"></div>
+        <div class="card" style="background:var(--error-bg);border-color:var(--error)">
+          <div class="card-body" style="padding:16px">
+            <div class="font-bold text-red mb-12"><i data-lucide="alert-triangle" style="width:16px;vertical-align:middle"></i> 损坏赔偿处理</div>
+            <div class="form-item"><label class="form-label">损坏情况说明<span class="required">*</span></label>
+              <textarea class="form-textarea" id="dm-desc" placeholder="详细描述损坏情况"></textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-item"><label class="form-label">定损金额（元）<span class="required">*</span></label>
+                <input type="number" class="form-input" id="dm-amt" value="0" min="0" oninput="calcCompensate()">
+              </div>
+              <div class="form-item"><label class="form-label">赔付方式<span class="required">*</span></label>
+                <select class="form-select" id="dm-pay" onchange="calcCompensate()">
+                  <option value="扣押金">扣押金</option>
+                  <option value="追加赔偿">追加赔偿</option>
+                  <option value="免赔">免赔</option>
+                </select>
+              </div>
+            </div>
+            <div class="kv-grid mt-12">
+              <div class="kv-item"><div class="k">押金金额</div><div class="v">¥${o.deposit}</div></div>
+              <div class="kv-item"><div class="k">定损金额</div><div class="v" id="dm-assess">¥0</div></div>
+              <div class="kv-item"><div class="k">押金抵扣</div><div class="v" id="dm-deduct">¥0</div></div>
+              <div class="kv-item"><div class="k">追加赔偿</div><div class="v" id="dm-extra">¥0</div></div>
+              <div class="kv-item"><div class="k">退还余额</div><div class="v font-bold text-primary" id="dm-refund">¥0</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="submitReturn()">确认归还</button>
+    </div></div>`;
+  openModal(html);
+  onStatusChange();
+  if(window.lucide) lucide.createIcons();
+};
+
+window.onStatusChange = function(){
+  const st = document.getElementById('rt-status').value;
+  document.getElementById('damage-block').style.display = (st==='损坏'||st==='丢失') ? 'block' : 'none';
+};
+
+window.calcCompensate = function(){
+  if(!currentOrder) return;
+  const amt = parseFloat(document.getElementById('dm-amt').value)||0;
+  const pay = document.getElementById('dm-pay').value;
+  let deduct=0, extra=0, refund=currentOrder.deposit;
+  if(pay==='免赔'){ deduct=0; extra=0; refund=currentOrder.deposit; }
+  else if(pay==='扣押金'){ deduct=Math.min(amt, currentOrder.deposit); extra=Math.max(0, amt-currentOrder.deposit); refund=currentOrder.deposit-deduct; }
+  else { extra=amt; refund=currentOrder.deposit; deduct=0; }
+  document.getElementById('dm-assess').textContent='¥'+amt;
+  document.getElementById('dm-deduct').textContent='¥'+deduct;
+  document.getElementById('dm-extra').textContent='¥'+extra;
+  document.getElementById('dm-refund').textContent='¥'+refund;
+};
+
+window.submitReturn = function(){
+  const qty = parseInt(document.getElementById('rt-qty').value)||1;
+  const status = document.getElementById('rt-status').value;
+  const remark = document.getElementById('rt-remark').value.trim();
+  const inspector = '刘芳';
+  const ret = {
+    id:'GH'+Date.now().toString().slice(-10), orderId:currentOrder.id, item:currentOrder.item,
+    qty, returnTime:new Date().toLocaleString('zh-CN'), status, inspector, remark:remark||'无'
+  };
+  // 更新订单状态
+  currentOrder.status = '已归还';
+  // 押金处理
+  const dp = DEPOSITS.find(d=>d.orderId===currentOrder.id);
+  if(status==='完好' || status==='部分归还'){
+    if(dp){ dp.status='已退还'; dp.refundTime=new Date().toLocaleString('zh-CN'); }
+    ret.depositRefund = currentOrder.deposit;
+  } else if(status==='损坏' || status==='丢失'){
+    const amt = parseFloat(document.getElementById('dm-amt').value)||0;
+    const desc = document.getElementById('dm-desc').value.trim();
+    const pay = document.getElementById('dm-pay').value;
+    if(!desc){ toast('请填写损坏情况说明','error'); return; }
+    let deduct=0, extra=0, refund=currentOrder.deposit;
+    if(pay==='免赔'){ refund=currentOrder.deposit; }
+    else if(pay==='扣押金'){ deduct=Math.min(amt, currentOrder.deposit); extra=Math.max(0, amt-currentOrder.deposit); refund=currentOrder.deposit-deduct; }
+    else { extra=amt; refund=currentOrder.deposit; }
+    if(dp){ dp.status='已抵扣'; dp.deductAmt=deduct; dp.refundAmt=refund; }
+    ret.depositRefund = refund;
+    COMPENSATIONS.unshift({
+      id:'PC'+Date.now().toString().slice(-10), orderId:currentOrder.id, item:currentOrder.item,
+      customer:currentOrder.customer, damage:desc, assessAmt:amt, payMethod:pay,
+      deductAmt:deduct, extraAmt:extra, refundAmt:refund, handler:inspector,
+      time:new Date().toLocaleString('zh-CN'), status:'已处理'
+    });
+  }
+  RETURNS.unshift(ret);
+  document.querySelector('.modal-overlay').remove();
+  renderOrders(); renderReturns(); renderDeposits(); renderCompensations();
+  toast(`归还登记成功，状态：${status}`,'success');
+};
+
+/* ========== 归还管理 ========== */
+function renderReturns(){
+  const rows = RETURNS.map(r=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${r.id}</td>
+      <td class="mono" style="font-size:12px">${r.orderId}</td>
+      <td>${r.item}</td>
+      <td class="text-right">${r.qty}</td>
+      <td>${r.returnTime}</td>
+      <td>${statusTag(r.status)}</td>
+      <td>${r.inspector}</td>
+      <td class="text-muted">${r.remark}</td>
+      <td class="text-right">¥${r.depositRefund||0}</td>
+    </tr>`).join('');
+  document.getElementById('return-rows').innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted">暂无归还记录</td></tr>`;
+}
+
+/* ========== 押金管理 ========== */
+function renderDeposits(){
+  const rows = DEPOSITS.map(d=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${d.id}</td>
+      <td class="mono" style="font-size:12px">${d.orderId}</td>
+      <td>${d.item}</td>
+      <td>${d.customer}</td>
+      <td class="text-right font-bold">¥${d.amount}</td>
+      <td>${d.payMethod}</td>
+      <td>${d.collectTime}</td>
+      <td>${statusTag(d.status)}</td>
+      <td class="text-muted">${d.refundTime||'-'}</td>
+      <td class="text-center">
+        ${d.status==='已收取(冻结中)' ? `<button class="btn btn-success btn-sm" onclick="refundDeposit('${d.id}')">退还押金</button>` : `-`}
+      </td>
+    </tr>`).join('');
+  document.getElementById('deposit-rows').innerHTML = rows || `<tr><td colspan="10" class="text-center text-muted">暂无押金记录</td></tr>`;
+  // 统计
+  const frozen = DEPOSITS.filter(d=>d.status==='已收取(冻结中)').reduce((s,d)=>s+d.amount,0);
+  document.getElementById('dep-frozen').textContent = '¥'+frozen;
+}
+
+window.refundDeposit = function(id){
+  const d = DEPOSITS.find(x=>x.id===id);
+  if(!d) return;
+  confirmDialog(`确认退还客户「${d.customer}」押金 ¥${d.amount}？\n退还方式：原路退回（${d.payMethod}）`, ()=>{
+    d.status='已退还';
+    d.refundTime=new Date().toLocaleString('zh-CN');
+    renderDeposits();
+    toast(`押金 ¥${d.amount} 已发起原路退回`,'success');
+  });
+};
+
+/* ========== 赔偿记录 ========== */
+function renderCompensations(){
+  const rows = COMPENSATIONS.map(c=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${c.id}</td>
+      <td class="mono" style="font-size:12px">${c.orderId}</td>
+      <td>${c.item}</td>
+      <td>${c.customer}</td>
+      <td class="text-muted" style="max-width:200px">${c.damage}</td>
+      <td class="text-right">¥${c.assessAmt}</td>
+      <td><span class="tag tag-orange">${c.payMethod}</span></td>
+      <td class="text-right">¥${c.deductAmt}</td>
+      <td class="text-right">¥${c.extraAmt}</td>
+      <td class="text-right">¥${c.refundAmt}</td>
+      <td>${c.handler}</td>
+      <td>${statusTag(c.status)}</td>
+    </tr>`).join('');
+  document.getElementById('comp-rows').innerHTML = rows || `<tr><td colspan="12" class="text-center text-muted">暂无赔偿记录</td></tr>`;
+}
+
+/* ========== 页面 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">押金 / 归还 / 损坏赔偿</div>
+  <div class="page-desc">租赁押金三态管理（已收取冻结/已抵扣/已退还），归还登记验收，损坏定损赔付；押金不构成收入，转赔偿时确认收入</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card"><div class="stat-label">冻结中押金</div><div class="stat-value" style="font-size:24px;color:var(--primary)" id="dep-frozen">¥0</div></div>
+  <div class="stat-card"><div class="stat-label">待归还订单</div><div class="stat-value" style="font-size:24px;color:var(--warning)">${RENTAL_ORDERS.filter(o=>o.status==='租赁中').length}</div></div>
+  <div class="stat-card"><div class="stat-label">本月赔偿笔数</div><div class="stat-value" style="font-size:24px">${COMPENSATIONS.length}</div></div>
+  <div class="stat-card"><div class="stat-label">累计赔偿金额</div><div class="stat-value" style="font-size:24px;color:var(--error)">¥${COMPENSATIONS.reduce((s,c)=>s+c.assessAmt,0)}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="orders" onclick="switchTab('orders')"><i data-lucide="receipt" style="width:16px;vertical-align:middle"></i> 租赁订单</div>
+      <div class="tab" data-tab="returns" onclick="switchTab('returns')"><i data-lucide="corner-down-left" style="width:16px;vertical-align:middle"></i> 归还管理</div>
+      <div class="tab" data-tab="deposits" onclick="switchTab('deposits')"><i data-lucide="shield-check" style="width:16px;vertical-align:middle"></i> 押金管理</div>
+      <div class="tab" data-tab="comp" onclick="switchTab('comp')"><i data-lucide="alert-octagon" style="width:16px;vertical-align:middle"></i> 赔偿记录</div>
+    </div>
+  </div>
+
+  <!-- 租赁订单 -->
+  <div class="tab-panel" data-panel="orders">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索订单号/客户" style="flex:1">
+        <select class="form-select"><option>全部状态</option><option>租赁中</option><option>已归还</option></select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>订单号</th><th>物品</th><th class="text-right">数量</th><th class="text-right">押金</th>
+            <th>客户</th><th>渠道</th><th>开始时间</th><th>押金状态</th><th>订单状态</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="order-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 归还管理 -->
+  <div class="tab-panel" data-panel="returns" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索归还单号/订单号" style="flex:1">
+        <select class="form-select"><option>全部状态</option><option>完好</option><option>损坏</option><option>丢失</option><option>部分归还</option></select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>归还单号</th><th>关联订单</th><th>物品</th><th class="text-right">数量</th>
+            <th>归还时间</th><th>状态</th><th>验收人</th><th>备注</th><th class="text-right">退还押金</th>
+          </tr></thead>
+          <tbody id="return-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 押金管理 -->
+  <div class="tab-panel" data-panel="deposits" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索押金单号/客户" style="flex:1">
+        <select class="form-select"><option>全部状态</option><option>已收取(冻结中)</option><option>已抵扣</option><option>已退还</option></select>
+        <button class="btn btn-default" onclick="toast('押金退还时限：7个工作日内原路退回（可在系统配置中调整）','info')"><i data-lucide="settings"></i> 退还时限配置</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>押金单号</th><th>关联订单</th><th>物品</th><th>客户</th>
+            <th class="text-right">金额</th><th>收取方式</th><th>收取时间</th><th>状态</th><th>退还时间</th><th class="text-center">操作</th>
+          </tr></thead>
+          <tbody id="deposit-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 赔偿记录 -->
+  <div class="tab-panel" data-panel="comp" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索赔偿单号/客户" style="flex:1">
+        <select class="form-select"><option>全部赔付方式</option><option>扣押金</option><option>追加赔偿</option><option>免赔</option></select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>赔偿单号</th><th>关联订单</th><th>物品</th><th>客户</th><th>损坏情况</th>
+            <th class="text-right">定损</th><th>赔付方式</th><th class="text-right">押金抵扣</th>
+            <th class="text-right">追加赔偿</th><th class="text-right">退还余额</th><th>处理人</th><th>状态</th>
+          </tr></thead>
+          <tbody id="comp-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderOrders();
+renderReturns();
+renderDeposits();
+renderCompensations();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

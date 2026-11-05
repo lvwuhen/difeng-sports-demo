@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客户消费记录 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('consumption', '客户消费记录');
+
+// 消费记录（汇总场地预约、商品购买、物品租赁、赛事报名、培训）
+const consumptions = [
+  {id:'CS001', time:'2026-10-30 18:00', type:'场地预约', item:'2号篮球场 18:00-20:00', amount:240, payMethod:'在线支付', venue:'总部', orderNo:'ORD20261030001', operator:'系统', customerId:'CU001', customerName:'陈晓明'},
+  {id:'CS002', time:'2026-10-30 14:32', type:'储值充值', item:'充值本金 ¥1000 + 赠送 ¥100', amount:1000, payMethod:'前台收款', venue:'总部', orderNo:'RCH20261030001', operator:'张敏', customerId:'CU001', customerName:'陈晓明'},
+  {id:'CS003', time:'2026-10-29 19:15', type:'场地预约', item:'B1羽毛球场 14:00-15:00', amount:60, payMethod:'储值余额', venue:'总部', orderNo:'ORD20261030002', operator:'张敏', customerId:'CU002', customerName:'林雅婷'},
+  {id:'CS004', time:'2026-10-29 15:00', type:'场地预约', item:'1号足球场 15:00-17:00', amount:400, payMethod:'储值余额', venue:'总部', orderNo:'ORD20261029004', operator:'系统', customerId:'CU003', customerName:'厦门建工集团'},
+  {id:'CS005', time:'2026-10-28 20:00', type:'场地预约', item:'A2篮球场 20:00-22:00', amount:240, payMethod:'次卡', venue:'篮球公园', orderNo:'ORD20261028005', operator:'系统', customerId:'CU004', customerName:'鹭岛篮球俱乐部'},
+  {id:'CS006', time:'2026-10-28 15:30', type:'商品购买', item:'农夫山泉×10, 脉动×5', amount:60, payMethod:'在线支付', venue:'总部', orderNo:'GOODS20261028001', operator:'张敏', customerId:'CU001', customerName:'陈晓明'},
+  {id:'CS007', time:'2026-10-27 10:20', type:'物品租赁', item:'网球拍×2 2小时', amount:80, payMethod:'在线支付', venue:'网球中心', orderNo:'RENT20261027001', operator:'王前台', customerId:'CU002', customerName:'林雅婷'},
+  {id:'CS008', time:'2026-10-26 09:00', type:'赛事报名', item:'地丰杯青少年篮球邀请赛 报名费', amount:300, payMethod:'在线支付', venue:'总部', orderNo:'EVT20261026001', operator:'系统', customerId:'CU001', customerName:'陈晓明'},
+  {id:'CS009', time:'2026-10-25 14:00', type:'培训', item:'青少年篮球培训班 10课时', amount:1500, payMethod:'对公转账', venue:'篮球公园', orderNo:'TRN20261025001', operator:'李教练', customerId:'CU004', customerName:'鹭岛篮球俱乐部'},
+  {id:'CS010', time:'2026-10-24 16:00', type:'商品购买', item:'斯伯丁篮球×1', amount:199, payMethod:'在线支付', venue:'总部', orderNo:'GOODS20261024001', operator:'张敏', customerId:'CU002', customerName:'林雅婷'},
+  {id:'CS011', time:'2026-10-23 11:00', type:'场地预约', item:'T1网球场 10:00-11:00', amount:80, payMethod:'在线支付', venue:'网球中心', orderNo:'ORD20261023001', operator:'系统', customerId:'CU001', customerName:'陈晓明'},
+  {id:'CS012', time:'2026-10-22 19:30', type:'场地预约', item:'A1篮球场 19:00-21:00', amount:200, payMethod:'在线支付', venue:'篮球公园', orderNo:'ORD20261022001', operator:'系统', customerId:null, customerName:'散客'},
+];
+
+const typeTagMap = {
+  '场地预约':'tag-blue','商品购买':'tag-green','物品租赁':'tag-cyan',
+  '赛事报名':'tag-orange','培训':'tag-purple','储值充值':'tag-gray'
+};
+
+let curPage = 1, pageSize = 10;
+
+function getFiltered(){
+  const tp = document.getElementById('csType')?.value||'';
+  const ven = document.getElementById('csVenue')?.value||'';
+  const cust = document.getElementById('csCust')?.value||'';
+  const ds = document.getElementById('csStart')?.value||'';
+  const de = document.getElementById('csEnd')?.value||'';
+  return consumptions.filter(c=>{
+    if(tp && c.type!==tp) return false;
+    if(ven && c.venue!==ven) return false;
+    if(cust && c.customerName!==cust) return false;
+    const d = c.time.slice(0,10);
+    if(ds && d<ds) return false;
+    if(de && d>de) return false;
+    return true;
+  });
+}
+
+function renderConsumptions(){
+  const list = getFiltered();
+  const total = list.length;
+  const totalAmount = list.reduce((s,c)=>s+c.amount,0);
+  const start = (curPage-1)*pageSize;
+  const rows = list.slice(start,start+pageSize).map(c=>`
+    <tr>
+      <td style="font-size:13px">${c.time}</td>
+      <td><span class="tag ${typeTagMap[c.type]}">${c.type}</span></td>
+      <td style="max-width:260px">${c.item}</td>
+      <td class="text-right font-medium">¥${c.amount}</td>
+      <td style="font-size:13px">${c.payMethod}</td>
+      <td>${c.venue}</td>
+      <td class="mono" style="font-size:12px">${c.orderNo}</td>
+      <td>${c.operator}</td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewConsumption('${c.id}')">详情</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="history"></i></div><div class="empty-text">暂无消费记录</div></div></td></tr>`;
+  document.getElementById('csTbody').innerHTML = rows;
+  const pages = Math.max(1, Math.ceil(total/pageSize));
+  let btns='';
+  for(let i=1;i<=pages;i++) btns+=`<button class="page-btn ${i===curPage?'active':''}" onclick="goPage(${i})">${i}</button>`;
+  document.getElementById('csPag').innerHTML = `
+    <div class="pagination-info">共 ${total} 条，总金额 <b class="text-primary">¥${totalAmount.toLocaleString()}</b></div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${curPage<=1?'disabled':''} onclick="goPage(${curPage-1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${curPage>=pages?'disabled':''} onclick="goPage(${curPage+1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  if(window.lucide) lucide.createIcons();
+}
+window.goPage = p=>{ curPage=p; renderConsumptions(); };
+
+// 消费详情
+window.viewConsumption = function(id){
+  const c = consumptions.find(x=>x.id===id);
+  const order = MOCK.orders.find(o=>o.id===c.orderNo);
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">消费详情 <span class="tag ${typeTagMap[c.type]}" style="margin-left:8px">${c.type}</span></div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">消费时间</div><div class="v">${c.time}</div></div>
+        <div class="kv-item"><div class="k">消费类型</div><div class="v">${c.type}</div></div>
+        <div class="kv-item"><div class="k">消费项目</div><div class="v">${c.item}</div></div>
+        <div class="kv-item"><div class="k">消费金额</div><div class="v text-primary font-bold">¥${c.amount}</div></div>
+        <div class="kv-item"><div class="k">支付方式</div><div class="v">${c.payMethod}</div></div>
+        <div class="kv-item"><div class="k">场馆</div><div class="v">${c.venue}</div></div>
+        <div class="kv-item"><div class="k">关联订单</div><div class="v mono">${c.orderNo}</div></div>
+        <div class="kv-item"><div class="k">操作人</div><div class="v">${c.operator}</div></div>
+      </div>
+      ${order?`
+      <div class="divider"></div>
+      <div class="font-medium mb-12">订单信息</div>
+      <div class="kv-grid">
+        <div class="kv-item"><div class="k">客户</div><div class="v">${order.customer}</div></div>
+        <div class="kv-item"><div class="k">场地</div><div class="v">${order.court}</div></div>
+        <div class="kv-item"><div class="k">时段</div><div class="v">${order.time}</div></div>
+        <div class="kv-item"><div class="k">订单状态</div><div class="v">${order.status}</div></div>
+      </div>`:''}
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>
+  </div>`;
+  openModal(html);
+};
+
+// 客户消费统计模态框
+window.viewCustomerStats = function(customerName){
+  const cust = MOCK.customers.find(c=>c.name===customerName || (customerName && c.name.includes(customerName.slice(0,2))));
+  const list = consumptions.filter(c=>c.customerName===customerName);
+  const totalAmount = list.reduce((s,c)=>s+c.amount,0);
+  const times = list.length;
+  const sortedDates = list.map(c=>c.time.slice(0,10)).sort();
+  const lastConsume = sortedDates[sortedDates.length-1]||'-';
+  let interval = '-';
+  if(sortedDates.length>=2){
+    const d1 = new Date(sortedDates[0]);
+    const d2 = new Date(sortedDates[sortedDates.length-1]);
+    const days = Math.round((d2-d1)/(1000*60*60*24));
+    interval = days>0?`约 ${Math.round(days/(times-1))} 天/次`:'同日多次';
+  }
+  // 类型分布
+  const typeDist = {};
+  list.forEach(c=>{ typeDist[c.type]=(typeDist[c.type]||0)+c.amount; });
+
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">客户消费统计 - ${customerName}</div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+        <div class="stat-card"><div class="stat-label">消费次数</div><div class="stat-value" style="font-size:22px">${times}</div></div>
+        <div class="stat-card"><div class="stat-label">累计金额</div><div class="stat-value" style="font-size:22px;color:var(--primary)">¥${totalAmount.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">最近消费</div><div class="stat-value" style="font-size:18px">${lastConsume}</div></div>
+        <div class="stat-card"><div class="stat-label">平均间隔</div><div class="stat-value" style="font-size:18px">${interval}</div></div>
+      </div>
+
+      <div class="font-medium mb-12">消费类型分布</div>
+      <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:20px">
+        ${Object.entries(typeDist).map(([t,amt])=>`
+          <div class="stat-card">
+            <div class="stat-label"><span class="tag ${typeTagMap[t]}">${t}</span></div>
+            <div class="stat-value" style="font-size:18px">¥${amt.toLocaleString()}</div>
+            <div class="stat-trend">占比 ${Math.round(amt/totalAmount*100)}%</div>
+          </div>`).join('')}
+      </div>
+
+      <div class="divider"></div>
+      <div class="font-medium mb-12">消费明细</div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>时间</th><th>类型</th><th>项目</th><th class="text-right">金额</th><th>支付方式</th><th>场馆</th></tr></thead>
+          <tbody>${list.map(c=>`<tr>
+            <td style="font-size:13px">${c.time}</td>
+            <td><span class="tag ${typeTagMap[c.type]}">${c.type}</span></td>
+            <td>${c.item}</td>
+            <td class="text-right">¥${c.amount}</td>
+            <td>${c.payMethod}</td>
+            <td>${c.venue}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="toast('已导出消费明细','success')"><i data-lucide="download"></i> 导出明细</button>
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+function renderCustomerStats(){
+  // 按客户聚合
+  const statMap = {};
+  consumptions.forEach(c=>{
+    if(!c.customerId && c.customerName==='散客') return;
+    if(!statMap[c.customerName]) statMap[c.customerName]={customerName:c.customerName,times:0,amount:0,lastTime:c.time};
+    statMap[c.customerName].times++;
+    statMap[c.customerName].amount += c.amount;
+    if(c.time>statMap[c.customerName].lastTime) statMap[c.customerName].lastTime=c.time;
+  });
+  const stats = Object.values(statMap).sort((a,b)=>b.amount-a.amount);
+  document.getElementById('custStatTbody').innerHTML = stats.map(s=>`
+    <tr>
+      <td class="font-medium">${s.customerName}</td>
+      <td class="text-center">${s.times}</td>
+      <td class="text-right font-medium">¥${s.amount.toLocaleString()}</td>
+      <td>${s.lastTime.slice(0,10)}</td>
+      <td class="actions"><button class="btn btn-ghost btn-sm" onclick="viewCustomerStats('${s.customerName}')">查看明细</button></td>
+    </tr>`).join('');
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+  if(name==='customerStat') renderCustomerStats();
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">客户消费记录</div>
+  <div class="page-desc">汇总场地预约、商品购买、物品租赁、赛事报名、培训等全部消费，支持多维度筛选与客户消费统计</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">总消费笔数 <span class="stat-icon blue"><i data-lucide="history"></i></span></div><div class="stat-value">${consumptions.length}</div></div>
+  <div class="stat-card"><div class="stat-label">总消费金额 <span class="stat-icon green"><i data-lucide="banknote"></i></span></div><div class="stat-value" style="font-size:22px">¥${consumptions.reduce((s,c)=>s+c.amount,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">场地预约 <span class="stat-icon cyan"><i data-lucide="ticket"></i></span></div><div class="stat-value" style="font-size:22px">¥${consumptions.filter(c=>c.type==='场地预约').reduce((s,c)=>s+c.amount,0).toLocaleString()}</div></div>
+  <div class="stat-card"><div class="stat-label">消费客户数 <span class="stat-icon purple"><i data-lucide="users"></i></span></div><div class="stat-value" style="font-size:22px">${new Set(consumptions.filter(c=>c.customerId).map(c=>c.customerId)).size}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="all" onclick="switchTab('all')">全部消费</div>
+      <div class="tab" data-tab="customerStat" onclick="switchTab('customerStat')">按客户统计</div>
+    </div>
+  </div>
+
+  <!-- 全部消费 -->
+  <div class="tab-panel" data-panel="all">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="csType" onchange="curPage=1;renderConsumptions()">
+            <option value="">全部类型</option><option>场地预约</option><option>商品购买</option><option>物品租赁</option><option>赛事报名</option><option>培训</option><option>储值充值</option>
+          </select>
+          <select class="form-select" id="csVenue" onchange="curPage=1;renderConsumptions()">
+            <option value="">全部场馆</option>${MOCK.venues.map(v=>{const short=v.name.includes('总部')?'总部':v.name.includes('篮球')?'篮球公园':v.name.includes('网球')?'网球中心':v.name.includes('羽毛球')?'羽毛球馆':v.name;return `<option value="${short}">${v.name}</option>`;}).join('')}
+          </select>
+          <select class="form-select" id="csCust" onchange="curPage=1;renderConsumptions()">
+            <option value="">全部客户</option>${[...new Set(consumptions.map(c=>c.customerName))].map(n=>`<option>${n}</option>`).join('')}
+          </select>
+        </div>
+        <div class="filter-group">
+          <input type="date" class="form-input" id="csStart" onchange="curPage=1;renderConsumptions()">
+          <span class="text-muted">至</span>
+          <input type="date" class="form-input" id="csEnd" onchange="curPage=1;renderConsumptions()">
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出消费记录','success')"><i data-lucide="download"></i> 导出</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>消费时间</th><th>类型</th><th>项目</th><th class="text-right">金额</th><th>支付方式</th><th>场馆</th><th>关联订单</th><th>操作人</th><th>操作</th></tr></thead>
+          <tbody id="csTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="csPag"></div>
+    </div>
+  </div>
+
+  <!-- 按客户统计 -->
+  <div class="tab-panel" data-panel="customerStat" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" placeholder="搜索客户" style="width:220px">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出客户消费统计','success')"><i data-lucide="download"></i> 导出统计</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>客户</th><th class="text-center">消费次数</th><th class="text-right">累计金额</th><th>最近消费</th><th>操作</th></tr></thead>
+          <tbody id="custStatTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderConsumptions();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

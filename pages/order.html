@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>订单管理 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('order', '订单管理');
+
+const statusTagMap = {
+  '待支付':'tag-orange','已支付':'tag-blue','已核销':'tag-green',
+  '已退款':'tag-gray','已取消':'tag-red','已完成':'tag-green'
+};
+const sourceTagMap = {
+  '小程序':'tag-blue','线下':'tag-green','美团':'tag-orange','抖音':'tag-purple'
+};
+
+let curPage = 1, pageSize = 10;
+
+function getFiltered(){
+  const st = document.getElementById('fStatus')?.value||'';
+  const src = document.getElementById('fSource')?.value||'';
+  const ven = document.getElementById('fVenue')?.value||'';
+  const kw = (document.getElementById('fKw')?.value||'').trim();
+  const ds = document.getElementById('fStart')?.value||'';
+  const de = document.getElementById('fEnd')?.value||'';
+  return MOCK.orders.filter(o=>{
+    if(st && o.status!==st) return false;
+    if(src && o.source!==src) return false;
+    if(ven && o.venue!==ven) return false;
+    if(kw && !(o.customer.includes(kw)||o.id.includes(kw)||o.phone.includes(kw))) return false;
+    const d = o.time.slice(0,10);
+    if(ds && d<ds) return false;
+    if(de && d>de) return false;
+    return true;
+  });
+}
+
+function renderOrders(){
+  const list = getFiltered();
+  const total = list.length;
+  const start = (curPage-1)*pageSize;
+  const rows = list.slice(start,start+pageSize).map(o=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${o.id}</td>
+      <td><span class="tag ${sourceTagMap[o.source]||'tag-gray'}">${o.source}</span></td>
+      <td><div class="font-medium">${o.customer}</div><div class="text-muted" style="font-size:12px">${o.phone}</div></td>
+      <td>${o.venue}<br><span class="text-muted" style="font-size:12px">${o.court}</span></td>
+      <td style="font-size:13px">${o.time}</td>
+      <td class="font-medium">¥${o.amount}</td>
+      <td style="font-size:13px">${o.payMethod}</td>
+      <td><span class="tag ${statusTagMap[o.status]||'tag-gray'}">${o.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewOrder('${o.id}')">详情</button>
+        ${o.status==='待支付'?`<button class="btn btn-ghost btn-sm" onclick="toast('已发送催付提醒','success')">催付</button>`:''}
+      </td>
+    </tr>`).join('') || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无符合条件的订单</div></div></td></tr>`;
+  document.getElementById('orderTbody').innerHTML = rows;
+  const pages = Math.max(1, Math.ceil(total/pageSize));
+  let btns='';
+  for(let i=1;i<=pages;i++) btns+=`<button class="page-btn ${i===curPage?'active':''}" onclick="goPage(${i})">${i}</button>`;
+  document.getElementById('orderPag').innerHTML = `
+    <div class="pagination-info">共 ${total} 条</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${curPage<=1?'disabled':''} onclick="goPage(${curPage-1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${curPage>=pages?'disabled':''} onclick="goPage(${curPage+1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  if(window.lucide) lucide.createIcons();
+}
+window.goPage = p=>{ curPage=p; renderOrders(); };
+
+window.viewOrder = function(id){
+  const o = MOCK.orders.find(x=>x.id===id);
+  const finNo = o.status==='已核销'||o.status==='已完成' ? 'NCC-AR-20261030-'+Math.floor(Math.random()*900+100) : '-';
+  const invoice = MOCK.invoices.find(i=>i.order===id);
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">订单详情 <span class="mono text-muted" style="font-size:13px">${o.id}</span> <span class="tag ${statusTagMap[o.status]}" style="margin-left:8px">${o.status}</span></div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <!-- 基本信息 -->
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">订单号</div><div class="v mono">${o.id}</div></div>
+        <div class="kv-item"><div class="k">订单来源</div><div class="v"><span class="tag ${sourceTagMap[o.source]}">${o.source}</span></div></div>
+        <div class="kv-item"><div class="k">客户</div><div class="v">${o.customer}（${o.phone}）</div></div>
+        <div class="kv-item"><div class="k">场馆/场地</div><div class="v">${o.venue} · ${o.court}</div></div>
+        <div class="kv-item"><div class="k">预约时段</div><div class="v">${o.time}</div></div>
+        <div class="kv-item"><div class="k">支付方式</div><div class="v">${o.payMethod}</div></div>
+      </div>
+
+      <div class="divider"></div>
+      <!-- 金额构成 -->
+      <div class="font-medium mb-12">金额构成</div>
+      <table class="data-table" style="margin-bottom:16px">
+        <thead><tr><th>项目</th><th class="text-right">金额</th></tr></thead>
+        <tbody>
+          <tr><td>场地费（${o.court}）</td><td class="text-right">¥${o.amount}</td></tr>
+          <tr><td>优惠减免</td><td class="text-right text-success">- ¥0</td></tr>
+          <tr style="background:#fafafa"><td class="font-bold">订单总额</td><td class="text-right font-bold">¥${o.amount}</td></tr>
+        </tbody>
+      </table>
+
+      <!-- 支付流水 -->
+      <div class="font-medium mb-12">支付流水</div>
+      <div class="list-row">
+        <span class="tag ${o.status==='已退款'?'tag-red':'tag-green'}">${o.status==='已退款'?'退款':'收款'}</span>
+        <div class="flex-1"><div class="font-medium">${o.payMethod}</div><div class="text-muted" style="font-size:12px">交易号：XEF${Math.floor(Math.random()*9000000000+1000000000)}</div></div>
+        <div class="font-medium">${o.status==='已退款'?'-':''}¥${o.amount}</div>
+      </div>
+
+      <!-- 发票 & 财务单据 -->
+      <div class="stats-grid" style="grid-template-columns:1fr 1fr;margin:16px 0">
+        <div class="card" style="margin:0">
+          <div class="card-body" style="padding:12px 16px">
+            <div class="text-muted" style="font-size:12px">电子发票</div>
+            ${invoice ? `
+              <div class="font-medium mt-4">${invoice.no}</div>
+              <div class="text-muted" style="font-size:12px">${invoice.type} · ¥${invoice.amount}</div>
+              <div><span class="tag ${invoice.status==='开具成功'?'tag-green':'tag-red'}">${invoice.status}</span></div>
+            ` : '<div class="text-muted mt-4">未开具</div>'}
+          </div>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-body" style="padding:12px 16px">
+            <div class="text-muted" style="font-size:12px">财务单据号（用友NCC）</div>
+            <div class="font-medium mt-4 mono">${finNo}</div>
+            <div class="text-muted" style="font-size:12px">应收单状态：${finNo!=='-'?'已推送':'待生成'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <!-- 操作时间轴 -->
+      <div class="font-medium mb-12">操作时间轴</div>
+      <div class="timeline">
+        <div class="timeline-item success"><div class="timeline-time">${o.time.split(' ')[0]} 10:23</div><div class="timeline-title">订单创建</div><div class="timeline-desc">客户 ${o.customer} 通过「${o.source}」下单</div></div>
+        ${o.status!=='待支付'&&o.status!=='已取消'?`<div class="timeline-item success"><div class="timeline-time">${o.time.split(' ')[0]} 10:25</div><div class="timeline-title">支付完成</div><div class="timeline-desc">${o.payMethod} ¥${o.amount}，交易号已生成</div></div>`:''}
+        ${(o.status==='已核销'||o.status==='已完成')?`<div class="timeline-item success"><div class="timeline-time">${o.time.split(' ')[0]} 17:55</div><div class="timeline-title">订单核销</div><div class="timeline-desc">前台张敏核销，终端 PC-01</div></div>`:''}
+        ${o.status==='已退款'?`<div class="timeline-item error"><div class="timeline-time">${o.time.split(' ')[0]} 16:40</div><div class="timeline-title">退款完成</div><div class="timeline-desc">原路退回 ¥${o.amount}，审批人：王财务</div></div>`:''}
+        ${o.status==='已取消'?`<div class="timeline-item warning"><div class="timeline-time">${o.time.split(' ')[0]} 19:10</div><div class="timeline-title">订单取消</div><div class="timeline-desc">客户主动取消</div></div>`:''}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="toast('打印订单','info')"><i data-lucide="printer"></i> 打印</button>
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      ${o.status==='待支付'?`<button class="btn btn-primary" onclick="toast('已标记为已支付','success');this.closest('.modal-overlay').remove()">确认收款</button>`:''}
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+// 收银班次
+const shifts = [
+  {id:'SH2026110501', cashier:'张敏', venue:'总部', openTime:'2026-11-05 08:00', closeTime:'2026-11-05 16:00', pettyCash:500, actualCash:1280, orderCount:42, cashAmount:780, onlineAmount:4250, status:'已交班'},
+  {id:'SH2026110502', cashier:'李强', venue:'总部', openTime:'2026-11-05 16:00', closeTime:'-', pettyCash:500, actualCash:0, orderCount:18, cashAmount:320, onlineAmount:2180, status:'进行中'},
+];
+
+function renderShifts(){
+  const rows = shifts.map(s=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${s.id}</td>
+      <td>${s.cashier}</td>
+      <td>${s.venue}</td>
+      <td style="font-size:13px">${s.openTime}<br><span class="text-muted">~ ${s.closeTime}</span></td>
+      <td class="text-center">${s.orderCount}</td>
+      <td class="text-right">¥${s.cashAmount}</td>
+      <td class="text-right">¥${s.onlineAmount}</td>
+      <td><span class="tag ${s.status==='进行中'?'tag-orange':'tag-green'}">${s.status}</span></td>
+      <td class="actions">
+        ${s.status==='进行中'?`<button class="btn btn-ghost btn-sm" onclick="closeShift('${s.id}')">交班</button>`:`<button class="btn btn-ghost btn-sm" onclick="toast('查看班次 ${s.id} 详情','info')">详情</button>`}
+      </td>
+    </tr>`).join('');
+  document.getElementById('shiftTbody').innerHTML = rows;
+}
+
+window.openShift = function(){
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">开班登记</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">收银人</label><input class="form-input" value="张敏" disabled></div>
+        <div class="form-item"><label class="form-label">场馆</label><input class="form-input" value="地丰体育中心（总部）" disabled></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">开班时间</label><input class="form-input" value="2026-11-05 16:00" disabled></div>
+        <div class="form-item"><label class="form-label">备用金（元）<span class="required">*</span></label><input type="number" class="form-input" id="sp-petty" value="500"></div>
+      </div>
+      <div class="form-item"><label class="form-label">备注</label><input class="form-input" placeholder="如：零钱准备情况"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('开班成功，备用金 ¥'+(document.getElementById('sp-petty').value||500),'success');this.closest('.modal-overlay').remove()">确认开班</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.closeShift = function(id){
+  const s = shifts.find(x=>x.id===id);
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">交班结算 - ${s.id}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">开班备用金</div><div class="v">¥${s.pettyCash}</div></div>
+        <div class="kv-item"><div class="k">订单数</div><div class="v">${s.orderCount}</div></div>
+        <div class="kv-item"><div class="k">应收现金</div><div class="v">¥${s.cashAmount}</div></div>
+        <div class="kv-item"><div class="k">在线支付</div><div class="v">¥${s.onlineAmount}</div></div>
+      </div>
+      <div class="form-item"><label class="form-label">现金实收（元）<span class="required">*</span></label>
+        <input type="number" class="form-input" id="cs-actual" value="${s.cashAmount}" oninput="checkCashDiff()">
+        <div class="form-hint" id="cs-hint">账实一致</div>
+      </div>
+      <div class="form-item"><label class="form-label">交班备注</label><textarea class="form-textarea" placeholder="零钱交接、异常说明等"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('交班成功','success');this.closest('.modal-overlay').remove()">确认交班</button>
+    </div>
+  </div>`;
+  openModal(html);
+  window.checkCashDiff = function(){
+    const actual = parseFloat(document.getElementById('cs-actual').value)||0;
+    const diff = actual - s.cashAmount;
+    const hint = document.getElementById('cs-hint');
+    if(diff===0){ hint.textContent='账实一致'; hint.style.color='var(--success)'; }
+    else if(diff>0){ hint.textContent=`长款 ¥${diff}`; hint.style.color='var(--warning)'; }
+    else { hint.textContent=`短款 ¥${Math.abs(diff)}`; hint.style.color='var(--error)'; }
+  };
+};
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">订单管理</div>
+  <div class="page-desc">全渠道订单统一管理，支持多维度筛选与订单详情追溯</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-label">今日订单 <span class="stat-icon blue"><i data-lucide="receipt"></i></span></div><div class="stat-value">128</div><div class="stat-trend up">较昨日 +5%</div></div>
+  <div class="stat-card"><div class="stat-label">待支付 <span class="stat-icon orange"><i data-lucide="clock"></i></span></div><div class="stat-value" style="color:var(--warning)">6</div><div class="stat-trend" style="color:var(--text-3)">待跟进</div></div>
+  <div class="stat-card"><div class="stat-label">今日营收 <span class="stat-icon green"><i data-lucide="banknote"></i></span></div><div class="stat-value">¥26,750</div><div class="stat-trend up">较昨日 +8.2%</div></div>
+  <div class="stat-card"><div class="stat-label">退款笔数 <span class="stat-icon red"><i data-lucide="rotate-ccw"></i></span></div><div class="stat-value" style="color:var(--error)">3</div><div class="stat-trend down">退款 ¥520</div></div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="order" onclick="switchTab('order')">订单列表</div>
+      <div class="tab" data-tab="shift" onclick="switchTab('shift')">前台收银班次</div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="order">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="fStatus" onchange="curPage=1;renderOrders()">
+            <option value="">全部状态</option>
+            <option>待支付</option><option>已支付</option><option>已核销</option><option>已退款</option><option>已取消</option><option>已完成</option>
+          </select>
+          <select class="form-select" id="fSource" onchange="curPage=1;renderOrders()">
+            <option value="">全部来源</option><option>小程序</option><option>线下</option><option>美团</option><option>抖音</option>
+          </select>
+          <select class="form-select" id="fVenue" onchange="curPage=1;renderOrders()">
+            <option value="">全部场馆</option>${MOCK.venues.map(v=>{const short=v.name.includes('总部')?'总部':v.name.includes('篮球')?'篮球公园':v.name.includes('网球')?'网球中心':v.name.includes('羽毛球')?'羽毛球馆':v.name;return `<option value="${short}">${v.name}</option>`;}).join('')}
+          </select>
+        </div>
+        <div class="filter-group">
+          <input type="date" class="form-input" id="fStart" onchange="curPage=1;renderOrders()">
+          <span class="text-muted">至</span>
+          <input type="date" class="form-input" id="fEnd" onchange="curPage=1;renderOrders()">
+        </div>
+        <input class="form-input" id="fKw" placeholder="订单号/客户/手机号" style="width:220px" oninput="curPage=1;renderOrders()">
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出订单','success')"><i data-lucide="download"></i> 导出</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>订单号</th><th>来源</th><th>客户</th><th>场馆/场地</th><th>时段</th><th class="text-right">金额</th><th>支付方式</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="orderTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="orderPag"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="shift" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select"><option>全部场馆</option>${MOCK.venues.map(v=>`<option>${v.name}</option>`).join('')}</select>
+          <select class="form-select"><option>全部状态</option><option>进行中</option><option>已交班</option></select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="openShift()"><i data-lucide="play"></i> 开班</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>班次号</th><th>收银人</th><th>场馆</th><th>时段</th><th class="text-center">订单数</th><th class="text-right">现金</th><th class="text-right">在线</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="shiftTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderOrders();
+renderShifts();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

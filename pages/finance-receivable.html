@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>应收单管理 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('finance-receivable', '应收单管理');
+
+/* ========== 工具 ========== */
+const PAGE_SIZE = 6;
+const TODAY = '2026-11-05';
+let pg = { list: 1 };
+let seq = 0;
+let activeModal = null;
+
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function nowStr(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${TODAY} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function genFinNo(ar){
+  seq++;
+  return `NCC-AR-${(ar.date || TODAY).replace(/-/g, '')}-${String(seq + 100).padStart(3, '0')}`;
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+
+const STATUS_TAG = {
+  '待推送':'tag-orange',
+  '已推送':'tag-blue',
+  '已接收':'tag-cyan',
+  '已审核':'tag-purple',
+  '已入账':'tag-green',
+  '推送失败':'tag-red',
+  '已冲销':'tag-gray'
+};
+
+/* ========== 数据 ========== */
+let RECEIVABLES = MOCK_EXT.receivables.map(r => ({ ...r, pushLog: [] }));
+
+RECEIVABLES.push(
+  { id:'AR20261105', venue:'总部', date:'2026-11-05', amount:16800.00, detail:26, status:'待推送', finNo:'', pushTime:'23:00 定时', pushLog:[] },
+  { id:'AR20261105B', venue:'篮球公园', date:'2026-11-05', amount:7250.00, detail:13, status:'待推送', finNo:'', pushTime:'23:00 定时', pushLog:[] },
+  { id:'AR20261104', venue:'网球中心', date:'2026-11-04', amount:4320.00, detail:14, status:'待推送', finNo:'', pushTime:'23:00 定时', pushLog:[] },
+  { id:'AR20261103', venue:'羽毛球馆', date:'2026-11-03', amount:2860.00, detail:9, status:'已推送', finNo:'NCC-AR-20261103-005', pushTime:'2026-11-03 23:00', pushLog:[] },
+  { id:'AR20261102', venue:'总部', date:'2026-11-02', amount:31200.00, detail:44, status:'已入账', finNo:'NCC-AR-20261102-006', pushTime:'2026-11-02 23:00', pushLog:[] },
+  { id:'AR20261101', venue:'篮球公园', date:'2026-11-01', amount:14980.00, detail:21, status:'推送失败', finNo:'', pushTime:'2026-11-01 23:05', pushLog:[] },
+  { id:'AR20261031', venue:'总部', date:'2026-10-31', amount:28900.00, detail:40, status:'已接收', finNo:'NCC-AR-20261031-007', pushTime:'2026-10-31 23:00', pushLog:[] }
+);
+
+RECEIVABLES.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+
+/* ========== 筛选与分页 ========== */
+function resetAndRender(){ pg.list = 1; renderTable(); }
+
+function filteredReceivables(){
+  const date = document.getElementById('ar-date')?.value || '';
+  const venue = document.getElementById('ar-venue')?.value || '';
+  const st = document.getElementById('ar-status')?.value || '';
+  const kw = (document.getElementById('ar-kw')?.value || '').trim();
+  return RECEIVABLES.filter(r => {
+    if(date && r.date !== date) return false;
+    if(venue && r.venue !== venue) return false;
+    if(st && r.status !== st) return false;
+    if(kw && !(r.id.includes(kw) || (r.finNo || '').includes(kw))) return false;
+    return true;
+  });
+}
+
+function gotoPage(p){ pg.list = p; renderTable(); }
+
+function buildPager(total){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg.list > pages) pg.list = pages;
+  if(pg.list < 1) pg.list = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg.list ? 'active' : ''}" onclick="gotoPage(${i})">${i}</button>`;
+  }
+  const el = document.getElementById('ar-pager');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg.list}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg.list <= 1 ? 'disabled' : ''} onclick="gotoPage(${pg.list - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg.list >= pages ? 'disabled' : ''} onclick="gotoPage(${pg.list + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 统计 ========== */
+function renderStats(){
+  const todayPending = RECEIVABLES.filter(r => r.date === TODAY && r.status === '待推送');
+  const booked = RECEIVABLES.filter(r => r.status === '已入账').reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const failed = RECEIVABLES.filter(r => r.status === '推送失败').length;
+  const el = document.getElementById('ar-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">今日待推送 <span class="stat-icon orange"><i data-lucide="clock-3"></i></span></div>
+      <div class="stat-value">${todayPending.length}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 张</span></div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>按场馆每日汇总生成</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">已入账金额 <span class="stat-icon green"><i data-lucide="landmark"></i></span></div>
+      <div class="stat-value">¥${money(booked)}</div>
+      <div class="stat-trend up"><i data-lucide="check-circle-2" style="width:14px"></i>财务已入账应收单合计</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">推送失败数 <span class="stat-icon red"><i data-lucide="x-circle"></i></span></div>
+      <div class="stat-value">${failed}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 张</span></div>
+      <div class="stat-trend down"><i data-lucide="alert-triangle" style="width:14px"></i>需重试推送</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 列表 ========== */
+function renderTable(){
+  const list = filteredReceivables();
+  const start = (pg.list - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(r => {
+    const acts = [];
+    if(r.status === '待推送') acts.push(`<button class="btn btn-primary btn-sm" onclick="pushAR('${r.id}',false)">立即推送</button>`);
+    if(r.status === '推送失败') acts.push(`<button class="btn btn-warning btn-sm" onclick="pushAR('${r.id}',true)">重试</button>`);
+    acts.push(`<button class="btn btn-default btn-sm" onclick="openDetail('${r.id}')">查看明细</button>`);
+    acts.push(`<button class="btn btn-ghost btn-sm" onclick="openTracking('${r.id}')">状态追踪</button>`);
+    return `<tr>
+      <td class="mono" style="font-size:13px">${r.id}</td>
+      <td>${r.venue}</td>
+      <td style="font-size:13px">${r.date}</td>
+      <td class="text-right font-medium">¥${money(r.amount)}</td>
+      <td class="text-center">${r.detail}</td>
+      <td><span class="tag ${STATUS_TAG[r.status] || 'tag-gray'}">${r.status}</span></td>
+      <td class="mono" style="font-size:12px">${r.finNo || '<span class="text-muted">—</span>'}</td>
+      <td style="font-size:13px;white-space:nowrap">${r.pushTime || '—'}</td>
+      <td class="actions" style="flex-wrap:wrap">${acts.join('')}</td>
+    </tr>`;
+  }).join('');
+  const tb = document.getElementById('ar-rows');
+  if(tb){
+    tb.innerHTML = rows || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="file-text"></i></div><div class="empty-text">当前筛选条件下暂无应收单</div></div></td></tr>`;
+  }
+  const cnt = document.getElementById('ar-count');
+  if(cnt) cnt.textContent = `当前筛选 ${list.length} 张`;
+  buildPager(list.length);
+  refreshIcons();
+}
+
+function renderAll(){
+  renderStats();
+  renderTable();
+}
+
+/* ========== 推送 ========== */
+function pushAR(id, isRetry){
+  const r = RECEIVABLES.find(x => x.id === id);
+  if(!r) return;
+  if(r.status !== '待推送' && r.status !== '推送失败'){ toast('该应收单当前状态不可推送', 'warning'); return; }
+  r.status = '已推送';
+  if(!r.finNo) r.finNo = genFinNo(r);
+  r.pushTime = nowStr();
+  r.pushLog.push({ time: r.pushTime, action: isRetry ? '重试推送' : '推送', result: '成功' });
+  renderAll();
+  toast(`应收单 ${r.id} ${isRetry ? '重试' : ''}推送至用友NCC成功，财务单据号 ${r.finNo}`, 'success');
+}
+
+/* ========== 查看明细 ========== */
+function detailRows(ar){
+  const pool = MOCK.orders.filter(o => o.venue === ar.venue);
+  const src = pool.length ? pool : MOCK.orders;
+  const ratios = [0.42, 0.31, 0.17];
+  const bizTypes = ['场地预约', '商品销售', '会员充值'];
+  const channels = ['在线支付', '前台收款', '会员储值'];
+  const rows = src.slice(0, 3).map((o, i) => ({
+    order: o.id,
+    biz: bizTypes[i],
+    amount: +(ar.amount * ratios[i]).toFixed(2),
+    time: ar.date + ' ' + ['09:20', '13:45', '19:30'][i],
+    channel: channels[i],
+    customer: o.customer
+  }));
+  const used = rows.reduce((s, x) => s + x.amount, 0);
+  const rest = +(ar.amount - used).toFixed(2);
+  return { rows, rest, restCount: Math.max(0, ar.detail - rows.length) };
+}
+
+function openDetail(id){
+  const ar = RECEIVABLES.find(x => x.id === id);
+  if(!ar) return;
+  closeActiveModal();
+  const d = detailRows(ar);
+  const bodyRows = d.rows.map(r => `
+    <tr>
+      <td class="mono" style="font-size:12px">${r.order}</td>
+      <td>${r.customer}</td>
+      <td>${r.biz}</td>
+      <td>${r.channel}</td>
+      <td class="text-right">¥${money(r.amount)}</td>
+      <td style="font-size:13px">${r.time}</td>
+    </tr>`).join('');
+  activeModal = openModal(`
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div class="modal-title">应收单明细 · ${ar.id}</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="kv-grid mb-16">
+          <div class="kv-item"><span class="k">场馆</span><span class="v">${ar.venue}</span></div>
+          <div class="kv-item"><span class="k">应收日期</span><span class="v">${ar.date}</span></div>
+          <div class="kv-item"><span class="k">应收金额</span><span class="v">¥${money(ar.amount)}</span></div>
+          <div class="kv-item"><span class="k">明细笔数 / 状态</span><span class="v">${ar.detail} 笔 · ${ar.status}</span></div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>业务订单号</th><th>客户</th><th>业务类型</th><th>收款方式</th><th class="text-right">金额</th><th>发生时间</th></tr>
+            </thead>
+            <tbody>
+              ${bodyRows}
+              <tr>
+                <td class="text-muted">其余 ${d.restCount} 笔汇总</td>
+                <td class="text-muted">—</td>
+                <td class="text-muted">场地/商品/充值等</td>
+                <td class="text-muted">多渠道</td>
+                <td class="text-right">¥${money(d.rest)}</td>
+                <td class="text-muted">${ar.date}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="flex justify-between items-center mt-16">
+          <div class="text-muted" style="font-size:12px">按场馆每日汇总推送，下列明细为汇总构成（示例展示前 3 笔）。</div>
+          <div class="font-medium">合计：<span class="text-primary" style="font-size:16px">¥${money(ar.amount)}</span></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+        ${ar.status === '待推送' || ar.status === '推送失败' ? `<button class="btn btn-primary" onclick="closeActiveModal();pushAR('${ar.id}',${ar.status === '推送失败'})">前往推送</button>` : ''}
+      </div>
+    </div>`);
+}
+
+/* ========== 状态追踪 ========== */
+function openTracking(id){
+  const ar = RECEIVABLES.find(x => x.id === id);
+  if(!ar) return;
+  closeActiveModal();
+  const items = [
+    { time: `${ar.date} 00:00`, title: '业务数据汇总完成', desc: `按场馆汇总 ${ar.detail} 笔业务明细，应收金额 ¥${money(ar.amount)}`, cls: 'success' }
+  ];
+  if(ar.status === '推送失败'){
+    items.push({ time: ar.pushTime || `${ar.date} 23:05`, title: '推送至用友NCC失败', desc: '接口返回 E2001：财务期间未打开，等待重试', cls: 'error' });
+  } else if(ar.status !== '待推送'){
+    items.push({ time: ar.pushTime || `${ar.date} 23:00`, title: '推送至用友NCC', desc: `财务单据号 ${ar.finNo || '未生成'}`, cls: 'success' });
+  } else {
+    items.push({ time: `${ar.date} 23:00`, title: '等待定时推送', desc: '默认 23:00 定时任务执行，23:00 后至次日零点的应收并入次日', cls: 'warning' });
+  }
+  if(['已接收', '已审核', '已入账'].includes(ar.status)){
+    items.push({ time: `${ar.date} 23:12`, title: '财务已接收', desc: '用友NCC 已接收应收单，等待审核', cls: 'success' });
+  }
+  if(['已审核', '已入账'].includes(ar.status)){
+    items.push({ time: `${ar.date} 23:30`, title: '财务已审核', desc: '应收单审核通过，进入入账队列', cls: 'success' });
+  }
+  if(ar.status === '已入账'){
+    items.push({ time: `${ar.date} 23:45`, title: '财务已入账', desc: '应收单已生成记账凭证，业务状态已回写', cls: 'success' });
+  }
+  if(ar.status === '已冲销'){
+    items.push({ time: `${ar.date} 23:20`, title: '应收单已冲销', desc: '因业务退款产生红字冲销，原应收单关闭', cls: 'warning' });
+  }
+  const timelineHtml = items.map(it => `
+    <div class="timeline-item ${it.cls}">
+      <div class="timeline-time">${it.time}</div>
+      <div class="timeline-title">${it.title}</div>
+      <div class="timeline-desc">${it.desc}</div>
+    </div>`).join('');
+  activeModal = openModal(`
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">状态追踪 · ${ar.id}</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="kv-grid mb-20">
+          <div class="kv-item"><span class="k">场馆 / 日期</span><span class="v">${ar.venue} · ${ar.date}</span></div>
+          <div class="kv-item"><span class="k">当前状态</span><span class="v"><span class="tag ${STATUS_TAG[ar.status] || 'tag-gray'}">${ar.status}</span></span></div>
+          <div class="kv-item"><span class="k">财务单据号</span><span class="v mono">${ar.finNo || '—'}</span></div>
+          <div class="kv-item"><span class="k">应收金额</span><span class="v">¥${money(ar.amount)}</span></div>
+        </div>
+        <div class="timeline">${timelineHtml}</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    </div>`);
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">应收单管理</div>
+        <div class="page-desc">按场馆每日汇总生成应收单，定时推送用友NCC并跟踪财务接收、审核、入账状态</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="toast('应收单已导出为 Excel','success')"><i data-lucide="download"></i>导出</button>
+        <button class="btn btn-default" onclick="renderAll();toast('应收单已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16" style="border-left:4px solid var(--warning);background:var(--warning-bg)">
+    <div class="card-body" style="display:flex;gap:12px;align-items:flex-start;padding:16px 20px">
+      <i data-lucide="info" style="width:20px;height:20px;color:var(--warning);flex-shrink:0;margin-top:2px"></i>
+      <div style="font-size:13px;color:var(--text-2)">
+        <div class="font-medium" style="color:var(--text-1);margin-bottom:2px">推送规则说明</div>
+        应收单按场馆每日汇总推送，默认 23:00 定时执行；23:00 后至次日零点的应收并入次日应收单，避免跨日重复汇总。
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="ar-stats"></div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" id="ar-kw" placeholder="搜索应收单号 / 财务单据号" oninput="resetAndRender()" style="min-width:220px" />
+        <input class="form-input" type="date" id="ar-date" onchange="resetAndRender()" style="min-width:150px" />
+        <select class="form-select" id="ar-venue" onchange="resetAndRender()">
+          <option value="">全部场馆</option>
+          <option value="总部">总部</option>
+          <option value="篮球公园">篮球公园</option>
+          <option value="网球中心">网球中心</option>
+          <option value="羽毛球馆">羽毛球馆</option>
+        </select>
+        <select class="form-select" id="ar-status" onchange="resetAndRender()">
+          <option value="">全部状态</option>
+          <option value="待推送">待推送</option>
+          <option value="已推送">已推送</option>
+          <option value="已接收">已接收</option>
+          <option value="已审核">已审核</option>
+          <option value="已入账">已入账</option>
+          <option value="推送失败">推送失败</option>
+          <option value="已冲销">已冲销</option>
+        </select>
+        <div class="spacer"></div>
+        <span class="text-muted" id="ar-count" style="font-size:13px"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>应收单号</th>
+              <th>场馆</th>
+              <th>应收日期</th>
+              <th class="text-right">应收金额</th>
+              <th class="text-center">明细笔数</th>
+              <th>状态</th>
+              <th>财务单据号</th>
+              <th>推送时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="ar-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="ar-pager"></div>
+    </div>
+  </div>
+`;
+
+renderAll();
+</script>
+</body>
+</html>

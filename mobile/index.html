@@ -1,0 +1,2389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地丰体育 · 微信小程序 C 端原型</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+/* ===== 页面级样式：手机外壳 + 小程序界面 ===== */
+.preview-body{
+  min-height:100vh;background:
+    radial-gradient(1000px 520px at 10% -10%,#e3efff 0,rgba(227,239,255,0) 60%),
+    radial-gradient(900px 520px at 95% 110%,#e4fbf7 0,rgba(228,251,247,0) 58%),#f3f5f9;
+  display:flex;align-items:flex-start;justify-content:center;gap:40px;padding:36px 32px 48px;flex-wrap:wrap;
+}
+.stage{display:flex;flex-direction:column;align-items:center;gap:14px}
+.stage-tip{font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:8px}
+.stage-tip b{color:#64748b;font-weight:600}
+.phone-shell{
+  width:390px;height:844px;background:#fff;border:14px solid #1f2937;border-radius:44px;
+  box-shadow:0 30px 70px -18px rgba(15,23,42,.45),0 12px 26px rgba(15,23,42,.16),inset 0 0 0 1px rgba(255,255,255,.06);
+  position:relative;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
+}
+.phone-shell::before{content:'';position:absolute;top:9px;left:50%;transform:translateX(-50%);width:112px;height:26px;border-radius:14px;background:#0b1220;z-index:90}
+.statusbar{
+  height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px 0 24px;font-size:13px;font-weight:700;color:#0f172a;background:#fff;position:relative;z-index:80;
+}
+.statusbar .sb-right{display:flex;align-items:center;gap:6px}
+.sig{display:flex;align-items:flex-end;gap:1.5px}
+.sig i{display:block;width:3px;background:#0f172a;border-radius:1px}
+.sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:6px}.sig i:nth-child(3){height:9px}.sig i:nth-child(4){height:11px}
+.sb-wifi{font-size:12px;font-weight:800;letter-spacing:.4px;opacity:.85}
+.battery{width:22px;height:11px;border:1.2px solid #0f172a;border-radius:3px;position:relative}
+.battery::before{content:'';position:absolute;inset:1.5px;right:6px;background:#0f172a;border-radius:1px}
+.battery::after{content:'';position:absolute;right:-3px;top:3px;width:2px;height:5px;background:#0f172a;border-radius:0 1px 1px 0}
+
+.mp-nav{
+  height:44px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 12px 0 8px;
+  background:#fff;border-bottom:1px solid #f0f2f5;position:relative;z-index:70;
+}
+.nav-back-btn{width:32px;height:32px;border:0;background:transparent;border-radius:50%;display:grid;place-items:center;color:#0f172a;cursor:pointer;flex-shrink:0}
+.nav-back-btn:hover{background:#f4f6fa}
+.nav-back-btn.hidden{visibility:hidden}
+.nav-title{flex:1;text-align:center;font-size:16px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.capsule{
+  display:flex;align-items:center;gap:6px;height:30px;padding:0 9px;border:1px solid #e5e7eb;border-radius:15px;
+  background:#fff;color:#1f2937;font-size:13px;line-height:1;flex-shrink:0;user-select:none;
+}
+.capsule .dots{letter-spacing:1px;font-weight:700}
+.capsule .split{width:1px;height:12px;background:#e5e7eb}
+.capsule .circle{width:9px;height:9px;border:1.5px solid #1f2937;border-radius:50%;display:block}
+
+.screens{position:relative;flex:1;overflow:hidden;background:#f5f7fa}
+.screen{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;display:none;background:#f5f7fa}
+.screen.active{display:flex;flex-direction:column}
+.screen>*{flex-shrink:0}
+.screen::-webkit-scrollbar{width:0;height:0}
+.screen-pad{height:18px}
+.screen-pad.huge{height:86px}
+.sub-screen-pad{height:10px}
+
+.tabbar{
+  flex-shrink:0;height:58px;background:#fff;border-top:1px solid #eef1f5;display:none;align-items:center;
+  grid-template-columns:repeat(4,1fr);padding-bottom:4px;position:relative;z-index:60;
+}
+.tabbar.show{display:grid}
+.tab-btn{
+  border:0;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  color:#8a94a6;font-size:11px;cursor:pointer;font-family:inherit;padding:2px 0;
+}
+.tab-btn svg{width:20px;height:20px}
+.tab-btn.active{color:var(--primary)}
+.tab-btn.active svg{stroke-width:2.2}
+
+/* ===== 通用小程序组件 ===== */
+.mp-section{padding:0 14px;margin-top:16px}
+.mp-section.tight{margin-top:10px}
+.sec-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.sec-title{font-size:15px;font-weight:600;color:#1f2937;display:flex;align-items:center;gap:6px}
+.sec-title::before{content:'';width:3px;height:13px;border-radius:2px;background:var(--primary)}
+.sec-more{font-size:12px;color:#8a94a6;display:flex;align-items:center;gap:2px;background:none;border:0;cursor:pointer;font-family:inherit}
+.mp-card{background:#fff;border-radius:14px;box-shadow:0 2px 8px rgba(16,24,40,.05);overflow:hidden}
+.mp-card.pad{padding:14px}
+.mp-card+.mp-card{margin-top:10px}
+.mt8{margin-top:8px}.mt10{margin-top:10px}.mt12{margin-top:12px}.mt16{margin-top:16px}
+.row{display:flex;align-items:center}
+.between{display:flex;align-items:center;justify-content:space-between}
+.flex1{flex:1;min-width:0}
+.muted{color:#8a94a6}
+.tiny{font-size:11px;color:#9aa3b2}
+.sub{font-size:12px;color:#6b7280;line-height:1.6}
+.strong{font-weight:600}
+.mono{font-family:"SFMono-Regular",Consolas,monospace;letter-spacing:.5px}
+.price{color:#fa541c;font-weight:700;font-variant-numeric:tabular-nums}
+.price small{font-size:11px;font-weight:600}
+.divider-line{height:1px;background:#f1f3f7;margin:12px 0}
+.pressable{cursor:pointer;transition:transform .12s,opacity .12s}
+.pressable:active{transform:scale(.985);opacity:.9}
+.chev-icon{color:#c4cbd6;flex-shrink:0}
+.mp-btn{
+  height:44px;padding:0 20px;border:0;border-radius:22px;font-size:15px;font-weight:600;font-family:inherit;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;white-space:nowrap;transition:transform .12s,opacity .12s;
+}
+.mp-btn:active{transform:scale(.98)}
+.mp-btn-primary{background:linear-gradient(135deg,#1677ff,#0aa0e6);color:#fff;box-shadow:0 6px 16px rgba(22,119,255,.24)}
+.mp-btn-primary:disabled{background:#cbd5e1;box-shadow:none;cursor:not-allowed}
+.mp-btn-ghost{background:#e8f3ff;color:var(--primary)}
+.mp-btn-line{background:#fff;border:1px solid #e5e7eb;color:#4b5563;font-weight:500}
+.mp-btn-sm{height:30px;padding:0 12px;border-radius:15px;font-size:12px;font-weight:500}
+.mp-btn-block{display:flex;width:100%}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.chips::-webkit-scrollbar{display:none}
+.chip{
+  flex:0 0 auto;height:30px;padding:0 14px;border-radius:15px;border:1px solid #e8ecf2;background:#fff;
+  color:#4b5563;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;font-family:inherit;
+}
+.chip.active{border-color:#bfdcff;background:#e8f3ff;color:var(--primary);font-weight:600}
+.tag{font-size:11px}
+.field{margin-bottom:12px}
+.field-label{display:block;font-size:12px;color:#4b5563;font-weight:500;margin-bottom:5px}
+.field-label em{color:#ef4444;font-style:normal;margin-left:2px}
+.field-input{
+  width:100%;height:40px;padding:0 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;
+  font-size:13px;color:#1f2937;outline:none;font-family:inherit;transition:border-color .15s,box-shadow .15s;
+}
+.field-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(22,119,255,.1)}
+.field-input.err{border-color:#ef4444;background:#fff8f8}
+.field-err{font-size:11px;color:#ef4444;margin-top:4px;display:none}
+.field-err.show{display:block}
+.field-hint{font-size:11px;color:#9aa3b2;margin-top:4px;line-height:1.5}
+.sticky-bar{
+  position:sticky;bottom:0;margin-top:auto;z-index:20;background:rgba(255,255,255,.97);backdrop-filter:blur(12px);
+  border-top:1px solid #eef1f5;padding:10px 14px 14px;display:flex;align-items:center;gap:12px;
+  box-shadow:0 -6px 18px rgba(16,24,40,.05);
+}
+.sticky-bar .sum{flex:1;min-width:0}
+.sticky-bar .sum-label{font-size:11px;color:#8a94a6}
+.sticky-bar .sum-total{font-size:20px;font-weight:700;color:#fa541c;line-height:1.25;font-variant-numeric:tabular-nums}
+.sticky-bar .sum-total small{font-size:11px;font-weight:600}
+.empty-mini{padding:26px 12px;text-align:center;color:#9aa3b2;font-size:12px}
+
+/* ===== 首页 ===== */
+.home-hero{padding:14px 14px 18px;background:linear-gradient(150deg,#0b63e5 0%,#1677ff 46%,#0ea5e9 100%);color:#fff;border-radius:0 0 22px 22px;position:relative;overflow:hidden}
+.home-hero::after{content:'';position:absolute;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.12);right:-50px;top:-70px}
+.home-brand{display:flex;align-items:center;gap:9px;position:relative;z-index:1}
+.home-logo{width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.3);display:grid;place-items:center}
+.home-logo svg{width:18px;height:18px}
+.home-brand-name{font-size:16px;font-weight:600;letter-spacing:.5px}
+.home-brand-sub{font-size:10px;opacity:.72;letter-spacing:1.6px}
+.home-bell{margin-left:auto;width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.16);display:grid;place-items:center;border:0;color:#fff;cursor:pointer;position:relative}
+.home-bell svg{width:17px;height:17px}
+.home-bell .dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:#ff4d4f;border:1px solid #1677ff}
+.home-greet{position:relative;z-index:1;margin-top:14px}
+.home-greet h2{font-size:20px;font-weight:600;line-height:1.3}
+.home-greet p{font-size:11.5px;opacity:.82;margin-top:4px}
+.search-box{
+  position:relative;z-index:1;margin-top:14px;height:40px;border-radius:20px;background:#fff;display:flex;align-items:center;gap:7px;padding:0 8px 0 14px;
+  box-shadow:0 6px 16px rgba(3,49,120,.16);
+}
+.search-box svg{width:16px;height:16px;color:#9aa3b2;flex-shrink:0}
+.search-box input{flex:1;border:0;outline:none;font-size:13px;color:#1f2937;background:transparent;font-family:inherit;height:100%}
+.search-box input::placeholder{color:#9aa3b2}
+.search-btn{height:28px;padding:0 12px;border:0;border-radius:14px;background:#e8f3ff;color:var(--primary);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.banner{margin:14px 14px 0;height:132px;border-radius:16px;overflow:hidden;position:relative;background:linear-gradient(135deg,#94a3b8,#475569)}
+.banner img{width:100%;height:100%;object-fit:cover;display:block}
+.banner-mask{position:absolute;inset:0;background:linear-gradient(90deg,rgba(8,25,60,.72) 0,rgba(8,25,60,.18) 55%,rgba(8,25,60,0) 100%);display:flex;flex-direction:column;justify-content:center;padding:0 18px;color:#fff}
+.banner-mask .b-tag{font-size:10px;letter-spacing:2px;opacity:.8;margin-bottom:5px}
+.banner-mask .b-title{font-size:20px;font-weight:700;letter-spacing:1px}
+.banner-mask .b-sub{font-size:11px;opacity:.86;margin-top:5px}
+.banner-mask .b-btn{margin-top:9px;align-self:flex-start;height:26px;padding:0 12px;border-radius:13px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);color:#fff;font-size:11px;backdrop-filter:blur(4px);cursor:pointer;font-family:inherit}
+.sport-row{display:grid;grid-template-columns:repeat(5,1fr);gap:2px;padding:14px 8px 2px}
+.sport-item{display:flex;flex-direction:column;align-items:center;gap:6px;border:0;background:transparent;cursor:pointer;font-family:inherit;padding:2px}
+.sport-ico{
+  width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:15px;font-weight:700;color:#fff;
+  box-shadow:0 6px 14px rgba(16,24,40,.12);
+}
+.sport-ico.c1{background:linear-gradient(135deg,#22c55e,#16a34a)}
+.sport-ico.c2{background:linear-gradient(135deg,#f97316,#ea580c)}
+.sport-ico.c3{background:linear-gradient(135deg,#eab308,#ca8a04)}
+.sport-ico.c4{background:linear-gradient(135deg,#06b6d4,#0891b2)}
+.sport-ico.c5{background:linear-gradient(135deg,#8b5cf6,#6d28d9)}
+.sport-item span{font-size:11.5px;color:#4b5563}
+.sport-item.active .sport-ico{box-shadow:0 0 0 3px #fff,0 0 0 5px #bfdcff}
+.quick-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:14px 14px 0;padding:14px 4px 12px;background:#fff;border-radius:16px;box-shadow:0 6px 18px rgba(16,24,40,.06)}
+.quick-item{display:flex;flex-direction:column;align-items:center;gap:6px;border:0;background:transparent;cursor:pointer;font-family:inherit;padding:2px}
+.quick-ico{width:42px;height:42px;border-radius:13px;display:grid;place-items:center}
+.quick-ico svg{width:21px;height:21px}
+.quick-ico.b{background:#e8f3ff;color:#1677ff}
+.quick-ico.g{background:#ecfdf5;color:#059669}
+.quick-ico.o{background:#fff7ed;color:#d97706}
+.quick-ico.p{background:#f5f3ff;color:#7c3aed}
+.quick-item span{font-size:11.5px;color:#4b5563}
+.venue-item{display:flex;gap:11px;background:#fff;border-radius:14px;padding:11px;margin-bottom:10px;box-shadow:0 2px 8px rgba(16,24,40,.05);cursor:pointer}
+.venue-img{width:96px;height:84px;border-radius:11px;flex-shrink:0;overflow:hidden;background:linear-gradient(140deg,#1d4ed8,#38bdf8);position:relative}
+.venue-img img{width:100%;height:100%;object-fit:cover}
+.venue-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.venue-name{font-size:14.5px;font-weight:600;color:#1f2937;display:flex;align-items:center;gap:6px}
+.venue-meta{font-size:11.5px;color:#6b7280;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.venue-meta svg{width:12px;height:12px;flex-shrink:0;color:#9aa3b2}
+.venue-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+.dist-tag{font-size:10px;color:#1677ff;background:#e8f3ff;border-radius:5px;padding:1px 6px;margin-left:auto;flex-shrink:0}
+
+/* ===== 场馆详情 ===== */
+.venue-hero{position:relative;height:196px;background:linear-gradient(140deg,#1d4ed8,#38bdf8);overflow:hidden}
+.venue-hero img{width:100%;height:100%;object-fit:cover;display:block}
+.venue-hero .vh-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,25,60,.12) 30%,rgba(8,25,60,.78) 100%)}
+.venue-hero .vh-text{position:absolute;left:16px;right:16px;bottom:14px;color:#fff}
+.venue-hero .vh-text h2{font-size:20px;font-weight:700;letter-spacing:.4px}
+.venue-hero .vh-text p{font-size:11.5px;opacity:.86;margin-top:4px;display:flex;align-items:center;gap:4px}
+.venue-hero .vh-tags{display:flex;gap:6px;margin-top:7px}
+.venue-hero .vh-tags span{font-size:10px;padding:2px 7px;border-radius:5px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(3px)}
+.court-row{display:flex;align-items:center;gap:10px;padding:13px 12px;background:#fff;border-radius:13px;margin-bottom:9px;box-shadow:0 2px 8px rgba(16,24,40,.05);cursor:pointer}
+.court-ico{width:42px;height:42px;border-radius:11px;background:#e8f3ff;color:#1677ff;display:grid;place-items:center;flex-shrink:0}
+.court-ico svg{width:21px;height:21px}
+.court-name{font-size:14px;font-weight:600;color:#1f2937}
+.court-meta{font-size:11px;color:#8a94a6;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+.court-price{text-align:right;flex-shrink:0}
+.court-price .p{font-size:15px;color:#fa541c;font-weight:700}
+.court-price .p small{font-size:10px}
+.court-price .go{font-size:10px;color:#8a94a6;margin-top:2px}
+.notice-strip{display:flex;align-items:center;gap:7px;background:#fff7ed;border:1px solid #fde8c8;color:#b45309;border-radius:10px;padding:9px 11px;font-size:11.5px;margin:0 14px}
+
+/* ===== 选择时段 ===== */
+.date-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 14px 8px}
+.date-strip::-webkit-scrollbar{display:none}
+.date-item{
+  flex:0 0 56px;height:64px;border-radius:12px;border:1px solid #e8ecf2;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  font-size:10px;color:#8a94a6;cursor:pointer;font-family:inherit;transition:all .15s;
+}
+.date-item b{font-size:15px;color:#1f2937;font-weight:600}
+.date-item.active{background:linear-gradient(150deg,#1677ff,#0ea5e9);border-color:transparent;color:rgba(255,255,255,.88);box-shadow:0 5px 14px rgba(22,119,255,.26)}
+.date-item.active b{color:#fff}
+.slots-legend{display:flex;gap:14px;padding:2px 14px 8px;font-size:10.5px;color:#8a94a6}
+.slots-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;border:1px solid #e8ecf2;background:#fff;vertical-align:-1px;margin-right:4px}
+.slots-legend i.on{background:linear-gradient(135deg,#1677ff,#0ea5e9);border-color:transparent}
+.slots-legend i.off{background:#f1f3f7;border-color:#f1f3f7}
+.slot-grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;padding:0 14px}
+.slot-card{
+  min-height:62px;border-radius:12px;border:1px solid #e8ecf2;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  font-family:inherit;font-size:13px;font-weight:600;color:#1f2937;cursor:pointer;position:relative;transition:all .14s;
+}
+.slot-card .sp{font-size:10.5px;font-weight:600;color:#fa541c}
+.slot-card .flag{position:absolute;top:5px;right:6px;font-size:9px;color:#9aa3b2;font-weight:400}
+.slot-card.active{background:linear-gradient(150deg,#1677ff,#0e9fe6);border-color:transparent;color:#fff;box-shadow:0 5px 12px rgba(22,119,255,.24)}
+.slot-card.active .sp{color:rgba(255,255,255,.9)}
+.slot-card.active .flag{color:rgba(255,255,255,.8)}
+.slot-card.disabled{background:#f1f3f7;border-color:#f1f3f7;color:#b6bec9;cursor:not-allowed}
+.slot-card.disabled .sp,.slot-card.disabled .flag{color:#b6bec9}
+
+/* ===== 确认订单 ===== */
+.confirm-hero{display:flex;gap:10px;align-items:center;background:#fff;border-radius:14px;padding:12px;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.confirm-hero .ci{width:52px;height:52px;border-radius:12px;background:linear-gradient(140deg,#1677ff,#0ea5e9);display:grid;place-items:center;color:#fff;flex-shrink:0}
+.confirm-hero .ci svg{width:24px;height:24px}
+.sum-row{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:6px 0}
+.sum-row.total{font-size:14px;color:#1f2937;font-weight:600;padding-top:10px;border-top:1px dashed #eef1f5;margin-top:6px}
+.sum-row.total .price{font-size:18px}
+.pay-opt{display:flex;align-items:center;gap:10px;padding:11px 10px;border:1px solid #eef1f5;border-radius:11px;margin-bottom:8px;cursor:pointer;background:#fff}
+.pay-opt:last-child{margin-bottom:0}
+.pay-opt.active{border-color:#bfdcff;background:#f6faff}
+.pay-opt .po-ico{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex-shrink:0}
+.pay-opt .po-ico svg{width:17px;height:17px}
+.pay-opt .po-name{font-size:13px;font-weight:500;color:#1f2937}
+.pay-opt .po-desc{font-size:10.5px;color:#9aa3b2;margin-top:1px}
+.pay-opt .radio{width:16px;height:16px;border-radius:50%;border:1.5px solid #d5dbe3;flex-shrink:0;position:relative;margin-left:auto}
+.pay-opt.active .radio{border-color:#1677ff;background:#1677ff}
+.pay-opt.active .radio::after{content:'';position:absolute;inset:3px;border-radius:50%;background:#fff}
+.agree{display:flex;align-items:flex-start;gap:7px;padding:2px 14px 12px;font-size:11px;color:#8a94a6;line-height:1.6}
+.agree input{width:14px;height:14px;margin-top:1px;accent-color:#1677ff;flex-shrink:0}
+.agree a{color:#1677ff;font-size:11px}
+.invoice-note{font-size:10.5px;color:#b45309;background:#fffbeb;border:1px solid #fde8c8;border-radius:8px;padding:7px 9px;line-height:1.55;margin-top:6px}
+
+/* ===== 支付成功 / 二维码 ===== */
+.result-top{padding:34px 16px 22px;text-align:center;background:linear-gradient(180deg,#ecfdf5,#f5f7fa)}
+.success-ring{width:64px;height:64px;border-radius:50%;background:#ecfdf5;border:1px solid #bbf7d0;display:grid;place-items:center;margin:0 auto 14px}
+.success-ring .inner{width:46px;height:46px;border-radius:50%;background:#10b981;display:grid;place-items:center;color:#fff;box-shadow:0 8px 18px rgba(16,185,129,.32)}
+.success-ring svg{width:24px;height:24px}
+.result-title{font-size:19px;font-weight:700;color:#0f172a}
+.result-sub{font-size:12px;color:#6b7280;margin-top:5px}
+.qr-wrap{position:relative;width:154px;height:154px;margin:14px auto 8px;padding:8px;background:#fff;border:1px solid #eef1f5;border-radius:12px;box-shadow:0 4px 14px rgba(16,24,40,.06)}
+.qr{display:grid;grid-template-columns:repeat(15,1fr);grid-template-rows:repeat(15,1fr);width:100%;height:100%;gap:1px}
+.qr i{background:transparent;border-radius:1px}
+.qr i.on{background:#111827}
+.qr-text{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;padding:4px 7px;border-radius:5px;
+  font-size:10.5px;font-weight:700;letter-spacing:1.2px;color:#111827;white-space:nowrap;box-shadow:0 0 0 2px #fff;
+}
+.code-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;font-size:12.5px;border-bottom:1px dashed #eef1f5}
+.code-row:last-child{border-bottom:0}
+.code-row .k{color:#8a94a6}
+.code-row .v{color:#1f2937;font-weight:500;text-align:right}
+.timeline{border-left:1px solid #eef1f5;padding-left:16px;margin-left:4px}
+.tl-item{position:relative;padding-bottom:16px}
+.tl-item:last-child{padding-bottom:0}
+.tl-item::before{content:'';position:absolute;left:-21px;top:2px;width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid #d5dbe3}
+.tl-item.done::before{border-color:#10b981;background:#10b981}
+.tl-item.current::before{border-color:#1677ff;background:#1677ff;box-shadow:0 0 0 3px #e8f3ff}
+.tl-title{font-size:12.5px;color:#1f2937;font-weight:500}
+.tl-time{font-size:10.5px;color:#9aa3b2;margin-top:2px}
+.tl-desc{font-size:11px;color:#8a94a6;margin-top:3px}
+
+/* ===== 订单中心 ===== */
+.order-tabs{display:flex;gap:14px;overflow-x:auto;background:#fff;padding:10px 14px;border-bottom:1px solid #eef1f5;position:sticky;top:0;z-index:10}
+.order-tabs::-webkit-scrollbar{display:none}
+.otab{border:0;background:transparent;font-family:inherit;font-size:12.5px;color:#6b7280;padding:3px 0;white-space:nowrap;cursor:pointer;position:relative}
+.otab.active{color:#1677ff;font-weight:600}
+.otab.active::after{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:-10px;width:18px;height:2px;border-radius:1px;background:#1677ff}
+.order-card{background:#fff;border-radius:14px;padding:13px 12px;margin:10px 14px 0;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.order-head{display:flex;align-items:center;gap:8px;padding-bottom:9px;border-bottom:1px solid #f3f4f6}
+.order-type{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex-shrink:0}
+.order-type svg{width:14px;height:14px}
+.order-type.blue{background:#e8f3ff;color:#1677ff}
+.order-type.green{background:#ecfdf5;color:#059669}
+.order-type.orange{background:#fff7ed;color:#d97706}
+.order-type.purple{background:#f5f3ff;color:#7c3aed}
+.order-no{font-size:12px;color:#1f2937;font-weight:600;flex:1}
+.order-status{font-size:11.5px;font-weight:600}
+.order-status.st-pending{color:#fa541c}
+.order-status.st-paid{color:#1677ff}
+.order-status.st-done{color:#10b981}
+.order-status.st-cancel{color:#9aa3b2}
+.order-status.st-refund{color:#d97706}
+.order-body{padding:9px 0 0;display:flex;gap:10px;cursor:pointer}
+.order-thumb{width:56px;height:56px;border-radius:10px;background:#e8f3ff;color:#1677ff;display:grid;place-items:center;flex-shrink:0}
+.order-thumb svg{width:24px;height:24px}
+.order-title{font-size:13.5px;font-weight:600;color:#1f2937}
+.order-meta{font-size:11px;color:#8a94a6;margin-top:3px;line-height:1.5}
+.order-amt{margin-left:auto;text-align:right;font-size:14px;font-weight:700;color:#1f2937;white-space:nowrap}
+.order-amt small{font-size:10px;font-weight:600}
+.order-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #f3f4f6}
+
+/* ===== 会员 ===== */
+.member-card{
+  margin:0 14px;border-radius:18px;padding:16px;color:#fff;position:relative;overflow:hidden;
+  background:linear-gradient(135deg,#1b3b6f 0%,#2a63c7 55%,#4fa3e3 100%);
+  box-shadow:0 12px 26px rgba(26,63,130,.3);
+}
+.member-card::after{content:'';position:absolute;width:150px;height:150px;border-radius:50%;background:rgba(255,255,255,.09);right:-40px;top:-60px}
+.member-card::before{content:'';position:absolute;width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,.06);right:28px;bottom:-46px}
+.mc-head{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:1}
+.mc-brand{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;letter-spacing:.6px}
+.mc-brand svg{width:18px;height:18px}
+.mc-level{font-size:10px;padding:2px 8px;border-radius:9px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28)}
+.mc-balance{margin-top:16px;position:relative;z-index:1}
+.mc-label{font-size:10.5px;opacity:.72;letter-spacing:.5px}
+.mc-amount{font-size:28px;font-weight:700;line-height:1.25;font-variant-numeric:tabular-nums;margin-top:2px}
+.mc-amount small{font-size:13px;font-weight:600;margin-right:2px}
+.mc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px;position:relative;z-index:1}
+.mc-cell .k{font-size:10px;opacity:.7}
+.mc-cell .v{font-size:13px;font-weight:600;margin-top:2px}
+.mc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:10.5px;opacity:.78;position:relative;z-index:1}
+.member-quick{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:12px 14px 0;padding:14px 2px 12px;background:#fff;border-radius:14px;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.mq-item{display:flex;flex-direction:column;align-items:center;gap:6px;border:0;background:transparent;cursor:pointer;font-family:inherit;padding:2px}
+.mq-ico{width:38px;height:38px;border-radius:11px;display:grid;place-items:center}
+.mq-ico svg{width:19px;height:19px}
+.mq-ico.b{background:#e8f3ff;color:#1677ff}.mq-ico.g{background:#ecfdf5;color:#059669}
+.mq-ico.o{background:#fff7ed;color:#d97706}.mq-ico.p{background:#f5f3ff;color:#7c3aed}
+.mq-item span{font-size:11px;color:#4b5563}
+.tc-item{padding:12px 12px 11px;background:#fff;border-radius:12px;margin-bottom:9px;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.tc-head{display:flex;align-items:center;justify-content:space-between}
+.tc-name{font-size:13px;font-weight:600;color:#1f2937}
+.tc-progress{height:6px;background:#f1f3f7;border-radius:3px;overflow:hidden;margin-top:8px}
+.tc-progress i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#1677ff,#06b6d4)}
+.tc-meta{display:flex;justify-content:space-between;font-size:10.5px;color:#8a94a6;margin-top:5px}
+.recharge-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;padding:0 14px}
+.recharge-item{
+  background:#fff;border:1px solid #e8ecf2;border-radius:12px;padding:12px 10px;text-align:center;cursor:pointer;
+  font-family:inherit;transition:all .15s;box-shadow:0 2px 8px rgba(16,24,40,.03);
+}
+.recharge-item b{display:block;font-size:19px;color:#1f2937;font-weight:700}
+.recharge-item b small{font-size:11px;font-weight:600}
+.recharge-item span{display:block;font-size:10.5px;color:#fa541c;margin-top:3px}
+.recharge-item:hover{border-color:#bfdcff;background:#f8fcff}
+
+/* ===== 赛事 ===== */
+.event-card{background:#fff;border-radius:14px;overflow:hidden;margin:0 14px 12px;box-shadow:0 3px 10px rgba(16,24,40,.06);cursor:pointer}
+.event-cover{height:112px;position:relative;background:linear-gradient(135deg,#1d4ed8,#0ea5e9);overflow:hidden}
+.event-cover img{width:100%;height:100%;object-fit:cover;opacity:.92;display:block}
+.event-cover .ec-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,25,60,.06),rgba(8,25,60,.7))}
+.event-cover .ec-mode{position:absolute;top:10px;left:10px;font-size:10px;color:#fff;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.32);padding:2px 7px;border-radius:5px;backdrop-filter:blur(4px)}
+.event-cover .ec-status{position:absolute;top:10px;right:10px;font-size:10px;color:#fff;background:rgba(16,185,129,.82);padding:2px 8px;border-radius:5px}
+.event-cover .ec-name{position:absolute;left:12px;right:12px;bottom:11px;font-size:16px;font-weight:700;color:#fff;line-height:1.35}
+.event-body{padding:11px 12px}
+.event-meta{font-size:11.5px;color:#6b7280;display:flex;align-items:center;gap:5px;margin-top:5px}
+.event-meta svg{width:12px;height:12px;color:#9aa3b2}
+.event-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px solid #f3f4f6}
+.group-card{border:1px solid #e8ecf2;border-radius:11px;padding:10px 11px;margin-bottom:8px;background:#fff;cursor:pointer}
+.group-card.active{border-color:#bfdcff;background:#f6faff}
+.group-top{display:flex;align-items:center;gap:6px}
+.group-name{font-size:13px;font-weight:600;color:#1f2937;flex:1}
+.group-price{font-size:13px;color:#fa541c;font-weight:700}
+.group-progress{height:5px;background:#f1f3f7;border-radius:3px;overflow:hidden;margin-top:7px}
+.group-progress i{display:block;height:100%;background:#1677ff;border-radius:3px}
+.group-progress i.full{background:#9aa3b2}
+.group-meta{display:flex;justify-content:space-between;font-size:10.5px;color:#8a94a6;margin-top:4px}
+.full-tag{font-size:10px;color:#9aa3b2;border:1px solid #e5e7eb;border-radius:4px;padding:0 5px}
+.voucher{width:100%;border-radius:14px;background:#fff;border:1px dashed #cbd5e1;padding:16px;text-align:center}
+
+/* ===== 商品 / 租赁 ===== */
+.goods-list{padding:0 14px}
+.goods-item{display:flex;gap:10px;background:#fff;border-radius:13px;padding:10px;margin-bottom:9px;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.goods-img{width:72px;height:72px;border-radius:10px;overflow:hidden;background:linear-gradient(140deg,#e2e8f0,#cbd5e1);flex-shrink:0;position:relative}
+.goods-img img{width:100%;height:100%;object-fit:cover}
+.goods-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.goods-name{font-size:13.5px;font-weight:600;color:#1f2937;line-height:1.35}
+.goods-spec{font-size:10.5px;color:#9aa3b2}
+.goods-price{font-size:15px;color:#fa541c;font-weight:700}
+.goods-price small{font-size:10px}
+.stock{font-size:10px;color:#8a94a6}
+.stepper{display:flex;align-items:center;gap:0;margin-top:4px}
+.stepper button{width:24px;height:24px;border:1px solid #e8ecf2;background:#fff;color:#4b5563;font-size:14px;line-height:1;cursor:pointer;font-family:inherit;display:grid;place-items:center}
+.stepper button:first-child{border-radius:6px 0 0 6px}
+.stepper button:last-child{border-radius:0 6px 6px 0}
+.stepper .val{min-width:30px;height:24px;border-top:1px solid #e8ecf2;border-bottom:1px solid #e8ecf2;display:grid;place-items:center;font-size:12px}
+.cart-bar{padding:10px 14px 14px;background:#fff;border-top:1px solid #eef1f5;display:flex;align-items:center;gap:12px;position:sticky;bottom:0;z-index:15;box-shadow:0 -6px 16px rgba(16,24,40,.05)}
+.cart-sum{flex:1;font-size:11px;color:#8a94a6}
+.cart-sum b{font-size:18px;color:#fa541c;font-weight:700;margin-left:2px}
+.rental-item{background:#fff;border-radius:14px;padding:12px;margin:0 14px 10px;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.ri-head{display:flex;align-items:center;gap:9px}
+.ri-ico{width:42px;height:42px;border-radius:11px;background:#f5f3ff;color:#7c3aed;display:grid;place-items:center;flex-shrink:0}
+.ri-ico svg{width:21px;height:21px}
+.ri-name{font-size:14px;font-weight:600;color:#1f2937}
+.ri-meta{font-size:10.5px;color:#8a94a6;margin-top:3px}
+.ri-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px dashed #eef1f5}
+.ri-price{font-size:11px;color:#8a94a6}
+.ri-price b{font-size:15px;color:#fa541c;font-weight:700}
+.ri-price span{margin-left:8px}
+.qty-line{display:flex;align-items:center;justify-content:space-between;padding:10px 0}
+.rental-total{background:#fff7ed;border:1px solid #fde8c8;border-radius:10px;padding:10px 11px;font-size:11px;color:#b45309;line-height:1.6}
+
+/* ===== 我的 ===== */
+.me-hero{background:linear-gradient(150deg,#0b63e5,#1677ff 55%,#0ea5e9);padding:18px 16px 30px;color:#fff;border-radius:0 0 22px 22px;position:relative;overflow:hidden}
+.me-hero::after{content:'';position:absolute;width:170px;height:170px;border-radius:50%;background:rgba(255,255,255,.1);right:-60px;top:-70px}
+.me-profile{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
+.me-avatar{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#f97316);display:grid;place-items:center;font-size:19px;font-weight:700;border:2px solid rgba(255,255,255,.6);flex-shrink:0}
+.me-name{font-size:17px;font-weight:600;display:flex;align-items:center;gap:7px}
+.me-sub{font-size:11px;opacity:.82;margin-top:4px;display:flex;align-items:center;gap:6px}
+.verify-tag{font-size:9.5px;padding:1px 6px;border-radius:8px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3)}
+.me-assets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:18px;position:relative;z-index:1}
+.me-asset{text-align:center}
+.me-asset .v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.me-asset .k{font-size:10.5px;opacity:.75;margin-top:2px}
+.me-list{margin:12px 14px 0;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+.me-row{display:flex;align-items:center;gap:10px;padding:13px 13px;border-bottom:1px solid #f4f6f9;cursor:pointer;background:none;border-left:0;border-right:0;border-top:0;font-family:inherit;width:100%;text-align:left}
+.me-row:last-child{border-bottom:0}
+.me-row:active{background:#f8fafc}
+.me-row-ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex-shrink:0}
+.me-row-ico svg{width:16px;height:16px}
+.me-row-ico.b{background:#e8f3ff;color:#1677ff}.me-row-ico.g{background:#ecfdf5;color:#059669}
+.me-row-ico.o{background:#fff7ed;color:#d97706}.me-row-ico.p{background:#f5f3ff;color:#7c3aed}
+.me-row-label{flex:1;font-size:13.5px;color:#1f2937}
+.me-row-val{font-size:11px;color:#9aa3b2}
+.me-row .chev-icon{width:14px;height:14px}
+.logout-wrap{padding:16px 14px 24px}
+.logout-btn{width:100%;height:42px;border-radius:21px;border:1px solid #e5e7eb;background:#fff;color:#6b7280;font-family:inherit;font-size:13px;cursor:pointer}
+.logout-btn:hover{color:#ef4444;border-color:#fecaca;background:#fff8f8}
+
+/* ===== 浮层 ===== */
+.mini-toast{
+  display:flex;align-items:center;gap:7px;background:rgba(17,24,39,.88);color:#fff;font-size:12px;
+  padding:9px 15px;border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.25);max-width:300px;line-height:1.45;
+  animation:toastIn .25s ease;
+}
+.mini-toast svg{width:15px;height:15px;flex-shrink:0}
+.mini-toast.success svg{color:#34d399}
+.mini-toast.error svg{color:#f87171}
+.mini-toast.info svg{color:#60a5fa}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.pay-mask,.dialog-mask{position:absolute;inset:0;z-index:130;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px}
+.pay-box{width:170px;background:rgba(17,24,39,.92);border-radius:14px;padding:22px 16px 18px;text-align:center;color:#fff}
+.spinner{width:30px;height:30px;border-radius:50%;border:2.5px solid rgba(255,255,255,.24);border-top-color:#fff;margin:0 auto 12px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pay-box-title{font-size:13px;font-weight:500}
+.pay-box-sub{font-size:10.5px;opacity:.6;margin-top:5px}
+.dialog{width:100%;max-width:300px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,.3);animation:dialogIn .22s ease}
+@keyframes dialogIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+.dialog-head{padding:19px 18px 0;text-align:center;font-size:16px;font-weight:600;color:#1f2937}
+.dialog-body{padding:10px 18px 16px;font-size:12px;color:#6b7280;line-height:1.7;text-align:center}
+.dialog-body .dlg-amount{font-size:24px;font-weight:700;color:#fa541c;margin:6px 0 2px}
+.dialog-body .dlg-amount small{font-size:12px}
+.dialog-acts{display:flex;border-top:1px solid #eef1f5}
+.dialog-acts button{flex:1;height:44px;border:0;background:#fff;font-family:inherit;font-size:14px;color:#6b7280;cursor:pointer}
+.dialog-acts button+button{border-left:1px solid #eef1f5}
+.dialog-acts .ok{color:#1677ff;font-weight:600}
+.dialog-acts .ok.danger{color:#ef4444}
+
+/* ===== 右侧说明卡 ===== */
+.info-card{
+  width:352px;background:rgba(255,255,255,.92);border:1px solid #e8ecf2;border-radius:20px;padding:24px 24px 20px;
+  box-shadow:0 18px 50px rgba(16,24,40,.08);backdrop-filter:blur(14px);position:sticky;top:36px;
+}
+.ic-eyebrow{font-size:10px;letter-spacing:2.4px;color:#8a94a6}
+.info-card h1{font-size:22px;font-weight:700;color:#0f172a;margin-top:6px;letter-spacing:.3px}
+.ic-desc{font-size:12px;color:#6b7280;line-height:1.75;margin-top:8px}
+.ic-block{margin-top:18px}
+.ic-title{font-size:12.5px;font-weight:600;color:#374151;display:flex;align-items:center;gap:7px;margin-bottom:9px}
+.ic-title .bar{width:3px;height:12px;border-radius:2px;background:var(--primary)}
+.flow-list{list-style:none;counter-reset:flow;margin:0;padding:0}
+.flow-list li{
+  counter-increment:flow;position:relative;padding-left:24px;margin-bottom:8px;font-size:12px;color:#4b5563;
+  display:flex;flex-direction:column;gap:1px;line-height:1.5;
+}
+.flow-list li::before{
+  content:counter(flow);position:absolute;left:0;top:0;width:17px;height:17px;border-radius:50%;
+  background:#e8f3ff;color:#1677ff;font-size:10px;font-weight:700;display:grid;place-items:center;
+}
+.flow-list li b{font-size:12px;color:#1f2937;font-weight:600}
+.flow-list li span{font-size:10.5px;color:#9aa3b2}
+.tag-row{display:flex;flex-wrap:wrap;gap:6px}
+.mini-tag{font-size:10.5px;color:#3d76c4;background:#f2f7ff;border:1px solid #e1ecfb;border-radius:6px;padding:2px 7px}
+.ic-note{font-size:11px;color:#8a94a6;line-height:1.75}
+.ic-note code{background:#f2f5fa;border-radius:4px;padding:1px 5px;font-size:10px;color:#5b6577}
+.back-admin{
+  margin-top:22px;height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center;gap:8px;
+  background:linear-gradient(135deg,#1677ff,#0aa0e6);color:#fff;font-size:14px;font-weight:600;
+  box-shadow:0 8px 20px rgba(22,119,255,.24);transition:transform .12s;
+}
+.back-admin:hover{transform:translateY(-1px);color:#fff}
+.back-admin svg{width:16px;height:16px}
+
+/* 图标尺寸统一 */
+.nav-back-btn svg{width:20px;height:20px}
+.sec-more svg{width:12px;height:12px}
+.vh-text p svg{width:12px;height:12px;display:inline;vertical-align:-1px}
+.notice-strip svg{width:14px;height:14px;flex-shrink:0;color:#b45309}
+.qr i{display:block}
+.mp-btn:disabled{opacity:.65;cursor:not-allowed;box-shadow:none}
+.me-row .chev-icon{color:#c4cbd6}
+.event-foot .mp-btn{pointer-events:none}
+#eventDetailWrap,#rentalCheckoutWrap{flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto}
+#eventDetailWrap::-webkit-scrollbar,#rentalCheckoutWrap::-webkit-scrollbar{width:0}
+
+@media (max-width:1100px){
+  .preview-body{flex-direction:column;align-items:center;padding:24px 16px 40px;gap:22px}
+  .info-card{width:390px;max-width:100%;position:static;order:2}
+}
+@media (max-width:440px){
+  .preview-body{padding:12px 4px 30px}
+  .stage-tip{display:none}
+  .phone-shell{transform:scale(.88);transform-origin:top center;margin-bottom:-96px}
+  .info-card{width:100%;padding:18px}
+}
+</style>
+</head>
+<body class="preview-body">
+<div class="stage">
+  <div class="phone-shell" id="phone">
+    <div class="statusbar">
+      <span>9:41</span>
+      <span class="sb-right">
+        <span class="sig"><i></i><i></i><i></i><i></i></span>
+        <span class="sb-wifi">WiFi</span>
+        <span class="battery"></span>
+      </span>
+    </div>
+    <div class="mp-nav">
+      <button class="nav-back-btn" id="navBack" onclick="back()" aria-label="返回">
+        <i data-lucide="chevron-left"></i>
+      </button>
+      <div class="nav-title" id="navTitle">首页</div>
+      <div class="capsule" role="button" tabindex="0">
+        <span class="dots">···</span><span class="split"></span><span class="circle"></span>
+      </div>
+    </div>
+    <div class="screens" id="screens">
+
+  <!-- 1. 首页 -->
+  <section class="screen active" id="screen-home">
+    <div class="home-hero">
+      <div class="home-brand">
+        <div class="home-logo"><i data-lucide="circle-dot"></i></div>
+        <div>
+          <div class="home-brand-name">地丰体育</div>
+          <div class="home-brand-sub">DIFENG SPORTS</div>
+        </div>
+        <button class="home-bell" onclick="toast('暂无新消息','info')"><i data-lucide="bell"></i><span class="dot"></span></button>
+      </div>
+      <div class="home-greet">
+        <h2>下午好，陈晓明</h2>
+        <p>全城 4 座场馆 · 60 片场地，随时开打</p>
+      </div>
+      <div class="search-box">
+        <i data-lucide="search"></i>
+        <input id="homeSearch" placeholder="搜索场馆/场地" oninput="filterHomeVenues()" onkeydown="if(event.key==='Enter'){filterHomeVenues();}">
+        <button class="search-btn" onclick="filterHomeVenues()">搜索</button>
+      </div>
+    </div>
+
+    <div class="banner">
+      <div class="banner-bg" style="position:absolute;inset:0;background:linear-gradient(135deg,#0b63e5,#0ea5e9)"></div>
+      <div class="banner-mask">
+        <div class="b-tag">DIFENG SPORTS · 2026</div>
+        <div class="b-title">全民健身 · 地丰体育</div>
+        <div class="b-sub">在线订场 即订即用 · 会员储值更优惠</div>
+        <button class="b-btn" onclick="openVenue('V001')">立即订场 →</button>
+      </div>
+    </div>
+
+    <div class="mp-card" style="margin:12px 14px 0;border-radius:16px;padding-bottom:4px">
+      <div class="sport-row" id="sportRow"></div>
+    </div>
+
+    <div class="quick-grid">
+      <button class="quick-item" onclick="go('goods')">
+        <span class="quick-ico b"><i data-lucide="shopping-bag"></i></span><span>商品商城</span>
+      </button>
+      <button class="quick-item" onclick="go('rental')">
+        <span class="quick-ico g"><i data-lucide="repeat"></i></span><span>物品租赁</span>
+      </button>
+      <button class="quick-item" onclick="go('events')">
+        <span class="quick-ico o"><i data-lucide="trophy"></i></span><span>赛事报名</span>
+      </button>
+      <button class="quick-item" onclick="switchTab('member')">
+        <span class="quick-ico p"><i data-lucide="wallet"></i></span><span>会员储值</span>
+      </button>
+    </div>
+
+    <div class="mp-section">
+      <div class="sec-head">
+        <div class="sec-title">附近场馆</div>
+        <button class="sec-more" onclick="toast('已展示全部 4 家场馆','info')">查看全部 <i data-lucide="chevron-right"></i></button>
+      </div>
+      <div id="venueList"></div>
+    </div>
+
+    <div class="mp-section">
+      <div class="sec-head">
+        <div class="sec-title">热门赛事</div>
+        <button class="sec-more" onclick="go('events')">全部赛事 <i data-lucide="chevron-right"></i></button>
+      </div>
+      <div id="homeEventList"></div>
+    </div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 2. 场馆详情 -->
+  <section class="screen" id="screen-venue">
+    <div class="venue-hero">
+      <div id="vHeroImg" style="position:absolute;inset:0;background-size:cover;background-position:center"></div>
+      <div class="vh-mask"></div>
+      <div class="vh-text">
+        <h2 id="vHeroName">地丰体育中心</h2>
+        <p><i data-lucide="map-pin"></i><span id="vHeroAddr">思明区体育路88号</span></p>
+        <div class="vh-tags" id="vHeroTags"></div>
+      </div>
+    </div>
+    <div class="mp-section tight" style="margin-top:-16px;position:relative;z-index:2">
+      <div class="mp-card pad">
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div class="sub">营业时间</div>
+            <div class="strong" style="font-size:13px;margin-top:2px" id="vOpenTime">06:00-23:00</div>
+          </div>
+          <div style="text-align:right">
+            <div class="sub">距离</div>
+            <div class="strong" style="font-size:13px;margin-top:2px" id="vDistance">1.2km</div>
+          </div>
+          <div style="text-align:right">
+            <div class="sub">场地</div>
+            <div class="strong" style="font-size:13px;margin-top:2px" id="vCourtCount">3 片</div>
+          </div>
+        </div>
+      </div>
+      <div class="notice-strip" style="margin:10px 0 0">
+        <i data-lucide="info"></i><span>可提前预约 7 天，最晚开场前 30 分钟下单</span>
+      </div>
+    </div>
+
+    <div class="mp-section">
+      <div class="sec-head"><div class="sec-title">选择场地</div></div>
+      <div class="chips" id="vSportChips" style="margin-bottom:10px"></div>
+      <div id="courtList"></div>
+    </div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 3. 选择时段 -->
+  <section class="screen" id="screen-slots">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="mp-card pad" id="slotCourtCard"></div>
+    </div>
+    <div style="padding:0">
+      <div class="sec-head" style="padding:0 14px;margin-top:14px">
+        <div class="sec-title">选择日期</div>
+        <span class="tiny">今天起可预约 7 天</span>
+      </div>
+      <div class="date-strip" id="dateStrip"></div>
+      <div class="slots-legend">
+        <span><i class="on"></i>已选</span><span><i></i>可预约</span><span><i class="off"></i>已订/锁定</span>
+      </div>
+      <div class="slot-grid2" id="slotGrid"></div>
+      <div style="height:12px"></div>
+    </div>
+    <div class="sticky-bar">
+      <div class="sum">
+        <div class="sum-label">已选 <span id="slotCount">0</span> 个时段</div>
+        <div class="sum-total" id="slotTotal"><small>¥</small>0</div>
+      </div>
+      <button class="mp-btn mp-btn-primary" id="slotSubmit" onclick="submitSlots()" disabled>去下单</button>
+    </div>
+  </section>
+
+  <!-- 4. 确认订单 -->
+  <section class="screen" id="screen-confirm">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="confirm-hero">
+        <div class="ci"><i data-lucide="circle-dot"></i></div>
+        <div class="flex1">
+          <div style="font-size:14px;font-weight:600" id="cfTitle">2号篮球场</div>
+          <div class="sub" style="margin-top:3px" id="cfVenue">地丰体育中心</div>
+          <div class="tiny" style="margin-top:2px" id="cfTime">2026-11-05 18:00-20:00</div>
+        </div>
+        <span class="tag tag-blue" id="cfTag">待支付</span>
+      </div>
+
+      <div class="mp-card pad" style="margin-top:10px">
+        <div class="sum-row"><span>场地费</span><span id="cfFee">¥0</span></div>
+        <div class="sum-row"><span>优惠</span><span id="cfDiscount">-¥0</span></div>
+        <div class="sum-row total"><span>合计</span><strong class="price" id="cfTotal"><small>¥</small>0</strong></div>
+      </div>
+
+      <div class="mp-card pad" style="margin-top:10px">
+        <div class="sec-head" style="margin-bottom:8px"><div class="sec-title">开票信息</div><span class="tag tag-orange" style="font-size:10px">必填</span></div>
+        <div class="field">
+          <label class="field-label" for="invTitle">发票抬头<em>*</em></label>
+          <input class="field-input" id="invTitle" placeholder="请输入个人姓名或企业名称" oninput="clearFieldErr('invTitle')">
+          <div class="field-err" id="err-invTitle">请填写发票抬头</div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="invEmail">接收邮箱<em>*</em></label>
+          <input class="field-input" id="invEmail" placeholder="用于接收电子发票" oninput="clearFieldErr('invEmail')">
+          <div class="field-err" id="err-invEmail">请填写正确的邮箱地址</div>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="field-label" for="invTaxNo">税号<em>*</em></label>
+          <input class="field-input" id="invTaxNo" placeholder="个人抬头可填写身份证号" oninput="clearFieldErr('invTaxNo')">
+          <div class="field-err" id="err-invTaxNo">请填写税号或身份证号</div>
+        </div>
+        <div class="invoice-note">场地预订需填写开票信息，不提供“无需开票”。电子发票将在支付完成后开具至预留邮箱。</div>
+      </div>
+
+      <div class="mp-card pad" style="margin-top:10px">
+        <div class="sec-head" style="margin-bottom:8px"><div class="sec-title">支付方式</div></div>
+        <button class="pay-opt active" data-method="微信支付" onclick="selectPay(this)">
+          <span class="po-ico" style="background:#ecfdf5;color:#059669"><i data-lucide="message-circle"></i></span>
+          <span class="flex1" style="text-align:left"><span class="po-name">微信支付</span><span class="po-desc">推荐使用，支付即时到账</span></span>
+          <span class="radio"></span>
+        </button>
+        <button class="pay-opt" data-method="储值余额" onclick="selectPay(this)">
+          <span class="po-ico" style="background:#e8f3ff;color:#1677ff"><i data-lucide="wallet"></i></span>
+          <span class="flex1" style="text-align:left"><span class="po-name">储值余额</span><span class="po-desc">可用余额 <b id="cfBalance">¥0</b></span></span>
+          <span class="radio"></span>
+        </button>
+        <button class="pay-opt" data-method="次卡" onclick="selectPay(this)">
+          <span class="po-ico" style="background:#fff7ed;color:#d97706"><i data-lucide="ticket"></i></span>
+          <span class="flex1" style="text-align:left"><span class="po-name">次卡</span><span class="po-desc" id="cfCardDesc">篮球10次卡 · 剩余 6 次</span></span>
+          <span class="radio"></span>
+        </button>
+      </div>
+      <div class="agree" style="margin-top:8px;padding-left:0;padding-right:0">
+        <input type="checkbox" id="agreeBox">
+        <span>我已阅读并同意 <a href="javascript:void(0)" onclick="toast('《地丰体育场馆预约须知》演示版','info')">《场馆预约须知》</a> 与 <a href="javascript:void(0)" onclick="toast('《退订与退款规则》演示版','info')">《退订规则》</a>，开场前 2 小时可免费取消。</span>
+      </div>
+    </div>
+    <div style="height:8px"></div>
+    <div class="sticky-bar">
+      <div class="sum">
+        <div class="sum-label">应付金额</div>
+        <div class="sum-total"><small>¥</small><span id="cfPayTotal">0</span></div>
+      </div>
+      <button class="mp-btn mp-btn-primary" onclick="submitPay()">立即支付</button>
+    </div>
+  </section>
+
+  <!-- 5. 支付成功 -->
+  <section class="screen" id="screen-paySuccess">
+    <div class="result-top">
+      <div class="success-ring"><div class="inner"><i data-lucide="check"></i></div></div>
+      <div class="result-title">支付成功</div>
+      <div class="result-sub">预约已生效，请按预约时间到场</div>
+      <div class="qr-wrap">
+        <div class="qr" id="qrBox"></div>
+        <div class="qr-text">DF8K2M9Q</div>
+      </div>
+      <div class="tiny">请向场馆前台出示预约码核销</div>
+    </div>
+    <div class="mp-card" style="margin:0 14px;padding:2px 14px" id="successRows"></div>
+    <div style="display:flex;gap:10px;padding:14px">
+      <button class="mp-btn mp-btn-line flex1" onclick="openOrderDetail(state.lastOrder.id)">查看订单</button>
+      <button class="mp-btn mp-btn-primary flex1" onclick="switchTab('home')">返回首页</button>
+    </div>
+    <div style="padding:0 14px 18px">
+      <div class="mp-card pad">
+        <div class="row" style="gap:8px"><i data-lucide="info" style="width:15px;height:15px;color:#1677ff"></i><span class="sub">已向 <b id="successEmail">chen@example.com</b> 发送预约确认短信与电子发票开具通知。</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. 订单详情 -->
+  <section class="screen" id="screen-orderDetail">
+    <div id="odContent"></div>
+  </section>
+
+  <!-- 7. 订单中心 -->
+  <section class="screen" id="screen-orders">
+    <div class="order-tabs" id="orderTabs">
+      <button class="otab active" data-status="全部" onclick="setOrderTab('全部')">全部</button>
+      <button class="otab" data-status="待支付" onclick="setOrderTab('待支付')">待支付</button>
+      <button class="otab" data-status="待使用" onclick="setOrderTab('待使用')">待使用</button>
+      <button class="otab" data-status="已完成" onclick="setOrderTab('已完成')">已完成</button>
+      <button class="otab" data-status="已取消" onclick="setOrderTab('已取消')">已取消</button>
+      <button class="otab" data-status="退款中" onclick="setOrderTab('退款中')">退款中</button>
+    </div>
+    <div id="orderList"></div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 8. 会员中心 -->
+  <section class="screen" id="screen-member">
+    <div style="height:12px"></div>
+    <div class="member-card">
+      <div class="mc-head">
+        <div class="mc-brand"><i data-lucide="credit-card"></i>地丰体育 · 会员卡</div>
+        <span class="mc-level" id="mcLevel">普通会员</span>
+      </div>
+      <div class="mc-balance">
+        <div class="mc-label">账户余额（元）</div>
+        <div class="mc-amount"><small>¥</small><span id="mcBalance">0.00</span></div>
+      </div>
+      <div class="mc-grid">
+        <div class="mc-cell"><div class="k">赠送金额</div><div class="v">¥<span id="mcGift">0</span></div></div>
+        <div class="mc-cell"><div class="k">积分</div><div class="v" id="mcPoints">0</div></div>
+        <div class="mc-cell"><div class="k">有效期</div><div class="v" id="mcValid">2027-03-15</div></div>
+      </div>
+      <div class="mc-foot"><span>卡号 <span class="mono" id="mcCardNo">VIP20240315001</span></span><span>储值消费享 95 折</span></div>
+    </div>
+
+    <div class="member-quick">
+      <button class="mq-item" onclick="scrollToRecharge()"><span class="mq-ico b"><i data-lucide="plus-circle"></i></span><span>充值</span></button>
+      <button class="mq-item" onclick="toast('次卡购买演示：请选择下方现有次卡续费','info')"><span class="mq-ico g"><i data-lucide="ticket"></i></span><span>次卡</span></button>
+      <button class="mq-item" onclick="toast('优惠券：暂无可用优惠券','info')"><span class="mq-ico o"><i data-lucide="ticket-percent"></i></span><span>优惠券</span></button>
+      <button class="mq-item" onclick="go('invoices')"><span class="mq-ico p"><i data-lucide="file-text"></i></span><span>发票</span></button>
+    </div>
+
+    <div class="mp-section">
+      <div class="sec-head"><div class="sec-title">我的次卡</div><span class="tiny" id="tcCount">2 张</span></div>
+      <div id="timeCardList"></div>
+    </div>
+
+    <div class="mp-section" id="rechargeSection">
+      <div class="sec-head"><div class="sec-title">会员充值</div><span class="tiny">充值即赠，多充多送</span></div>
+      <div class="recharge-grid" id="rechargeGrid"></div>
+    </div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 9. 赛事列表 -->
+  <section class="screen" id="screen-events">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="sec-head"><div class="sec-title">赛事活动</div><span class="tiny">线上报名 · 电子凭证</span></div>
+    </div>
+    <div id="eventList"></div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 10. 赛事详情与报名 -->
+  <section class="screen" id="screen-eventDetail">
+    <div id="eventDetailWrap"></div>
+  </section>
+
+  <!-- 11. 报名成功 -->
+  <section class="screen" id="screen-eventSuccess">
+    <div class="result-top">
+      <div class="success-ring"><div class="inner"><i data-lucide="check"></i></div></div>
+      <div class="result-title">报名成功</div>
+      <div class="result-sub">请凭电子凭证到场签到，无需现场核销场地</div>
+      <div class="qr-wrap">
+        <div class="qr" id="qrBoxEvent"></div>
+        <div class="qr-text" id="evQrText">DFEV2026</div>
+      </div>
+      <div class="tiny">电子凭证码 <b class="mono" id="evSuccessCode">DFEV2026</b></div>
+    </div>
+    <div class="mp-card" style="margin:0 14px;padding:2px 14px" id="evSuccessRows"></div>
+    <div style="display:flex;gap:10px;padding:14px">
+      <button class="mp-btn mp-btn-line flex1" onclick="go('events')">返回赛事</button>
+      <button class="mp-btn mp-btn-primary flex1" onclick="switchTab('home')">返回首页</button>
+    </div>
+  </section>
+
+  <!-- 12. 商品商城 -->
+  <section class="screen" id="screen-goods">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="sec-head"><div class="sec-title">运动商品</div><span class="tiny">场馆自提 · 库存实时</span></div>
+    </div>
+    <div class="goods-list" id="goodsList"></div>
+    <div class="cart-bar">
+      <div class="cart-sum">已选 <b id="cartCount">0</b> 件 · 合计 <b id="cartTotal">¥0</b></div>
+      <button class="mp-btn mp-btn-primary" style="height:38px;font-size:13px;padding:0 18px" onclick="goCheckout()">去结算</button>
+    </div>
+  </section>
+
+  <!-- 13. 商品结算 -->
+  <section class="screen" id="screen-checkout">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="mp-card pad" id="goodsSummary"></div>
+      <div class="mp-card pad" style="margin-top:10px">
+        <div class="sec-head" style="margin-bottom:8px"><div class="sec-title">开票信息</div><span class="tag tag-orange" style="font-size:10px">必填</span></div>
+        <div class="field">
+          <label class="field-label" for="gInvTitle">发票抬头<em>*</em></label>
+          <input class="field-input" id="gInvTitle" placeholder="请输入发票抬头">
+          <div class="field-err" id="err-gInvTitle">请填写发票抬头</div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="gInvEmail">接收邮箱<em>*</em></label>
+          <input class="field-input" id="gInvEmail" placeholder="用于接收电子发票">
+          <div class="field-err" id="err-gInvEmail">请填写正确的邮箱地址</div>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="field-label" for="gInvTaxNo">税号<em>*</em></label>
+          <input class="field-input" id="gInvTaxNo" placeholder="个人抬头可填写身份证号">
+          <div class="field-err" id="err-gInvTaxNo">请填写税号或身份证号</div>
+        </div>
+      </div>
+      <div class="mp-card pad" style="margin-top:10px">
+        <div class="sum-row"><span>商品金额</span><span id="gFee">¥0</span></div>
+        <div class="sum-row"><span>优惠</span><span>-¥0</span></div>
+        <div class="sum-row total"><span>合计</span><strong class="price" id="gTotal"><small>¥</small>0</strong></div>
+      </div>
+      <div class="mp-card pad" style="margin-top:10px">
+        <div class="sec-head" style="margin-bottom:8px"><div class="sec-title">支付方式</div></div>
+        <button class="pay-opt active" data-method="微信支付" onclick="selectPay(this)">
+          <span class="po-ico" style="background:#ecfdf5;color:#059669"><i data-lucide="message-circle"></i></span>
+          <span class="flex1" style="text-align:left"><span class="po-name">微信支付</span><span class="po-desc">支付后到店自提</span></span>
+          <span class="radio"></span>
+        </button>
+      </div>
+    </div>
+    <div style="height:8px"></div>
+    <div class="sticky-bar">
+      <div class="sum"><div class="sum-label">应付金额</div><div class="sum-total"><small>¥</small><span id="gPayTotal">0</span></div></div>
+      <button class="mp-btn mp-btn-primary" onclick="submitGoodsPay()">立即支付</button>
+    </div>
+  </section>
+
+  <!-- 14. 物品租赁 -->
+  <section class="screen" id="screen-rental">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="notice-strip" style="margin:0 0 12px"><i data-lucide="shield-check"></i><span>押金归还时原路退回，器材损坏按标准赔付</span></div>
+    </div>
+    <div id="rentalList"></div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 15. 租赁下单 -->
+  <section class="screen" id="screen-rentalCheckout">
+    <div id="rentalCheckoutWrap"></div>
+  </section>
+
+  <!-- 16. 自提 / 租赁凭证 -->
+  <section class="screen" id="screen-pickup">
+    <div class="result-top">
+      <div class="success-ring"><div class="inner"><i data-lucide="check"></i></div></div>
+      <div class="result-title" id="pickTitle">支付成功</div>
+      <div class="result-sub" id="pickSub">请凭自提码到场馆前台领取</div>
+      <div class="qr-wrap">
+        <div class="qr" id="qrBoxPick"></div>
+        <div class="qr-text" id="pickQrText">DFSP2026</div>
+      </div>
+      <div class="tiny" id="pickCodeLine">自提码 <b class="mono" id="pickCode">DFSP2026</b></div>
+    </div>
+    <div class="mp-card" style="margin:0 14px;padding:2px 14px" id="pickRows"></div>
+    <div style="display:flex;gap:10px;padding:14px">
+      <button class="mp-btn mp-btn-line flex1" onclick="switchTab('orders')">查看订单</button>
+      <button class="mp-btn mp-btn-primary flex1" onclick="switchTab('home')">返回首页</button>
+    </div>
+  </section>
+
+  <!-- 17. 发票记录 -->
+  <section class="screen" id="screen-invoices">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="sec-head"><div class="sec-title">我的发票</div><span class="tiny">电子发票</span></div>
+    </div>
+    <div id="invoiceList"></div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 18. 消息中心 -->
+  <section class="screen" id="screen-messages">
+    <div class="mp-section tight" style="margin-top:12px">
+      <div class="sec-head">
+        <div class="sec-title">消息中心</div>
+        <span class="tiny" style="color:var(--primary);cursor:pointer" onclick="readAllMsgs()">全部已读</span>
+      </div>
+    </div>
+    <div id="msgList"></div>
+    <div style="padding:0 16px 20px"><div class="invoice-note">预约提醒、充值到账、开票结果与赛事通知均在此展示；重要通知会同时通过微信订阅消息与短信送达。</div></div>
+    <div class="screen-pad"></div>
+  </section>
+
+  <!-- 19. 我的 -->
+  <section class="screen" id="screen-mine">
+    <div class="me-hero">
+      <div class="me-profile">
+        <div class="me-avatar">陈</div>
+        <div class="flex1">
+          <div class="me-name">陈晓明 <span class="verify-tag" id="meVerify">已实名认证</span></div>
+          <div class="me-sub">会员卡号 <span class="mono" id="meCardNo">VIP20240315001</span></div>
+        </div>
+        <i data-lucide="chevron-right" style="width:18px;height:18px;opacity:.6"></i>
+      </div>
+      <div class="me-assets">
+        <div class="me-asset"><div class="v" id="meBalance">0</div><div class="k">余额（元）</div></div>
+        <div class="me-asset"><div class="v" id="mePoints">0</div><div class="k">积分</div></div>
+        <div class="me-asset"><div class="v" id="meOrders">0</div><div class="k">订单</div></div>
+      </div>
+    </div>
+
+    <div class="me-list" style="margin-top:-8px;position:relative;z-index:2">
+      <button class="me-row" onclick="switchTab('orders')">
+        <span class="me-row-ico b"><i data-lucide="receipt-text"></i></span>
+        <span class="me-row-label">我的订单</span><span class="me-row-val" id="meOrderVal">全部订单</span><i data-lucide="chevron-right" class="chev-icon"></i>
+      </button>
+      <button class="me-row" onclick="go('invoices')">
+        <span class="me-row-ico g"><i data-lucide="file-text"></i></span>
+        <span class="me-row-label">我的发票</span><span class="me-row-val">查看电子发票</span><i data-lucide="chevron-right" class="chev-icon"></i>
+      </button>
+      <button class="me-row" onclick="openMessages()">
+        <span class="me-row-ico o"><i data-lucide="bell"></i></span>
+        <span class="me-row-label">消息通知</span><span class="me-row-val" id="meMsgVal">3 条未读</span><i data-lucide="chevron-right" class="chev-icon"></i>
+      </button>
+      <button class="me-row" onclick="toast('默认开票信息：厦门地丰置业有限公司 / 91350200XXXXXXXX','info')">
+        <span class="me-row-ico p"><i data-lucide="file-badge"></i></span>
+        <span class="me-row-label">开票信息</span><span class="me-row-val">已保存 1 条</span><i data-lucide="chevron-right" class="chev-icon"></i>
+      </button>
+      <button class="me-row" onclick="toast('常用联系人：陈晓明 138****1234','info')">
+        <span class="me-row-ico b"><i data-lucide="users"></i></span>
+        <span class="me-row-label">常用联系人</span><span class="me-row-val">1 人</span><i data-lucide="chevron-right" class="chev-icon"></i>
+      </button>
+    </div>
+    <div class="logout-wrap">
+      <button class="logout-btn" onclick="confirmLogout()">退出登录</button>
+    </div>
+    <div class="screen-pad"></div>
+  </section>
+
+</div>
+    <div class="tabbar" id="tabbar">
+      <button class="tab-btn active" data-tab="home" onclick="switchTab('home')"><i data-lucide="home"></i><span>首页</span></button>
+      <button class="tab-btn" data-tab="orders" onclick="switchTab('orders')"><i data-lucide="receipt-text"></i><span>订单</span></button>
+      <button class="tab-btn" data-tab="member" onclick="switchTab('member')"><i data-lucide="credit-card"></i><span>会员</span></button>
+      <button class="tab-btn" data-tab="mine" onclick="switchTab('mine')"><i data-lucide="user"></i><span>我的</span></button>
+    </div>
+    <div id="toastWrap" style="position:absolute;left:0;right:0;bottom:96px;z-index:120;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none"></div>
+    <div class="pay-mask" id="payMask" style="display:none">
+      <div class="pay-box">
+        <div class="spinner"></div>
+        <div class="pay-box-title" id="payMaskTitle">微信支付中...</div>
+        <div class="pay-box-sub">请勿关闭页面</div>
+      </div>
+    </div>
+    <div class="dialog-mask" id="dialogMask" style="display:none">
+      <div class="dialog" id="dialogBox"></div>
+    </div>
+  </div>
+  <div class="stage-tip"><b>iPhone 15 · 390 × 844</b><span>点击屏幕内的卡片、按钮均可完成完整业务闭环</span></div>
+</div>
+
+<aside class="info-card">
+  <div class="ic-eyebrow">WECHAT MINI PROGRAM</div>
+  <h1>微信小程序端预览</h1>
+  <p class="ic-desc">“地丰体育”C 端小程序高保真原型。一个手机外壳内嵌完整可点击流程，覆盖订场、支付、会员、赛事报名、商品与租赁。</p>
+
+  <div class="ic-block">
+    <div class="ic-title"><span class="bar"></span>推荐体验路径</div>
+    <ol class="flow-list">
+      <li><b>首页</b><span>搜索 / 运动分类 / 附近场馆</span></li>
+      <li><b>场馆详情</b><span>按运动筛选场地</span></li>
+      <li><b>选择时段</b><span>7 天日期 + 跨时段累加</span></li>
+      <li><b>确认订单</b><span>开票信息 & 三种支付方式</span></li>
+      <li><b>支付成功</b><span>预约码 DF8K2M9Q</span></li>
+      <li><b>订单中心</b><span>状态筛选 & 核销码</span></li>
+      <li><b>会员中心</b><span>充值 / 次卡 / 余额</span></li>
+      <li><b>赛事报名</b><span>组别名额 & 电子凭证</span></li>
+    </ol>
+  </div>
+
+  <div class="ic-block">
+    <div class="ic-title"><span class="bar"></span>已覆盖能力</div>
+    <div class="tag-row">
+      <span class="mini-tag">在线订场</span><span class="mini-tag">时段预约</span>
+      <span class="mini-tag">在线支付</span><span class="mini-tag">电子核销码</span>
+      <span class="mini-tag">电子发票</span><span class="mini-tag">会员储值</span>
+      <span class="mini-tag">次卡</span><span class="mini-tag">赛事报名</span>
+      <span class="mini-tag">商品自提</span><span class="mini-tag">物品租赁</span>
+    </div>
+  </div>
+
+  <div class="ic-block">
+    <div class="ic-title"><span class="bar"></span>数据说明</div>
+    <p class="ic-note">页面复用 <code>../mock.js</code> 与 <code>../mock-extra.js</code> 的场馆、订单、商品、租赁与赛事数据，金额库存实时联动，不发起真实网络请求。</p>
+  </div>
+
+  <a class="back-admin" href="../index.html">
+    <i data-lucide="arrow-left"></i>
+    返回管理后台
+  </a>
+</aside>
+
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js?v=20261105"></script>
+<script>
+/* ================= 基础工具与数据 ================= */
+var $ = function(id){ return document.getElementById(id); };
+var VENUES = MOCK_EXT.appVenues;
+var COURTS = MOCK.courts;
+var ALL_SLOTS = MOCK_EXT.appSlots;
+var BASE_DATE = new Date(2026, 10, 5);
+var WEEK = ['周日','周一','周二','周三','周四','周五','周六'];
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(m){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+  });
+}
+function money(n){
+  n = Number(n) || 0;
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
+}
+function pad2(n){ return n < 10 ? '0' + n : String(n); }
+function fmtDate(d){ return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function fmtMD(d){ return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function weekOf(d){ return WEEK[d.getDay()]; }
+function icons(){ if (window.lucide && window.lucide.createIcons) window.lucide.createIcons(); }
+
+var m0 = MOCK.members[0];
+var state = {
+  venueId: 'V001', sportFilter: '全部', homeSport: '全部', homeKeyword: '',
+  courtId: null, dateIdx: 0, selected: [], draft: null,
+  payMethod: '微信支付',
+  invoice: { title: '陈晓明', email: 'chen@example.com', taxNo: '' },
+  member: { name:'陈晓明', cardNo:m0.cardNo, balance:m0.balance, gift:m0.giftBalance, points:m0.points, validUntil:m0.validUntil, level:m0.level },
+  orders: [], lastOrder: null, currentOrderId: null, orderTab: '全部',
+  cart: {}, goodsInvoice: { title:'陈晓明', email:'chen@example.com', taxNo:'' },
+  eventId: null, eventGroupIdx: 0,
+  rental: null, invoices: [],
+  timeCards: MOCK_EXT.appTimeCards.map(function(c){ return { name:c.name, total:c.total, used:c.used, remain:c.remain, validUntil:c.validUntil }; })
+};
+
+/* 订单种子：扩展数据 + 待支付 / 退款中示例 */
+state.orders = [
+  { id:'ORD20261105001', type:'场地预约', title:'2号篮球场', venue:'地丰体育中心', time:'2026-11-05 19:00-21:00', amount:240, status:'待支付', code:'', invoiceStatus:'', payMethod:'微信支付', createTime:'2026-11-05 14:20' },
+  { id:'ORD20261021011', type:'场地预约', title:'B1羽毛球场', venue:'地丰羽毛球馆', time:'2026-10-21 20:00-21:00', amount:60, status:'退款中', code:'DF3X7A1B', invoiceStatus:'已开票', payMethod:'微信支付', createTime:'2026-10-21 18:30' }
+].concat(MOCK_EXT.appOrders.map(function(o){
+  return {
+    id:o.id, type:o.type, title:o.title, venue:o.venue, time:o.time, amount:o.amount,
+    status:o.status, code:o.code || '', invoiceStatus: o.status === '已完成' ? '已开票' : (o.status === '已取消' ? '' : '开票中'),
+    payMethod: o.type === '场地预约' ? '微信支付' : '微信支付', createTime: o.time
+  };
+}));
+
+state.invoices = MOCK_EXT.invoices.filter(function(i){ return i.customer === '陈晓明'; }).map(function(i){
+  return { no:i.no, order:i.order, customer:i.customer, type:i.type, amount:i.amount, status:i.status, date:i.date, email:i.email };
+});
+state.orders.forEach(function(o){
+  if (!o.invoiceStatus) return;
+  if (state.invoices.some(function(i){ return i.order === o.id; })) return;
+  state.invoices.push({
+    no:'', order:o.id, customer:m0.name, type:'电子普通发票', amount:o.amount,
+    status: o.invoiceStatus === '已开票' ? '开具成功' : '申请中', date:o.createTime || o.time, email:state.invoice.email
+  });
+});
+
+var STATUS_CLASS = { '待支付':'st-pending', '待使用':'st-paid', '已完成':'st-done', '已取消':'st-cancel', '退款中':'st-refund' };
+var TYPE_ICON = { '场地预约':{icon:'circle-dot', color:'blue'}, '商品购买':{icon:'shopping-bag', color:'green'}, '物品租赁':{icon:'repeat', color:'purple'}, '赛事报名':{icon:'trophy', color:'orange'} };
+
+/* ================= Toast / Dialog ================= */
+function toast(msg, type){
+  type = type || 'success';
+  var wrap = $('toastWrap');
+  if (!wrap) return;
+  var el = document.createElement('div');
+  el.className = 'mini-toast ' + type;
+  var ico = type === 'success' ? 'check-circle' : (type === 'error' ? 'x-circle' : 'info');
+  el.innerHTML = '<i data-lucide="' + ico + '"></i><span>' + esc(msg) + '</span>';
+  wrap.appendChild(el);
+  icons();
+  setTimeout(function(){
+    el.style.transition = 'opacity .25s';
+    el.style.opacity = '0';
+    setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 260);
+  }, 2300);
+}
+
+function closeDialog(){ $('dialogMask').style.display = 'none'; }
+function showDialog(opt){
+  var box = $('dialogBox');
+  var html = '<div class="dialog-head">' + esc(opt.title || '提示') + '</div>' +
+    '<div class="dialog-body">' + (opt.body || '') + '</div>' +
+    '<div class="dialog-acts">' +
+      (opt.cancelText === false ? '' : '<button data-act="cancel">' + esc(opt.cancelText || '取消') + '</button>') +
+      '<button class="ok' + (opt.danger ? ' danger' : '') + '" data-act="ok">' + esc(opt.okText || '确定') + '</button>' +
+    '</div>';
+  box.innerHTML = html;
+  $('dialogMask').style.display = 'flex';
+  var cancel = box.querySelector('[data-act="cancel"]');
+  if (cancel) cancel.onclick = closeDialog;
+  box.querySelector('[data-act="ok"]').onclick = function(){
+    closeDialog();
+    if (opt.onOk) opt.onOk();
+  };
+}
+function showPay(title, cb, delay){
+  $('payMaskTitle').textContent = title || '微信支付中...';
+  $('payMask').style.display = 'flex';
+  setTimeout(function(){
+    $('payMask').style.display = 'none';
+    if (cb) cb();
+  }, delay || 1200);
+}
+
+/* ================= 导航 ================= */
+var SCREEN_META = {
+  home:{ title:'地丰体育', tab:true }, orders:{ title:'订单中心', tab:true },
+  member:{ title:'会员中心', tab:true }, mine:{ title:'我的', tab:true },
+  venue:{ title:'场馆详情' }, slots:{ title:'选择时段' }, confirm:{ title:'确认订单' },
+  paySuccess:{ title:'支付结果' }, orderDetail:{ title:'订单详情' },
+  events:{ title:'赛事活动' }, eventDetail:{ title:'赛事详情' }, eventSuccess:{ title:'报名结果' },
+  goods:{ title:'商品商城' }, checkout:{ title:'确认订单' },
+  rental:{ title:'物品租赁' }, rentalCheckout:{ title:'租赁下单' },
+  pickup:{ title:'支付结果' }, invoices:{ title:'我的发票' },
+  messages:{ title:'消息中心' }
+};
+var currentScreen = 'home';
+var historyStack = [];
+
+function showScreen(id, push){
+  if (!SCREEN_META[id]) return;
+  if (push !== false && currentScreen !== id) historyStack.push(currentScreen);
+  currentScreen = id;
+  var list = document.querySelectorAll('.screen');
+  for (var i = 0; i < list.length; i++) list[i].classList.toggle('active', list[i].id === 'screen-' + id);
+  var meta = SCREEN_META[id];
+  $('navTitle').textContent = meta.title;
+  $('navBack').classList.toggle('hidden', !!meta.tab);
+  $('tabbar').classList.toggle('show', !!meta.tab);
+  var tabs = document.querySelectorAll('.tab-btn');
+  for (var j = 0; j < tabs.length; j++) tabs[j].classList.toggle('active', tabs[j].getAttribute('data-tab') === id);
+  var sc = $('screen-' + id);
+  if (sc) sc.scrollTop = 0;
+  renderScreen(id);
+  icons();
+}
+function go(id){ showScreen(id, true); }
+function switchTab(id){ historyStack = []; showScreen(id, false); }
+function back(){
+  if (historyStack.length) {
+    showScreen(historyStack.pop(), false);
+  } else if (!SCREEN_META[currentScreen].tab) {
+    showScreen('home', false);
+  }
+}
+function renderScreen(id){
+  if (id === 'home') renderHome();
+  else if (id === 'venue') renderVenue();
+  else if (id === 'slots') renderSlots();
+  else if (id === 'confirm') renderConfirm();
+  else if (id === 'paySuccess') renderPaySuccess();
+  else if (id === 'orderDetail') renderOrderDetail();
+  else if (id === 'orders') renderOrders();
+  else if (id === 'member') renderMember();
+  else if (id === 'events') renderEvents();
+  else if (id === 'eventDetail') renderEventDetail();
+  else if (id === 'goods') renderGoods();
+  else if (id === 'checkout') renderCheckout();
+  else if (id === 'rental') renderRental();
+  else if (id === 'rentalCheckout') renderRentalCheckout();
+  else if (id === 'pickup') icons();
+  else if (id === 'invoices') renderInvoices();
+  else if (id === 'messages') renderMessages();
+  else if (id === 'mine') renderMine();
+}
+
+/* ================= 消息中心 ================= */
+var MESSAGES = [
+  { id:'MSG1', ico:'calendar-clock', categ:'预约提醒', title:'您预约的 2 号篮球场即将开场', desc:'2026-11-01 18:00-20:00 · 地丰体育中心，请提前 15 分钟到场', time:'10 分钟前', read:false, color:'#1677ff' },
+  { id:'MSG2', ico:'wallet', categ:'充值到账', title:'充值 800 元成功，赠送 80 元', desc:'当前储值余额 2350 元，赠送余额 180 元', time:'昨天 16:41', read:false, color:'#10b981' },
+  { id:'MSG3', ico:'file-text', categ:'开票结果', title:'电子发票已开具', desc:'订单 ORD20261030001 · 金额 240 元，已发送至 chen@example.com', time:'昨天 18:06', read:false, color:'#8b5cf6' },
+  { id:'MSG4', ico:'trophy', categ:'赛事通知', title:'地丰羽毛球团体赛开始报名', desc:'2026-11-25 · 业余组剩余 6 个名额，报满即止', time:'10-28 09:00', read:true, color:'#f59e0b' },
+  { id:'MSG5', ico:'bell', categ:'系统通知', title:'场馆营业时间调整', desc:'网球中心 11 月起调整为 06:30-22:00', time:'10-26 10:00', read:true, color:'#6b7280' }
+];
+function renderMessages(){
+  var unread = MESSAGES.filter(function(m){ return !m.read; }).length;
+  var html = '';
+  if (!MESSAGES.length) {
+    html = '<div style="padding:60px 16px;text-align:center;color:var(--text-3)">暂无消息</div>';
+  } else {
+    html = '<div style="padding:0 16px">';
+    for (var i = 0; i < MESSAGES.length; i++) {
+      var m = MESSAGES[i];
+      html += '<div class="msg-card" onclick="readMsg(\'' + m.id + '\')" style="background:#fff;border-radius:12px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;box-shadow:0 1px 3px rgba(0,0,0,.05);' + (m.read ? 'opacity:.72' : '') + '">' +
+        '<div style="width:38px;height:38px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:' + m.color + '1a;color:' + m.color + '"><i data-lucide="' + m.ico + '" style="width:19px;height:19px"></i></div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+            '<span style="font-size:12px;color:' + m.color + '">' + m.categ + '</span>' +
+            '<span style="font-size:11px;color:var(--text-4)">' + m.time + '</span>' +
+          '</div>' +
+          '<div style="font-size:14px;font-weight:600;margin-top:2px;display:flex;align-items:center;gap:6px">' +
+            (m.read ? '' : '<span style="width:6px;height:6px;border-radius:50%;background:#ef4444;display:inline-block;flex-shrink:0"></span>') +
+            m.title + '</div>' +
+          '<div style="font-size:12px;color:var(--text-3);margin-top:4px;line-height:1.5">' + m.desc + '</div>' +
+        '</div>' +
+      '</div>';
+    }
+    html += '</div>';
+  }
+  $('msgList').innerHTML = html;
+  var badge = $('meMsgVal');
+  if (badge) badge.textContent = unread ? (unread + ' 条未读') : '已全部阅读';
+  icons();
+}
+function readMsg(id){
+  var m = null;
+  for (var i = 0; i < MESSAGES.length; i++) if (MESSAGES[i].id === id) m = MESSAGES[i];
+  if (!m) return;
+  if (!m.read) { m.read = true; renderMessages(); toast('已标记为已读'); }
+  else toast(m.desc, 'info');
+}
+function readAllMsgs(){
+  var n = 0;
+  for (var i = 0; i < MESSAGES.length; i++) { if (!MESSAGES[i].read) { MESSAGES[i].read = true; n++; } }
+  renderMessages();
+  toast(n ? ('已将 ' + n + ' 条消息标记为已读') : '没有未读消息', n ? 'success' : 'info');
+}
+function openMessages(){ go('messages'); }
+
+/* ================= 首页 ================= */
+var SPORTS = [
+  { name:'足球', ch:'足', cls:'c1' }, { name:'篮球', ch:'篮', cls:'c2' },
+  { name:'网球', ch:'网', cls:'c3' }, { name:'羽毛球', ch:'羽', cls:'c4' },
+  { name:'乒乓球', ch:'乒', cls:'c5' }
+];
+
+function renderHome(){
+  var row = $('sportRow');
+  row.innerHTML = SPORTS.map(function(s){
+    return '<button class="sport-item' + (state.homeSport === s.name ? ' active' : '') + '" onclick="filterSport(\'' + s.name + '\')">' +
+      '<span class="sport-ico ' + s.cls + '">' + s.ch + '</span><span>' + s.name + '</span></button>';
+  }).join('');
+  renderHomeVenueList();
+  renderHomeEvent();
+}
+
+function renderHomeVenueList(){
+  var kw = (state.homeKeyword || '').trim().toLowerCase();
+  var list = VENUES.filter(function(v){
+    if (state.homeSport !== '全部' && v.sports.indexOf(state.homeSport) < 0) return false;
+    if (!kw) return true;
+    return (v.name + v.address + v.sports.join('')).toLowerCase().indexOf(kw) >= 0;
+  });
+  var html = list.map(function(v){
+    return '<div class="venue-item pressable" onclick="openVenue(\'' + v.id + '\')">' +
+      '<div class="venue-img" style="background-image:url(\'' + v.img + '\');background-size:cover;background-position:center"></div>' +
+      '<div class="venue-info">' +
+        '<div class="venue-name">' + esc(v.name) + '<span class="dist-tag">' + v.distance + '</span></div>' +
+        '<div class="venue-meta"><i data-lucide="map-pin"></i>' + esc(v.address) + '</div>' +
+        '<div class="venue-meta"><i data-lucide="clock"></i>' + v.openTime + ' · 营业中</div>' +
+        '<div class="venue-tags">' + v.sports.map(function(s){ return '<span class="tag tag-blue">' + s + '</span>'; }).join('') +
+          v.tags.map(function(t){ return '<span class="tag tag-gray">' + t + '</span>'; }).join('') + '</div>' +
+      '</div></div>';
+  }).join('');
+  $('venueList').innerHTML = html || '<div class="mp-card empty-mini">没有找到匹配的场馆，试试其他关键词</div>';
+  icons();
+}
+
+function renderHomeEvent(){
+  var ev = MOCK_EXT.appEvents.filter(function(e){ return e.status === '报名中'; })[0] || MOCK_EXT.appEvents[0];
+  $('homeEventList').innerHTML =
+    '<div class="event-card pressable" onclick="openEvent(\'' + ev.id + '\')">' +
+      '<div class="event-cover">' +
+        '<div style="position:absolute;inset:0;background-image:url(\'' + eventImg(ev) + '\');background-size:cover;background-position:center"></div>' +
+        '<div class="ec-mask"></div>' +
+        '<span class="ec-mode">' + ev.mode + '</span>' +
+        '<span class="ec-status">' + ev.status + '</span>' +
+        '<span class="ec-name">' + esc(ev.name) + '</span>' +
+      '</div>' +
+      '<div class="event-body">' +
+        '<div class="event-meta"><i data-lucide="calendar"></i>' + ev.date + ' · ' + weekOf(new Date(ev.date.replace(/-/g,'/'))) + '</div>' +
+        '<div class="event-meta"><i data-lucide="map-pin"></i>地丰羽毛球馆</div>' +
+        '<div class="event-foot"><span class="sub">报名费 ¥' + (ev.groups[0] ? ev.groups[0].price : 0) + ' 起</span>' +
+          '<span class="mp-btn mp-btn-primary mp-btn-sm">立即报名</span></div>' +
+      '</div></div>';
+  icons();
+}
+
+function eventImg(ev){
+  var theme = ev.name.indexOf('羽毛球') >= 0;
+  return coverSVG(theme ? '#6d28d9' : '#1d4ed8', theme ? '#a78bfa' : '#0ea5e9');
+}
+
+function filterSport(name){
+  if (!VENUES.some(function(v){ return v.sports.indexOf(name) >= 0; })) {
+    toast('乒乓球场馆筹备中，暂无可用场馆', 'info');
+    return;
+  }
+  state.homeSport = state.homeSport === name ? '全部' : name;
+  renderHome();
+}
+function filterHomeVenues(){
+  state.homeKeyword = $('homeSearch').value || '';
+  renderHomeVenueList();
+}
+
+/* ================= 场馆详情 ================= */
+function openVenue(id){
+  state.venueId = id;
+  state.sportFilter = '全部';
+  state.courtId = null;
+  state.selected = [];
+  historyStack = [];
+  go('venue');
+}
+function currentVenue(){
+  return VENUES.filter(function(v){ return v.id === state.venueId; })[0] || VENUES[0];
+}
+function renderVenue(){
+  var v = currentVenue();
+  var courts = COURTS.filter(function(c){ return c.venueId === v.id; });
+  $('vHeroImg').style.backgroundImage = "url('" + v.img + "')";
+  $('vHeroName').textContent = v.name;
+  $('vHeroAddr').textContent = v.address;
+  $('vOpenTime').textContent = v.openTime;
+  $('vDistance').textContent = v.distance;
+  $('vCourtCount').textContent = courts.length + ' 片';
+  $('vHeroTags').innerHTML = v.sports.map(function(s){ return '<span>' + s + '</span>'; }).join('') +
+    v.tags.map(function(t){ return '<span>' + t + '</span>'; }).join('');
+
+  var sports = ['全部'].concat(v.sports.filter(function(s, i, arr){ return arr.indexOf(s) === i; }));
+  $('vSportChips').innerHTML = sports.map(function(s){
+    return '<button class="chip' + (state.sportFilter === s ? ' active' : '') + '" onclick="setVenueSport(\'' + s + '\')">' + s + '</button>';
+  }).join('');
+
+  var list = courts.filter(function(c){ return state.sportFilter === '全部' || c.type === state.sportFilter; });
+  $('courtList').innerHTML = list.map(function(c){
+    var disabled = c.status === '维修';
+    return '<div class="court-row pressable" onclick="chooseCourt(\'' + c.id + '\')">' +
+      '<div class="court-ico"><i data-lucide="' + (c.type === '足球' ? 'circle-dot' : c.type === '篮球' ? 'circle' : c.type === '网球' ? 'circle-dashed' : 'feather') + '"></i></div>' +
+      '<div class="flex1"><div class="court-name">' + esc(c.name) + '</div>' +
+        '<div class="court-meta"><span>' + c.area + '</span><span>' + c.attr + '</span><span>' + c.billing + '</span></div>' +
+        '<div class="venue-tags" style="margin-top:5px">' +
+          (disabled ? '<span class="tag tag-red">维护中</span>' : '<span class="tag tag-green">可预约</span><span class="tag tag-blue">即时确认</span>') +
+        '</div></div>' +
+      '<div class="court-price"><div class="p"><small>¥</small>' + courtPrice(c) + '<small>/小时</small></div>' +
+        '<div class="go">' + (disabled ? '暂不可订' : '选择时段 ›') + '</div></div>' +
+    '</div>';
+  }).join('') || '<div class="mp-card empty-mini">该运动类型暂无场地</div>';
+  icons();
+}
+function setVenueSport(sport){
+  state.sportFilter = sport;
+  renderVenue();
+}
+function courtPrice(c){
+  var rule = MOCK.priceRules.filter(function(p){ return p.venueId === c.venueId && p.courtType === c.type && p.periodType === '低峰'; })[0];
+  if (rule) return rule.price;
+  var map = { '篮球':80, '足球':200, '网球':80, '羽毛球':60, '乒乓球':40 };
+  return map[c.type] || 80;
+}
+function chooseCourt(id){
+  var c = COURTS.filter(function(x){ return x.id === id; })[0];
+  if (!c || c.status === '维修') { toast('该场地正在维护，暂不可预约', 'error'); return; }
+  state.courtId = id;
+  state.dateIdx = 0;
+  state.selected = [];
+  go('slots');
+}
+
+/* ================= 选择时段 ================= */
+function currentCourt(){
+  return COURTS.filter(function(c){ return c.id === state.courtId; })[0] || COURTS[0];
+}
+function getDates(){
+  var arr = [];
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(BASE_DATE.getFullYear(), BASE_DATE.getMonth(), BASE_DATE.getDate() + i);
+    arr.push(d);
+  }
+  return arr;
+}
+function slotStatus(idx){
+  var base = ALL_SLOTS[idx];
+  if (base.status !== 'available') return base.status;
+  if ((state.dateIdx * 5 + idx * 3 + state.courtId.charCodeAt(3)) % 11 === 0) return 'booked';
+  return 'available';
+}
+function renderSlots(){
+  if (!state.courtId) state.courtId = COURTS[0].id;
+  var c = currentCourt();
+  var v = VENUES.filter(function(v){ return v.id === c.venueId; })[0] || currentVenue();
+  $('slotCourtCard').innerHTML =
+    '<div class="row" style="gap:10px">' +
+      '<div class="court-ico" style="width:46px;height:46px"><i data-lucide="circle-dot"></i></div>' +
+      '<div class="flex1"><div style="font-size:15px;font-weight:600">' + esc(c.name) + '</div>' +
+        '<div class="sub" style="margin-top:3px">' + esc(v.name) + ' · ' + c.area + ' · ' + c.attr + '</div></div>' +
+      '<div class="price" style="font-size:16px"><small>¥</small>' + courtPrice(c) + '<small>/时</small></div>' +
+    '</div>';
+
+  var dates = getDates();
+  $('dateStrip').innerHTML = dates.map(function(d, i){
+    var label = i === 0 ? '今天' : (i === 1 ? '明天' : weekOf(d));
+    return '<button class="date-item' + (state.dateIdx === i ? ' active' : '') + '" onclick="selectDate(' + i + ')">' +
+      '<span>' + label + '</span><b>' + fmtMD(d) + '</b></button>';
+  }).join('');
+
+  renderSlotGrid();
+  updateSlotBar();
+}
+function selectDate(i){
+  state.dateIdx = i;
+  state.selected = [];
+  renderSlots();
+}
+function renderSlotGrid(){
+  $('slotGrid').innerHTML = ALL_SLOTS.map(function(s, idx){
+    var st = slotStatus(idx);
+    var on = state.selected.indexOf(idx) >= 0;
+    var disabled = st !== 'available';
+    var flag = st === 'booked' ? '已订' : st === 'locked' ? '锁定' : (on ? '已选' : '可约');
+    return '<button class="slot-card' + (on ? ' active' : '') + (disabled ? ' disabled' : '') + '" ' +
+      (disabled ? 'disabled' : 'onclick="toggleSlot(' + idx + ')"') + '>' +
+      '<span class="flag">' + flag + '</span>' +
+      '<span>' + s.time + '</span><span class="sp">¥' + s.price + '</span></button>';
+  }).join('');
+  icons();
+}
+function toggleSlot(idx){
+  var st = slotStatus(idx);
+  if (st !== 'available') { toast(st === 'booked' ? '该时段已被预订' : '该时段已被锁定', 'error'); return; }
+  var i = state.selected.indexOf(idx);
+  if (i >= 0) state.selected.splice(i, 1); else state.selected.push(idx);
+  state.selected.sort(function(a,b){ return a - b; });
+  renderSlotGrid();
+  updateSlotBar();
+}
+function selectedTotal(){
+  return state.selected.reduce(function(sum, i){ return sum + ALL_SLOTS[i].price; }, 0);
+}
+function updateSlotBar(){
+  var count = state.selected.length;
+  var total = selectedTotal();
+  $('slotCount').textContent = count;
+  $('slotTotal').innerHTML = '<small>¥</small>' + money(total);
+  $('slotSubmit').disabled = count === 0;
+}
+function selectedTimes(){
+  return state.selected.map(function(i){ return ALL_SLOTS[i]; });
+}
+function slotRange(){
+  var times = selectedTimes();
+  if (!times.length) return '';
+  var contiguous = true;
+  for (var i = 1; i < times.length; i++) {
+    if (times[i - 1].time.split('-')[1] !== times[i].time.split('-')[0]) contiguous = false;
+  }
+  if (contiguous) return times[0].time.split('-')[0] + '-' + times[times.length - 1].time.split('-')[1];
+  return times.map(function(t){ return t.time; }).join('、');
+}
+function submitSlots(){
+  if (!state.selected.length) { toast('请先选择预约时段', 'error'); return; }
+  var c = currentCourt();
+  var v = VENUES.filter(function(v){ return v.id === c.venueId; })[0] || currentVenue();
+  var d = getDates()[state.dateIdx];
+  var fee = selectedTotal();
+  state.draft = {
+    court: c, venue: v, date: fmtDate(d), dateLabel: state.dateIdx === 0 ? '今天' : (state.dateIdx === 1 ? '明天' : weekOf(d)),
+    slots: selectedTimes(), time: slotRange(), fee: fee, discount: 0, total: fee
+  };
+  state.payMethod = '微信支付';
+  state.invoice.taxNo = state.invoice.taxNo || '';
+  go('confirm');
+}
+/* ================= 确认订单 ================= */
+function renderConfirm(){
+  var d = state.draft;
+  if (!d) { toast('请先选择场地时段', 'error'); showScreen('home', false); return; }
+  $('cfTitle').textContent = d.court.name;
+  $('cfVenue').textContent = d.venue.name;
+  $('cfTime').textContent = d.date + ' ' + d.time + '（' + d.slots.length + ' 个时段）';
+  $('cfFee').textContent = '¥' + money(d.fee);
+  $('cfDiscount').textContent = '-¥' + money(d.discount);
+  $('cfTotal').innerHTML = '<small>¥</small>' + money(d.total);
+  $('cfPayTotal').textContent = money(d.total);
+  $('cfBalance').textContent = '¥' + money(state.member.balance);
+  var card = state.timeCards.filter(function(c){ return c.remain > 0; })[0];
+  $('cfCardDesc').textContent = card ? card.name + ' · 剩余 ' + card.remain + ' 次' : '暂无可用次卡';
+  $('invTitle').value = state.invoice.title;
+  $('invEmail').value = state.invoice.email;
+  $('invTaxNo').value = state.invoice.taxNo;
+  ['invTitle','invEmail','invTaxNo'].forEach(clearFieldErr);
+  var opts = $('screen-confirm').querySelectorAll('.pay-opt');
+  for (var i = 0; i < opts.length; i++) opts[i].classList.toggle('active', opts[i].getAttribute('data-method') === state.payMethod);
+}
+function selectPay(el){
+  var opts = el.parentElement.querySelectorAll('.pay-opt');
+  for (var i = 0; i < opts.length; i++) opts[i].classList.remove('active');
+  el.classList.add('active');
+  state.payMethod = el.getAttribute('data-method') || '微信支付';
+}
+function clearFieldErr(id){
+  var inp = $(id), err = $('err-' + id);
+  if (inp) inp.classList.remove('err');
+  if (err) err.classList.remove('show');
+}
+function checkField(id, valid){
+  var inp = $(id), err = $('err-' + id);
+  if (inp) inp.classList.toggle('err', !valid);
+  if (err) err.classList.toggle('show', !valid);
+  return valid;
+}
+function validateInvoiceFields(titleId, emailId, taxId){
+  var t = ($(titleId) ? $(titleId).value : '').trim();
+  var e = ($(emailId) ? $(emailId).value : '').trim();
+  var n = ($(taxId) ? $(taxId).value : '').trim();
+  var ok = true;
+  if (!t) { checkField(titleId, false); ok = false; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { checkField(emailId, false); ok = false; }
+  if (n.length < 6) { checkField(taxId, false); ok = false; }
+  return ok;
+}
+function submitPay(){
+  var d = state.draft;
+  if (!d) { toast('订单信息已失效，请重新选场', 'error'); showScreen('home', false); return; }
+  if (!validateInvoiceFields('invTitle', 'invEmail', 'invTaxNo')) { toast('请完善开票信息（抬头 / 邮箱 / 税号）', 'error'); return; }
+  state.invoice = { title: $('invTitle').value.trim(), email: $('invEmail').value.trim(), taxNo: $('invTaxNo').value.trim() };
+  if (!$('agreeBox').checked) { toast('请先勾选并同意预约须知', 'error'); return; }
+  if (state.payMethod === '储值余额' && state.member.balance < d.total) {
+    toast('储值余额不足，当前余额 ¥' + money(state.member.balance), 'error'); return;
+  }
+  if (state.payMethod === '次卡') {
+    var card = state.timeCards.filter(function(c){ return c.remain > 0; })[0];
+    if (!card) { toast('暂无可用次卡，请更换支付方式', 'error'); return; }
+  }
+  showPay(state.payMethod === '次卡' ? '次卡核销中...' : '微信支付中...', function(){
+    finalizeCourtOrder();
+  });
+}
+function finalizeCourtOrder(){
+  var d = state.draft;
+  var code = 'DF8K2M9Q';
+  var id = 'ORD20261105' + String(Date.now()).slice(-4);
+  var order = {
+    id: id, type: '场地预约', title: d.court.name, venue: d.venue.name,
+    time: d.date + ' ' + d.time, amount: d.total, status: '待使用', code: code,
+    invoiceStatus: '开票中', payMethod: state.payMethod, createTime: '2026-11-05 14:32'
+  };
+  if (state.payMethod === '储值余额') {
+    state.member.balance -= d.total;
+  } else if (state.payMethod === '次卡') {
+    var card = state.timeCards.filter(function(c){ return c.remain > 0; })[0];
+    if (card) { card.remain -= 1; card.used += 1; }
+  }
+  state.member.points += Math.floor(d.total / 10);
+  state.orders.unshift(order);
+  state.invoices.unshift({
+    no: '', order: id, customer: state.invoice.title, type: '电子普通发票',
+    amount: d.total, status: '开票中', date: '2026-11-05 14:32', email: state.invoice.email
+  });
+  state.lastOrder = order;
+  state.draft = null;
+  state.selected = [];
+  state.orderTab = '全部';
+  syncMemberViews();
+  toast('支付成功，预约码 ' + code);
+  go('paySuccess');
+  historyStack = ['orders'];
+}
+
+/* ================= 支付成功 ================= */
+function fillQR(el, seed){
+  if (!el) return;
+  var s = seed || 'DF8K2M9Q';
+  var html = '';
+  for (var r = 0; r < 15; r++) {
+    for (var c = 0; c < 15; c++) {
+      var on;
+      var corner = (r < 5 && c < 5) || (r < 5 && c > 9) || (r > 9 && c < 5);
+      if (corner) {
+        var rr = r < 5 ? r : r - 10;
+        var cc = c < 5 ? c : c - 10;
+        on = rr === 0 || rr === 4 || cc === 0 || cc === 4 || (rr === 2 && cc === 2);
+      } else {
+        on = (r * 7 + c * 11 + s.charCodeAt((r + c) % s.length)) % 5 < 2;
+      }
+      html += '<i class="' + (on ? 'on' : '') + '"></i>';
+    }
+  }
+  el.innerHTML = html;
+}
+function renderPaySuccess(){
+  var o = state.lastOrder;
+  if (!o) {
+    $('successRows').innerHTML = '<div class="empty-mini">暂无订单信息</div>';
+    return;
+  }
+  var rows = [
+    ['订单号', o.id],
+    ['场馆 / 场地', o.venue + ' · ' + o.title],
+    ['预约时间', o.time],
+    ['支付方式', o.payMethod],
+    ['实付金额', '¥' + money(o.amount)],
+    ['预约码', o.code || 'DF8K2M9Q']
+  ];
+  $('successRows').innerHTML = rows.map(function(r){
+    return '<div class="code-row"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1]) + '</span></div>';
+  }).join('');
+  $('successEmail').textContent = state.invoice.email;
+  fillQR($('qrBox'), o.code || 'DF8K2M9Q');
+  icons();
+}
+
+/* ================= 订单详情 ================= */
+function openOrderDetail(id){
+  state.currentOrderId = id;
+  go('orderDetail');
+}
+function renderOrderDetail(){
+  var o = state.orders.filter(function(x){ return x.id === state.currentOrderId; })[0];
+  var wrap = $('odContent');
+  if (!o) { wrap.innerHTML = '<div class="empty-mini">订单不存在或已删除</div>'; return; }
+  var ringColor = o.status === '待使用' ? '#1677ff' : (o.status === '已完成' ? '#10b981' : (o.status === '已取消' ? '#9aa3b2' : '#f59e0b'));
+  var headIcon = o.status === '已完成' ? 'check' : (o.status === '已取消' ? 'x' : (o.status === '退款中' ? 'rotate-ccw' : 'clock'));
+  var subText = {
+    '待支付':'请尽快完成支付，超时订单将自动取消',
+    '待使用':'请按预约时间到场，向工作人员出示核销码',
+    '已完成':'订单已完成，感谢您的使用',
+    '已取消':'订单已取消，可重新预订其他时段',
+    '退款中':'退款申请已提交，预计 1-3 个工作日原路退回'
+  }[o.status] || '';
+  if (o.status === '待使用') {
+    if (o.type === '商品购买') subText = '请凭自提码到场馆前台领取商品';
+    else if (o.type === '物品租赁') subText = '请凭租赁码到场馆前台领取器材';
+    else if (o.type === '赛事报名') subText = '请凭电子凭证到场签到，无需现场核销场地';
+  }
+
+  var rows = [
+    ['订单编号', o.id],
+    ['订单类型', o.type],
+    ['场馆 / 场地', o.venue + ' · ' + o.title],
+    ['预约时间', o.time],
+    ['支付方式', o.payMethod || '微信支付'],
+    ['下单时间', o.createTime || o.time],
+    ['订单金额', '¥' + money(o.amount)]
+  ];
+  var invoiceHtml = o.invoiceStatus
+    ? '<div class="code-row"><span class="k">发票状态</span><span class="v"><span class="tag ' +
+      (o.invoiceStatus === '已开票' ? 'tag-green' : 'tag-orange') + '">' + o.invoiceStatus + '</span></span></div>'
+    : '';
+
+  var codeLabel = o.type === '商品购买' ? '自提码' : (o.type === '物品租赁' ? '租赁码' : (o.type === '赛事报名' ? '电子凭证码' : '预约核销码'));
+  var codeDesc = o.type === '赛事报名' ? '凭此电子凭证到场签到，无需现场核销场地' : (o.type === '场地预约' ? '到场后向前台出示，支持扫码核销' : '到馆后向前台出示此码领取');
+  var codeHtml = (o.status === '待使用' && o.code)
+    ? '<div class="mp-card pad" style="margin-top:10px;text-align:center">' +
+        '<div class="tiny" style="margin-bottom:6px">' + codeLabel + '</div>' +
+        '<div class="qr-wrap" style="width:138px;height:138px;margin:4px auto 6px"><div class="qr" id="odQr"></div><div class="qr-text">' + o.code + '</div></div>' +
+        '<div class="mono" style="font-size:15px;font-weight:700;letter-spacing:1.5px">' + o.code + '</div>' +
+        '<div class="tiny" style="margin-top:5px">' + codeDesc + '</div>' +
+      '</div>'
+    : '';
+
+  var createDesc = {
+    '场地预约':'选择场馆场地与预约时段', '商品购买':'选购商品并提交订单',
+    '物品租赁':'选择器材与租赁时长', '赛事报名':'选择参赛组别并填写报名信息'
+  }[o.type] || '提交订单';
+  var tl = [];
+  tl.push({ title:'订单创建', time:(o.createTime || o.time), desc:createDesc, cls:'done' });
+  if (o.status !== '待支付' && o.status !== '已取消') {
+    tl.push({ title:'支付成功', time:(o.createTime || o.time), desc:'支付方式：' + (o.payMethod || '微信支付'), cls:'done' });
+  }
+  if (o.status === '待使用') {
+    var pendingTitle = o.type === '赛事报名' ? '待参赛' : (o.type === '商品购买' ? '待自提' : (o.type === '物品租赁' ? '待取件' : '待到场核销'));
+    var pendingDesc = o.type === '赛事报名' ? '请按赛程提前 30 分钟签到' : (o.type === '场地预约' ? '请提前 10 分钟到达场馆' : '请在营业时间内到馆领取');
+    tl.push({ title:pendingTitle, time:o.time, desc:pendingDesc, cls:'current' });
+  }
+  if (o.status === '已完成') tl.push({ title:'核销完成', time:o.time, desc:'订单已完成', cls:'done' });
+  if (o.status === '已取消') tl.push({ title:'订单已取消', time:o.time, desc:'未消费金额已原路退回', cls:'' });
+  if (o.status === '退款中') tl.push({ title:'退款处理中', time:'2026-11-05 14:20', desc:'预计 1-3 个工作日到账', cls:'current' });
+
+  var actions = '';
+  if (o.status === '待支付') {
+    actions = '<button class="mp-btn mp-btn-line" onclick="cancelOrder(\'' + o.id + '\')">取消订单</button>' +
+      '<button class="mp-btn mp-btn-primary" onclick="payExisting(\'' + o.id + '\')">去支付 ¥' + money(o.amount) + '</button>';
+  } else if (o.status === '待使用') {
+    actions = '<button class="mp-btn mp-btn-line" onclick="toast(\'请向场馆前台出示预约码核销\',\'info\')">核销说明</button>' +
+      '<button class="mp-btn mp-btn-primary" onclick="rebookOrder(\'' + o.id + '\')">再来一单</button>';
+  } else if (o.status === '已完成') {
+    actions = '<button class="mp-btn mp-btn-line" onclick="go(\'invoices\')">查看发票</button>' +
+      '<button class="mp-btn mp-btn-primary" onclick="rebookOrder(\'' + o.id + '\')">再来一单</button>';
+  } else if (o.status === '已取消') {
+    actions = '<button class="mp-btn mp-btn-primary mp-btn-block" onclick="rebookOrder(\'' + o.id + '\')">重新预订</button>';
+  } else {
+    actions = '<button class="mp-btn mp-btn-line mp-btn-block" onclick="toast(\'退款处理中，预计 1-3 个工作日到账\',\'info\')">查看退款进度</button>';
+  }
+
+  wrap.innerHTML =
+    '<div class="result-top" style="background:linear-gradient(180deg,#eff6ff,#f5f7fa);padding-top:26px">' +
+      '<div class="success-ring" style="background:#fff;border-color:#e8ecf2"><div class="inner" style="background:' + ringColor + '"><i data-lucide="' + headIcon + '"></i></div></div>' +
+      '<div class="result-title">' + o.status + '</div>' +
+      '<div class="result-sub">' + subText + '</div>' +
+    '</div>' +
+    '<div class="mp-card" style="margin:0 14px;padding:2px 14px">' +
+      rows.map(function(r){ return '<div class="code-row"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1]) + '</span></div>'; }).join('') +
+      invoiceHtml +
+    '</div>' + codeHtml +
+    '<div class="mp-card pad" style="margin:10px 14px 0">' +
+      '<div class="sec-head" style="margin-bottom:10px"><div class="sec-title">订单进度</div></div>' +
+      '<div class="timeline">' + tl.map(function(t){
+        return '<div class="tl-item ' + t.cls + '"><div class="tl-title">' + esc(t.title) + '</div><div class="tl-time">' + esc(t.time) + '</div><div class="tl-desc">' + esc(t.desc) + '</div></div>';
+      }).join('') + '</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;padding:14px">' + actions + '</div>';
+  if (o.status === '待使用' && o.code) fillQR($('odQr'), o.code);
+  icons();
+}
+
+/* ================= 订单中心 ================= */
+function setOrderTab(status){
+  state.orderTab = status;
+  renderOrders();
+}
+function renderOrders(){
+  var tabs = document.querySelectorAll('.otab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-status') === state.orderTab);
+  var list = state.orders.filter(function(o){ return state.orderTab === '全部' || o.status === state.orderTab; });
+  if (!list.length) {
+    $('orderList').innerHTML = '<div class="empty-mini" style="padding-top:70px">暂无' + (state.orderTab === '全部' ? '' : state.orderTab) + '订单</div>';
+    return;
+  }
+  $('orderList').innerHTML = list.map(orderCardHTML).join('');
+  icons();
+}
+function orderCardHTML(o){
+  var ti = TYPE_ICON[o.type] || TYPE_ICON['场地预约'];
+  var actions = '';
+  if (o.status === '待支付') {
+    actions = '<button class="mp-btn mp-btn-line mp-btn-sm" onclick="cancelOrder(\'' + o.id + '\')">取消订单</button>' +
+      '<button class="mp-btn mp-btn-primary mp-btn-sm" onclick="payExisting(\'' + o.id + '\')">去支付</button>';
+  } else if (o.status === '待使用') {
+    actions = '<button class="mp-btn mp-btn-line mp-btn-sm" onclick="openOrderDetail(\'' + o.id + '\')">查看核销码</button>' +
+      '<button class="mp-btn mp-btn-primary mp-btn-sm" onclick="rebookOrder(\'' + o.id + '\')">再来一单</button>';
+  } else if (o.status === '已完成') {
+    actions = '<button class="mp-btn mp-btn-line mp-btn-sm" onclick="go(\'invoices\')">查看发票</button>' +
+      '<button class="mp-btn mp-btn-primary mp-btn-sm" onclick="rebookOrder(\'' + o.id + '\')">再来一单</button>';
+  } else if (o.status === '已取消') {
+    actions = '<button class="mp-btn mp-btn-primary mp-btn-sm" onclick="rebookOrder(\'' + o.id + '\')">重新预订</button>';
+  } else {
+    actions = '<button class="mp-btn mp-btn-line mp-btn-sm" onclick="toast(\'退款处理中，预计 1-3 个工作日到账\',\'info\')">查看进度</button>';
+  }
+  return '<div class="order-card">' +
+    '<div class="order-head"><span class="order-type ' + ti.color + '"><i data-lucide="' + ti.icon + '"></i></span>' +
+      '<span class="order-no">' + esc(o.id) + '</span>' +
+      '<span class="order-status ' + (STATUS_CLASS[o.status] || '') + '">' + o.status + '</span></div>' +
+    '<div class="order-body" onclick="openOrderDetail(\'' + o.id + '\')">' +
+      '<div class="order-thumb"><i data-lucide="' + ti.icon + '"></i></div>' +
+      '<div class="flex1"><div class="order-title">' + esc(o.title) + '</div>' +
+        '<div class="order-meta">' + esc(o.venue) + '</div>' +
+        '<div class="order-meta">' + esc(o.time) + '</div></div>' +
+      '<div class="order-amt"><small>¥</small>' + money(o.amount) + '</div>' +
+    '</div>' +
+    '<div class="order-foot">' + actions + '</div>' +
+  '</div>';
+}
+function cancelOrder(id){
+  var o = state.orders.filter(function(x){ return x.id === id; })[0];
+  if (!o || o.status !== '待支付') { toast('当前订单不可取消', 'error'); return; }
+  showDialog({
+    title:'取消订单', body:'确定取消该笔订单吗？<br>取消后时段将立即释放。', okText:'确认取消', danger:true,
+    onOk:function(){
+      o.status = '已取消';
+      toast('订单已取消');
+      if (currentScreen === 'orderDetail') renderOrderDetail();
+      renderOrders();
+    }
+  });
+}
+function payExisting(id){
+  var o = state.orders.filter(function(x){ return x.id === id; })[0];
+  if (!o) return;
+  showPay('微信支付中...', function(){
+    o.status = '待使用';
+    o.code = 'DF8K2M9Q';
+    o.invoiceStatus = '开票中';
+    state.lastOrder = o;
+    state.orderTab = '全部';
+    toast('支付成功，预约码 ' + o.code);
+    renderOrders();
+    go('paySuccess');
+    historyStack = ['orders'];
+  });
+}
+function rebookOrder(id){
+  var o = state.orders.filter(function(x){ return x.id === id; })[0];
+  if (!o) return;
+  var v = VENUES.filter(function(x){ return x.name === o.venue; })[0];
+  if (!v) { toast('该场馆暂无线上排期', 'info'); return; }
+  openVenue(v.id);
+  toast('已进入场馆，请重新选择时段', 'info');
+}
+/* ================= 会员中心 ================= */
+var RECHARGE = [
+  { amount:100, gift:0 }, { amount:200, gift:20 }, { amount:500, gift:80 }, { amount:1000, gift:200 }
+];
+function renderMember(){
+  syncMemberViews();
+  $('tcCount').textContent = state.timeCards.length + ' 张';
+  $('timeCardList').innerHTML = state.timeCards.map(function(c){
+    var pct = Math.min(100, Math.round(c.remain / c.total * 100));
+    return '<div class="tc-item"><div class="tc-head"><span class="tc-name">' + esc(c.name) + '</span>' +
+      '<span class="tag ' + (c.remain > 0 ? 'tag-green' : 'tag-gray') + '">' + (c.remain > 0 ? '可用' : '已用完') + '</span></div>' +
+      '<div class="tc-progress"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="tc-meta"><span>剩余 <b style="color:#1677ff">' + c.remain + '</b> / ' + c.total + ' 次</span><span>有效期至 ' + c.validUntil + '</span></div></div>';
+  }).join('') || '<div class="mp-card empty-mini">暂无次卡</div>';
+
+  $('rechargeGrid').innerHTML = RECHARGE.map(function(r){
+    return '<button class="recharge-item" onclick="recharge(' + r.amount + ',' + r.gift + ')">' +
+      '<b><small>¥</small>' + r.amount + '</b><span>' + (r.gift ? '赠 ¥' + r.gift : '无赠送') + '</span></button>';
+  }).join('');
+  icons();
+}
+function syncMemberViews(){
+  var m = state.member;
+  $('mcLevel').textContent = m.level || '普通会员';
+  $('mcBalance').textContent = Number(m.balance).toFixed(2);
+  $('mcGift').textContent = money(m.gift);
+  $('mcPoints').textContent = m.points;
+  $('mcValid').textContent = m.validUntil;
+  $('mcCardNo').textContent = m.cardNo;
+  $('meBalance').textContent = money(m.balance);
+  $('mePoints').textContent = m.points;
+  $('meOrders').textContent = state.orders.length;
+  $('meCardNo').textContent = m.cardNo;
+  $('meOrderVal').textContent = '共 ' + state.orders.length + ' 笔';
+}
+function scrollToRecharge(){
+  var el = $('rechargeSection');
+  if (el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+function recharge(amount, gift){
+  showDialog({
+    title:'确认充值',
+    body:'充值金额<div class="dlg-amount"><small>¥</small>' + amount + '</div>' +
+      (gift ? '本次赠送 <b style="color:#fa541c">¥' + gift + '</b>，赠送金额可用于场地消费' : '本次无赠送金额'),
+    okText:'微信支付',
+    onOk:function(){
+      showPay('微信支付中...', function(){
+        state.member.balance += amount;
+        state.member.gift += gift;
+        state.member.points += Math.floor(amount / 10);
+        syncMemberViews();
+        renderMember();
+        toast('充值成功，余额已更新' + (gift ? '并赠送 ¥' + gift : ''));
+      });
+    }
+  });
+}
+function confirmLogout(){
+  showDialog({
+    title:'退出登录', body:'退出后需重新授权微信登录，确定退出吗？', okText:'退出', danger:true,
+    onOk:function(){ toast('已退出登录（演示环境将保留当前会话）', 'info'); }
+  });
+}
+
+/* ================= 赛事 ================= */
+function eventGroups(ev){
+  var g = ev.groups.slice();
+  if (ev.id === 'EV003' && !g.some(function(x){ return x.name === '企业组'; })) {
+    g.push({ name:'企业组', cap:20, joined:20, price:140 });
+  }
+  return g;
+}
+function currentEvent(){
+  return MOCK_EXT.appEvents.filter(function(e){ return e.id === state.eventId; })[0] || MOCK_EXT.appEvents[0];
+}
+function openEvent(id){
+  state.eventId = id;
+  state.eventGroupIdx = 0;
+  go('eventDetail');
+}
+function renderEvents(){
+  $('eventList').innerHTML = MOCK_EXT.appEvents.map(function(ev){
+    var canJoin = ev.status === '报名中';
+    var price = ev.groups[0] ? ev.groups[0].price : 0;
+    return '<div class="event-card pressable" onclick="openEvent(\'' + ev.id + '\')">' +
+      '<div class="event-cover"><div style="position:absolute;inset:0;background-image:url(\'' + eventImg(ev) + '\');background-size:cover;background-position:center"></div>' +
+        '<div class="ec-mask"></div><span class="ec-mode">' + ev.mode + '</span>' +
+        '<span class="ec-status" style="' + (canJoin ? '' : 'background:rgba(100,116,139,.82)') + '">' + ev.status + '</span>' +
+        '<span class="ec-name">' + esc(ev.name) + '</span></div>' +
+      '<div class="event-body">' +
+        '<div class="event-meta"><i data-lucide="calendar"></i>' + ev.date + ' · ' + weekOf(new Date(ev.date.replace(/-/g,'/'))) + '</div>' +
+        '<div class="event-meta"><i data-lucide="map-pin"></i>地丰羽毛球馆 · 团体赛</div>' +
+        '<div class="event-foot"><span class="sub">' + (price ? '报名费 ¥' + price + ' 起' : '邀请制 · 暂未开放报名') + '</span>' +
+          '<span class="mp-btn ' + (canJoin ? 'mp-btn-primary' : 'mp-btn-line') + ' mp-btn-sm">' + (canJoin ? '立即报名' : '查看详情') + '</span></div>' +
+      '</div></div>';
+  }).join('');
+  icons();
+}
+function renderEventDetail(){
+  var ev = currentEvent();
+  var groups = eventGroups(ev);
+  var canJoin = ev.status === '报名中' && groups.length > 0;
+  if (state.eventGroupIdx >= groups.length) state.eventGroupIdx = 0;
+  var group = groups[state.eventGroupIdx] || groups[0];
+
+  var groupHtml = groups.map(function(g, i){
+    var full = g.joined >= g.cap;
+    var pct = Math.min(100, Math.round(g.joined / g.cap * 100));
+    return '<div class="group-card' + (i === state.eventGroupIdx && !full ? ' active' : '') + '" onclick="selectEventGroup(' + i + ')">' +
+      '<div class="group-top"><span class="group-name">' + esc(g.name) + '</span>' +
+        '<span class="group-price">¥' + money(g.price) + '</span>' +
+        (full ? '<span class="full-tag">已满额</span>' : '') + '</div>' +
+      '<div class="group-progress"><i class="' + (full ? 'full' : '') + '" style="width:' + pct + '%"></i></div>' +
+      '<div class="group-meta"><span>已报 ' + g.joined + ' / ' + g.cap + ' 人</span><span>' + (full ? '名额已满' : '剩余 ' + (g.cap - g.joined) + ' 个名额') + '</span></div>' +
+    '</div>';
+  }).join('');
+
+  var formHtml = canJoin
+    ? '<div class="mp-card pad" style="margin-top:10px">' +
+        '<div class="sec-head" style="margin-bottom:10px"><div class="sec-title">报名信息</div><span class="tiny">必填项</span></div>' +
+        '<div class="field"><label class="field-label" for="evName">参赛人姓名<em>*</em></label>' +
+          '<input class="field-input" id="evName" value="陈晓明" placeholder="请输入真实姓名"><div class="field-err" id="err-evName">请填写参赛人姓名</div></div>' +
+        '<div class="field"><label class="field-label" for="evAge">年龄<em>*</em></label>' +
+          '<input class="field-input" id="evAge" placeholder="请输入年龄（5-70）" inputmode="numeric"><div class="field-err" id="err-evAge">年龄需在 5-70 岁之间</div></div>' +
+        '<div class="field"><label class="field-label" for="evPhone">手机号<em>*</em></label>' +
+          '<input class="field-input" id="evPhone" value="13812341234" placeholder="用于接收报名通知" inputmode="numeric"><div class="field-err" id="err-evPhone">请填写 11 位手机号</div></div>' +
+        '<label class="agree" style="padding:0;margin-top:2px"><input type="checkbox" id="evTeamBox" onchange="toggleTeam(this)"> 团体报名（每增加 1 名成员按组别价格收费）</label>' +
+        '<div id="teamFields" style="display:none;margin-top:8px">' +
+          '<label class="field-label" for="evTeamMembers">成员信息</label>' +
+          '<textarea class="field-input" id="evTeamMembers" style="height:66px;padding:8px 12px;resize:none" placeholder="成员姓名，多个用逗号分隔，如：林雅婷、王志强"></textarea>' +
+          '<div class="field-err" id="err-evTeamMembers">请填写至少 1 名成员姓名</div>' +
+        '</div>' +
+        '<div class="invoice-note" style="margin-top:10px">报名成功后生成电子凭证，凭凭证到场签到，无需现场核销场地。</div>' +
+      '</div>'
+    : '<div class="mp-card pad" style="margin-top:10px;text-align:center">' +
+        '<div style="font-size:14px;font-weight:600;color:#6b7280">' + ev.status + ' · 暂未开放线上报名</div>' +
+        '<div class="tiny" style="margin-top:6px">请关注“地丰体育”公众号获取开赛通知</div></div>';
+
+  var barHtml = canJoin
+    ? '<div class="sticky-bar"><div class="sum"><div class="sum-label">报名费</div><div class="sum-total"><small>¥</small><span id="evPayAmount">' + (group ? money(group.price) : 0) + '</span></div></div>' +
+        '<button class="mp-btn mp-btn-primary" onclick="submitEvent()">提交报名</button></div>'
+    : '<div class="sticky-bar"><div class="sum"><div class="sum-label">赛事状态</div><div class="sum-total" style="font-size:15px;color:#9aa3b2">' + ev.status + '</div></div>' +
+        '<button class="mp-btn mp-btn-primary" disabled>暂未开放报名</button></div>';
+
+  $('eventDetailWrap').scrollTop = 0;
+  $('eventDetailWrap').innerHTML =
+    '<div class="event-cover" style="height:168px">' +
+      '<div style="position:absolute;inset:0;background-image:url(\'' + eventImg(ev) + '\');background-size:cover;background-position:center"></div>' +
+      '<div class="ec-mask"></div><span class="ec-mode">' + ev.mode + '</span>' +
+      '<span class="ec-status">' + ev.status + '</span>' +
+      '<span class="ec-name" style="font-size:18px">' + esc(ev.name) + '</span>' +
+    '</div>' +
+    '<div class="mp-section tight" style="margin-top:12px">' +
+      '<div class="mp-card pad">' +
+        '<div class="between"><div><div style="font-size:13px;font-weight:600">赛事时间</div><div class="sub" style="margin-top:3px">' + ev.date + ' · ' + weekOf(new Date(ev.date.replace(/-/g,'/'))) + '</div></div>' +
+          '<div style="text-align:right"><div style="font-size:13px;font-weight:600">赛事地点</div><div class="sub" style="margin-top:3px">地丰羽毛球馆</div></div></div>' +
+        '<div class="divider-line"></div>' +
+        '<div class="sub">赛事介绍：面向全市羽毛球爱好者，采用小组循环 + 淘汰赛制。主办方提供比赛用球与饮用水，参赛选手需自备球拍，提前 30 分钟到场签到。</div>' +
+      '</div>' +
+      (canJoin ? '<div class="mp-card pad" style="margin-top:10px"><div class="sec-head" style="margin-bottom:10px"><div class="sec-title">选择组别</div><span class="tiny">满额不可选</span></div>' + groupHtml + '</div>' : '') +
+      formHtml +
+    '</div>' + barHtml;
+  icons();
+}
+function selectEventGroup(i){
+  var g = eventGroups(currentEvent())[i];
+  if (!g) return;
+  if (g.joined >= g.cap) { toast('该组别名额已满，请选择其他组别', 'error'); return; }
+  state.eventGroupIdx = i;
+  var cards = document.querySelectorAll('#eventDetailWrap .group-card');
+  for (var k = 0; k < cards.length; k++) cards[k].classList.toggle('active', k === i);
+  if ($('evPayAmount')) $('evPayAmount').textContent = money(g.price);
+}
+function toggleTeam(el){
+  $('teamFields').style.display = el.checked ? 'block' : 'none';
+  if (!el.checked) clearFieldErr('evTeamMembers');
+}
+function submitEvent(){
+  var ev = currentEvent();
+  var groups = eventGroups(ev);
+  var g = groups[state.eventGroupIdx] || groups[0];
+  if (!g) { toast('该赛事暂无可报名组别', 'error'); return; }
+  if (g.joined >= g.cap) { toast('该组别名额已满', 'error'); return; }
+
+  var name = $('evName').value.trim();
+  var age = $('evAge').value.trim();
+  var phone = $('evPhone').value.trim();
+  var ok = true;
+  ok = checkField('evName', !!name) && ok;
+  ok = checkField('evAge', /^\d{1,2}$/.test(age) && Number(age) >= 5 && Number(age) <= 70) && ok;
+  ok = checkField('evPhone', /^1\d{10}$/.test(phone)) && ok;
+  var team = $('evTeamBox').checked;
+  var members = [];
+  if (team) {
+    members = $('evTeamMembers').value.split(/[,，、\n]/).map(function(s){ return s.trim(); }).filter(Boolean);
+    ok = checkField('evTeamMembers', members.length > 0) && ok;
+  }
+  if (!ok) { toast('请完善报名信息后再提交', 'error'); return; }
+
+  var total = g.price * (1 + members.length);
+  showPay('报名支付中...', function(){
+    g.joined += 1 + members.length;
+    var code = 'DFEV2026';
+    var id = 'EV20261105' + String(Date.now()).slice(-4);
+    var order = {
+      id: id, type: '赛事报名', title: ev.name + ' · ' + g.name, venue: '地丰羽毛球馆',
+      time: ev.date + ' 09:00', amount: total, status: '待使用', code: code,
+      invoiceStatus: '', payMethod: '微信支付', createTime: '2026-11-05 14:42'
+    };
+    state.orders.unshift(order);
+    var rows = [
+      ['报名编号', id],
+      ['赛事名称', ev.name],
+      ['参赛组别', g.name],
+      ['参赛人', name + (members.length ? ' 等 ' + (members.length + 1) + ' 人' : '')],
+      ['报名费', '¥' + money(total)],
+      ['参赛日期', ev.date]
+    ];
+    $('evSuccessCode').textContent = code;
+    $('evQrText').textContent = code;
+    $('evSuccessRows').innerHTML = rows.map(function(r){
+      return '<div class="code-row"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1]) + '</span></div>';
+    }).join('');
+    fillQR($('qrBoxEvent'), code);
+    go('eventSuccess');
+    historyStack = ['events'];
+    toast('报名成功，电子凭证 ' + code);
+  });
+}
+
+/* ================= 商品商城 ================= */
+function goodsPrice(g){ return g.promoPrice > 0 ? g.promoPrice : g.retailPrice; }
+function renderGoods(){
+  $('goodsList').innerHTML = MOCK.goods.map(function(g){
+    var qty = state.cart[g.id] || 0;
+    var soldOut = g.stock <= 0;
+    var ctrl = soldOut
+      ? '<span class="tag tag-gray" style="align-self:flex-start;margin-top:4px">已售罄</span>'
+      : (qty > 0
+        ? '<div class="stepper"><button onclick="changeCart(\'' + g.id + '\',-1)">−</button><span class="val">' + qty + '</span><button onclick="changeCart(\'' + g.id + '\',1)">+</button></div>'
+        : '<button class="mp-btn mp-btn-ghost mp-btn-sm" style="align-self:flex-start;margin-top:4px" onclick="changeCart(\'' + g.id + '\',1)">加购</button>');
+    return '<div class="goods-item">' +
+      '<div class="goods-img"><div style="position:absolute;inset:0;background-image:url(\'' + coverSVG('#e2e8f0','#94a3b8') + '\');background-size:cover;background-position:center"></div></div>' +
+      '<div class="goods-info"><div class="goods-name">' + esc(g.name) + '</div>' +
+        '<div class="goods-spec">' + esc(g.spec) + ' · ' + esc(g.category) + '</div>' +
+        '<div class="row" style="gap:6px"><span class="goods-price"><small>¥</small>' + money(goodsPrice(g)) + '</span>' +
+          '<span class="stock">库存 ' + g.stock + ' ' + g.unit + '</span></div>' + ctrl +
+      '</div></div>';
+  }).join('');
+  var t = cartTotals();
+  $('cartCount').textContent = t.count;
+  $('cartTotal').textContent = '¥' + money(t.total);
+  icons();
+}
+function cartTotals(){
+  var count = 0, total = 0;
+  MOCK.goods.forEach(function(g){
+    var q = state.cart[g.id] || 0;
+    count += q;
+    total += goodsPrice(g) * q;
+  });
+  return { count:count, total:total };
+}
+function changeCart(id, delta){
+  var g = MOCK.goods.filter(function(x){ return x.id === id; })[0];
+  if (!g) return;
+  var q = state.cart[id] || 0;
+  q += delta;
+  if (q < 0) q = 0;
+  if (q > g.stock) { toast('库存不足，当前仅剩 ' + g.stock + ' ' + g.unit, 'error'); q = g.stock; }
+  if (q === 0) delete state.cart[id]; else state.cart[id] = q;
+  renderGoods();
+}
+function goCheckout(){
+  var t = cartTotals();
+  if (!t.count) { toast('请先选择商品', 'error'); return; }
+  go('checkout');
+}
+function renderCheckout(){
+  var items = MOCK.goods.filter(function(g){ return state.cart[g.id]; });
+  $('goodsSummary').innerHTML = '<div class="sec-head" style="margin-bottom:6px"><div class="sec-title">订单商品</div><span class="tiny">共 ' + cartTotals().count + ' 件</span></div>' +
+    items.map(function(g){
+      return '<div class="between" style="font-size:12.5px;padding:6px 0"><span>' + esc(g.name) + ' × ' + state.cart[g.id] + '</span><span>¥' + money(goodsPrice(g) * state.cart[g.id]) + '</span></div>';
+    }).join('');
+  var total = cartTotals().total;
+  $('gFee').textContent = '¥' + money(total);
+  $('gTotal').innerHTML = '<small>¥</small>' + money(total);
+  $('gPayTotal').textContent = money(total);
+  $('gInvTitle').value = state.goodsInvoice.title;
+  $('gInvEmail').value = state.goodsInvoice.email;
+  $('gInvTaxNo').value = state.goodsInvoice.taxNo;
+  ['gInvTitle','gInvEmail','gInvTaxNo'].forEach(clearFieldErr);
+}
+function submitGoodsPay(){
+  if (!validateInvoiceFields('gInvTitle', 'gInvEmail', 'gInvTaxNo')) { toast('请完善开票信息（抬头 / 邮箱 / 税号）', 'error'); return; }
+  state.goodsInvoice = { title: $('gInvTitle').value.trim(), email: $('gInvEmail').value.trim(), taxNo: $('gInvTaxNo').value.trim() };
+  var items = MOCK.goods.filter(function(g){ return state.cart[g.id]; });
+  var total = cartTotals().total;
+  if (!items.length) { toast('购物车为空', 'error'); return; }
+  showPay('微信支付中...', function(){
+    var names = items.map(function(g){ return g.name + '×' + state.cart[g.id]; }).join(' ');
+    items.forEach(function(g){ g.stock -= state.cart[g.id]; });
+    var id = 'ORD20261105' + String(Date.now()).slice(-4);
+    state.orders.unshift({
+      id: id, type:'商品购买', title:names, venue:'地丰体育中心', time:'2026-11-05 14:48',
+      amount: total, status:'待使用', code:'DFSP2026', invoiceStatus:'开票中', payMethod:'微信支付', createTime:'2026-11-05 14:48'
+    });
+    state.invoices.unshift({ no:'', order:id, customer:state.goodsInvoice.title, type:'电子普通发票', amount:total, status:'申请中', date:'2026-11-05 14:48', email:state.goodsInvoice.email });
+    state.cart = {};
+    renderGoods();
+    showPickup({
+      title:'支付成功', sub:'请凭自提码到地丰体育中心前台领取', code:'DFSP2026',
+      rows:[['订单号', id], ['商品', names], ['支付金额', '¥' + money(total)], ['自提地点', '地丰体育中心 · 前台'], ['温馨提示', '请在营业时间内 7 天内自提']]
+    });
+    toast('支付成功，自提码 DFSP2026');
+  });
+}
+function showPickup(opt){
+  $('pickTitle').textContent = opt.title;
+  $('pickSub').textContent = opt.sub;
+  $('pickQrText').textContent = opt.code;
+  $('pickCode').textContent = opt.code;
+  $('pickRows').innerHTML = opt.rows.map(function(r){
+    return '<div class="code-row"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1]) + '</span></div>';
+  }).join('');
+  fillQR($('qrBoxPick'), opt.code);
+  state.orderTab = '全部';
+  go('pickup');
+  historyStack = ['orders'];
+}
+
+/* ================= 物品租赁 ================= */
+function renderRental(){
+  $('rentalList').innerHTML = MOCK.rentalItems.map(function(it){
+    var out = it.available <= 0;
+    return '<div class="rental-item">' +
+      '<div class="ri-head"><span class="ri-ico"><i data-lucide="' + (it.category === '器材' ? 'dumbbell' : it.category === '护具' ? 'shield' : 'circle-dot') + '"></i></span>' +
+        '<div class="flex1"><div class="ri-name">' + esc(it.name) + '</div>' +
+          '<div class="ri-meta">' + it.billing + ' · 押金 ¥' + it.deposit + ' · 可租 ' + it.available + '/' + it.total + '</div></div>' +
+        '<span class="tag ' + (out ? 'tag-gray' : 'tag-green') + '">' + (out ? '租完' : '可租') + '</span></div>' +
+      '<div class="ri-foot"><div class="ri-price">租金 <b>¥' + it.price + '</b><span>/' + (it.billing.indexOf('小时') >= 0 ? '小时' : it.billing.indexOf('天') >= 0 ? '天' : '次') + '</span></div>' +
+        '<button class="mp-btn ' + (out ? 'mp-btn-line' : 'mp-btn-primary') + ' mp-btn-sm" ' + (out ? 'disabled' : 'onclick="openRental(\'' + it.id + '\')"') + '>' + (out ? '暂无库存' : '立即租赁') + '</button></div>' +
+    '</div>';
+  }).join('');
+  icons();
+}
+function rentalUnit(it){
+  return it.billing.indexOf('小时') >= 0 ? '小时' : (it.billing.indexOf('天') >= 0 ? '天' : '次');
+}
+function openRental(id){
+  var it = MOCK.rentalItems.filter(function(x){ return x.id === id; })[0];
+  if (!it || it.available <= 0) { toast('该物品暂无可租库存', 'error'); return; }
+  state.rental = { item: it, duration: 1, qty: 1 };
+  go('rentalCheckout');
+}
+function renderRentalCheckout(){
+  var r = state.rental;
+  if (!r) { showScreen('rental', false); return; }
+  var it = r.item;
+  var unit = rentalUnit(it);
+  var rent = it.price * r.duration * r.qty;
+  var deposit = it.deposit * r.qty;
+  var total = rent + deposit;
+  $('rentalCheckoutWrap').scrollTop = 0;
+  var options = [1,2,3].map(function(n){
+    return '<button class="chip' + (r.duration === n ? ' active' : '') + '" onclick="setRentDuration(' + n + ')">' + n + unit + '</button>';
+  }).join('');
+  $('rentalCheckoutWrap').innerHTML =
+    '<div class="mp-section tight" style="margin-top:12px">' +
+      '<div class="mp-card pad">' +
+        '<div class="ri-head"><span class="ri-ico"><i data-lucide="dumbbell"></i></span>' +
+          '<div class="flex1"><div class="ri-name">' + esc(it.name) + '</div><div class="ri-meta">' + it.billing + ' · 押金 ¥' + it.deposit + ' / 件</div></div>' +
+          '<span class="tag tag-green">可租</span></div>' +
+      '</div>' +
+      '<div class="mp-card pad" style="margin-top:10px">' +
+        '<div class="sec-head" style="margin-bottom:8px"><div class="sec-title">租期</div><span class="tiny">最长可租 3' + unit + '</span></div>' +
+        '<div class="chips">' + options + '</div>' +
+        '<div class="qty-line"><span style="font-size:12.5px;color:#4b5563">租赁数量</span>' +
+          '<div class="stepper"><button onclick="changeRentQty(-1)">−</button><span class="val">' + r.qty + '</span><button onclick="changeRentQty(1)">+</button></div></div>' +
+      '</div>' +
+      '<div class="mp-card pad" style="margin-top:10px">' +
+        '<div class="sum-row"><span>租金（' + it.price + ' × ' + r.duration + unit + ' × ' + r.qty + '件）</span><span>¥' + money(rent) + '</span></div>' +
+        '<div class="sum-row"><span>押金（' + it.deposit + ' × ' + r.qty + '件，归还退还）</span><span>¥' + money(deposit) + '</span></div>' +
+        '<div class="sum-row total"><span>合计支付</span><strong class="price"><small>¥</small>' + money(total) + '</strong></div>' +
+      '</div>' +
+      '<div class="rental-total" style="margin-top:10px">押金 ¥' + money(deposit) + ' 在器材完好归还后原路退回；超时按 ' + it.billing + ' 计费，请按时归还。</div>' +
+    '</div><div style="height:8px"></div>' +
+    '<div class="sticky-bar"><div class="sum"><div class="sum-label">租金 + 押金</div><div class="sum-total"><small>¥</small>' + money(total) + '</div></div>' +
+      '<button class="mp-btn mp-btn-primary" onclick="submitRentalPay()">立即支付</button></div>';
+  icons();
+}
+function setRentDuration(n){
+  if (!state.rental) return;
+  state.rental.duration = n;
+  renderRentalCheckout();
+}
+function changeRentQty(delta){
+  if (!state.rental) return;
+  var r = state.rental;
+  var q = r.qty + delta;
+  if (q < 1) q = 1;
+  if (q > r.item.available) { toast('可租数量仅剩 ' + r.item.available + ' 件', 'error'); q = r.item.available; }
+  r.qty = q;
+  renderRentalCheckout();
+}
+function submitRentalPay(){
+  var r = state.rental;
+  if (!r) return;
+  var it = r.item;
+  var rent = it.price * r.duration * r.qty;
+  var deposit = it.deposit * r.qty;
+  var total = rent + deposit;
+  showPay('微信支付中...', function(){
+    it.available -= r.qty;
+    var id = 'ORD20261105' + String(Date.now()).slice(-4);
+    var title = it.name + '×' + r.qty + '（' + r.duration + rentalUnit(it) + '）';
+    state.orders.unshift({
+      id:id, type:'物品租赁', title:title, venue:'地丰体育中心', time:'2026-11-05 14:55',
+      amount:total, status:'待使用', code:'DFRT2026', invoiceStatus:'', payMethod:'微信支付', createTime:'2026-11-05 14:55'
+    });
+    renderRental();
+    state.rental = null;
+    showPickup({
+      title:'租赁成功', sub:'请凭租赁码到场馆前台领取器材', code:'DFRT2026',
+      rows:[['订单号', id], ['租赁物品', title], ['租金', '¥' + money(rent)], ['押金', '¥' + money(deposit) + '（归还退还）'], ['支付合计', '¥' + money(total)], ['取件地点', '地丰体育中心 · 器材前台']]
+    });
+    toast('租赁下单成功，租赁码 DFRT2026');
+  });
+}
+
+/* ================= 发票 / 我的 ================= */
+function renderInvoices(){
+  if (!state.invoices.length) {
+    $('invoiceList').innerHTML = '<div class="empty-mini" style="padding-top:60px">暂无发票记录</div>';
+    return;
+  }
+  $('invoiceList').innerHTML = state.invoices.map(function(inv){
+    var cls = (inv.status === '开具成功' || inv.status === '已开票') ? 'st-done' : (inv.status === '申请中' || inv.status === '开票中' ? 'st-refund' : 'st-cancel');
+    var canDownload = inv.status === '开具成功' || inv.status === '已开票';
+    return '<div class="order-card" style="margin-top:10px">' +
+      '<div class="order-head"><span class="order-type green"><i data-lucide="file-text"></i></span>' +
+        '<span class="order-no">' + esc(inv.type) + '</span>' +
+        '<span class="order-status ' + cls + '">' + esc(inv.status) + '</span></div>' +
+      '<div style="padding:9px 0 0">' +
+        '<div class="code-row"><span class="k">发票号码</span><span class="v mono">' + (inv.no || '开具中') + '</span></div>' +
+        '<div class="code-row"><span class="k">关联订单</span><span class="v mono">' + esc(inv.order) + '</span></div>' +
+        '<div class="code-row"><span class="k">开票金额</span><span class="v price">¥' + money(inv.amount) + '</span></div>' +
+        '<div class="code-row"><span class="k">开票日期</span><span class="v">' + esc(inv.date) + '</span></div>' +
+        '<div class="code-row"><span class="k">接收邮箱</span><span class="v">' + esc(inv.email || state.invoice.email) + '</span></div>' +
+      '</div>' +
+      '<div class="order-foot"><button class="mp-btn ' + (canDownload ? 'mp-btn-line' : 'mp-btn-line') + ' mp-btn-sm" onclick="' +
+        (canDownload ? 'toast(\'电子发票 PDF 已发送至预留邮箱\',\'success\')' : 'toast(\'发票开具中，预计 1 个工作日内完成\',\'info\')') + '">' +
+        (canDownload ? '下载 PDF' : '查看进度') + '</button></div>' +
+    '</div>';
+  }).join('');
+  icons();
+}
+function renderMine(){
+  syncMemberViews();
+  $('meVerify').textContent = '已实名认证';
+  icons();
+}
+
+/* ================= 初始化 ================= */
+function initApp(){
+  renderHome();
+  renderMember();
+  renderEvents();
+  syncMemberViews();
+  showScreen('home', false);
+  if (window.lucide && window.lucide.createIcons) lucide.createIcons();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
+</script>
+</body>
+</html>

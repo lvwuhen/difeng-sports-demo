@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>赛事档案与场地 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('event', '赛事档案与场地');
+
+// ===== 扩展赛事 Mock 数据（含场地占用、状态流转等） =====
+const EVENT_EXTRA = {
+  'EV001': {
+    online:false, mode:'线下赛', organizer:'地丰置业', contact:'张经理 138****1111',
+    intro:'面向厦门市12-18岁青少年的篮球邀请赛，分U12、U15、U18三个组别。',
+    groups:[
+      {name:'U12组', max:16, enrolled:12},
+      {name:'U15组', max:16, enrolled:16},
+      {name:'U18组', max:24, enrolled:8},
+    ],
+    rules:'单循环+淘汰赛制，每场4节每节8分钟，按FIBA规则执行。',
+    contractor:'厦门篮协', activityIntro:'主办方提供场地、裁判、用水及保险。',
+    venueId:'V001', courtIds:['C001','C002'],
+    occupancy:[
+      {date:'2026-11-15', courtId:'C001', slot:'08:00-12:00'},
+      {date:'2026-11-15', courtId:'C002', slot:'13:00-17:00'},
+      {date:'2026-11-16', courtId:'C001', slot:'08:00-12:00'},
+      {date:'2026-11-16', courtId:'C002', slot:'13:00-17:00'},
+      {date:'2026-11-20', courtId:'C001', slot:'09:00-18:00'},
+    ],
+    status:'筹备中',
+    flow:[
+      {time:'2026-10-20 09:00', user:'李运营', action:'创建赛事', remark:'建立赛事档案'},
+      {time:'2026-10-21 14:30', user:'李运营', action:'选定场地', remark:'锁定2号篮球场及1号足球场多日时段'},
+      {time:'2026-10-28 10:15', user:'王财务', action:'生成账单', remark:'账单总额 ¥28,500'},
+      {time:'2026-10-29 16:20', user:'王财务', action:'登记收款', remark:'首付款 ¥15,000 已到账'},
+    ],
+    bill:{total:28500, received:15000, paid:false},
+    invoices:[{no:'243500000001234600', amount:15000, status:'已开具', date:'2026-10-29'}],
+  },
+  'EV002': {
+    online:false, mode:'线下赛', organizer:'厦门市网球协会', contact:'王秘书长 138****3333',
+    intro:'厦门市年度业余网球公开赛，设男单、女单、男双、混双项目。',
+    groups:[
+      {name:'男单', max:32, enrolled:32},
+      {name:'女单', max:16, enrolled:12},
+      {name:'男双', max:16, enrolled:16},
+      {name:'混双', max:16, enrolled:9},
+    ],
+    rules:'单淘汰赛制，采用信任制，每场三盘两胜。',
+    contractor:'厦门网球协会', activityIntro:'冠军奖金5000元，所有参赛选手获赛事纪念T恤。',
+    venueId:'V003', courtIds:['C006'],
+    occupancy:[
+      {date:'2026-10-10', courtId:'C006', slot:'08:00-20:00'},
+      {date:'2026-10-11', courtId:'C006', slot:'08:00-20:00'},
+      {date:'2026-10-12', courtId:'C006', slot:'08:00-18:00'},
+    ],
+    status:'已结束',
+    flow:[
+      {time:'2026-09-01 10:00', user:'李运营', action:'创建赛事', remark:'-'},
+      {time:'2026-10-12 20:00', user:'李运营', action:'结束赛事', remark:'赛事圆满结束'},
+    ],
+    bill:{total:18600, received:18600, paid:true},
+    invoices:[{no:'243500000001234599', amount:18600, status:'已开具', date:'2026-10-12'}],
+  },
+  'EV003': {
+    online:true, mode:'线上报名赛', organizer:'地丰体育', contact:'赵主管 138****4444',
+    intro:'地丰羽毛球团体赛，通过线上报名，现场比赛。',
+    groups:[
+      {name:'团体赛（企业组）', max:16, enrolled:11, price:1200, type:'团体'},
+      {name:'团体赛（公开组）', max:32, enrolled:32, price:1200, type:'团体'},
+    ],
+    rules:'五场制（男单、女单、男双、女双、混双），循环淘汰。',
+    contractor:'地丰体育', activityIntro:'报名成功后现场签到参赛，报名费含场地及用球。',
+    venueId:'V004', courtIds:['C007','C008'],
+    occupancy:[
+      {date:'2026-11-25', courtId:'C007', slot:'09:00-21:00'},
+      {date:'2026-11-25', courtId:'C008', slot:'09:00-21:00'},
+      {date:'2026-11-26', courtId:'C007', slot:'09:00-18:00'},
+      {date:'2026-11-26', courtId:'C008', slot:'09:00-18:00'},
+    ],
+    status:'报名中',
+    flow:[
+      {time:'2026-10-25 11:00', user:'李运营', action:'创建线上赛事', remark:'开放报名'},
+      {time:'2026-10-26 09:00', user:'系统', action:'自动排期', remark:'比赛日场地自动锁定'},
+    ],
+    bill:{total:0, received:0, paid:false},
+    invoices:[],
+  },
+};
+
+// 模拟已被常规订单占用的时段（用于冲突校验）
+const CONFLICT_SLOTS = {
+  'C001': { '2026-11-16': ['10:00-11:00','11:00-12:00'] },
+  'C002': { '2026-11-15': ['14:00-15:00'] },
+  'C006': { '2026-11-20': ['10:00-12:00'] },
+};
+
+const STATUS_TAG = {'筹备中':'tag-orange','进行中':'tag-blue','已结束':'tag-gray','已取消':'tag-red','报名中':'tag-cyan'};
+const EVENT_TYPES = ['篮球','足球','网球','羽毛球','乒乓球','游泳','田径','其他'];
+
+// ===== 状态 =====
+let curFilter = {type:'', status:'', kw:''};
+let curEventId = null;
+
+function getEventList(){
+  return MOCK.events.map(e=>({...e, ...(EVENT_EXTRA[e.id]||{})}));
+}
+
+function renderEventList(){
+  const list = getEventList().filter(e=>{
+    if(curFilter.type && e.type!==curFilter.type) return false;
+    if(curFilter.status && e.status!==curFilter.status) return false;
+    if(curFilter.kw && !(e.name.includes(curFilter.kw)||e.organizer.includes(curFilter.kw))) return false;
+    return true;
+  });
+  const rows = list.map(e=>{
+    const ex = EVENT_EXTRA[e.id]||{};
+    const onlineTag = e.online ? '<span class="tag tag-cyan" style="margin-left:4px">线上报名</span>' : '';
+    const occ = (ex.occupancy||[]).length;
+    const paidPct = e.totalAmount>0 ? Math.round((e.received/e.totalAmount)*100) : 0;
+    return `<tr>
+      <td class="mono" style="font-size:12px">${e.id}</td>
+      <td><div class="font-medium">${e.name}${onlineTag}</div><div class="text-muted" style="font-size:12px">${e.type} · ${e.organizer}</div></td>
+      <td style="font-size:13px">${e.startDate}<br><span class="text-muted">至 ${e.endDate}</span></td>
+      <td><span class="tag tag-gray">${e.venue}</span></td>
+      <td style="font-size:12px">${occ} 个时段</td>
+      <td>
+        <div class="font-medium">¥${e.totalAmount.toLocaleString()}</div>
+        <div style="font-size:11px;color:var(--text-4)">已收 ¥${e.received.toLocaleString()}（${paidPct}%）</div>
+      </td>
+      <td><span class="tag ${STATUS_TAG[e.status]||'tag-gray'}">${e.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="viewEvent('${e.id}')">详情</button>
+        <button class="btn btn-ghost btn-sm" onclick="editEvent('${e.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="selectVenue('${e.id}')">场地</button>
+      </td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="trophy"></i></div><div class="empty-text">暂无赛事</div></div></td></tr>`;
+  document.getElementById('eventTbody').innerHTML = rows;
+  if(window.lucide) lucide.createIcons();
+}
+
+window.applyFilter = function(){
+  curFilter.type = document.getElementById('fType').value;
+  curFilter.status = document.getElementById('fStatus').value;
+  curFilter.kw = document.getElementById('fKw').value.trim();
+  renderEventList();
+};
+
+// ===== 新建/编辑赛事 =====
+window.openEventForm = function(id){
+  const e = id ? getEventList().find(x=>x.id===id) : null;
+  const isEdit = !!e;
+  const ex = e ? EVENT_EXTRA[e.id] : {};
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">${isEdit?'编辑赛事':'新建赛事'}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="card" style="box-shadow:none;border:1px solid var(--border)">
+        <div class="card-header" style="background:var(--primary-bg)"><div class="card-title"><i data-lucide="file-text" style="width:16px;vertical-align:-3px"></i> 基础档案</div></div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-item"><label class="form-label">赛事名称<span class="required">*</span></label><input class="form-input" id="ef-name" value="${e?.name||''}" placeholder="请输入赛事名称"></div>
+            <div class="form-item"><label class="form-label">赛事类型<span class="required">*</span></label>
+              <select class="form-select" id="ef-type">${EVENT_TYPES.map(t=>`<option ${e?.type===t?'selected':''}>${t}</option>`).join('')}</select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-item"><label class="form-label">主办单位<span class="required">*</span></label><input class="form-input" id="ef-org" value="${ex.organizer||e?.organizer||''}"></div>
+            <div class="form-item"><label class="form-label">联系人电话</label><input class="form-input" id="ef-contact" value="${ex.contact||''}"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-item"><label class="form-label">开始日期<span class="required">*</span></label><input type="date" class="form-input" id="ef-start" value="${e?.startDate||''}"></div>
+            <div class="form-item"><label class="form-label">结束日期<span class="required">*</span></label><input type="date" class="form-input" id="ef-end" value="${e?.endDate||''}"></div>
+          </div>
+          <div class="form-item"><label class="form-label">赛事简介</label><textarea class="form-textarea" id="ef-intro" rows="2">${ex.intro||''}</textarea></div>
+        </div>
+      </div>
+
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-top:16px">
+        <div class="card-header" style="background:var(--info-bg)">
+          <div class="card-title"><i data-lucide="globe" style="width:16px;vertical-align:-3px"></i> 线上赛事配置</div>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2)">
+            <input type="checkbox" id="ef-online" ${ex.online?'checked':''} onchange="toggleOnlineConfig()"> 开启线上报名
+          </label>
+        </div>
+        <div class="card-body" id="onlineConfig" style="${ex.online?'':'display:none'}">
+          <div class="form-row">
+            <div class="form-item"><label class="form-label">赛事模式</label>
+              <select class="form-select"><option>个人赛</option><option>团体赛</option><option>混合赛</option></select>
+            </div>
+            <div class="form-item"><label class="form-label">承办方</label><input class="form-input" id="ef-contractor" value="${ex.contractor||''}"></div>
+          </div>
+          <div class="form-item"><label class="form-label">赛制说明</label><textarea class="form-textarea" id="ef-rules" rows="2">${ex.rules||''}</textarea></div>
+          <div class="form-item"><label class="form-label">活动介绍</label><textarea class="form-textarea" id="ef-actintro" rows="2">${ex.activityIntro||''}</textarea></div>
+          <div class="font-medium mb-12" style="margin-top:12px">分组与人数上限</div>
+          <table class="data-table" id="groupTable">
+            <thead><tr><th>组别名称</th><th>人数上限</th><th>报名单价（元）</th><th>报名类型</th><th></th></tr></thead>
+            <tbody id="groupTbody"></tbody>
+          </table>
+          <button class="btn btn-default btn-sm mt-12" onclick="addGroupRow()"><i data-lucide="plus" style="width:14px"></i> 添加分组</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveEvent('${id||''}')">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+  // 渲染分组行
+  const groups = ex.groups || [{name:'', max:16, price:0, type:'个人'}];
+  const tbody = document.getElementById('groupTbody');
+  if(tbody) renderGroupRows(groups);
+  if(window.lucide) lucide.createIcons();
+};
+
+window.toggleOnlineConfig = function(){
+  document.getElementById('onlineConfig').style.display = document.getElementById('ef-online').checked ? 'block':'none';
+};
+
+function renderGroupRows(groups){
+  document.getElementById('groupTbody').innerHTML = groups.map((g,i)=>`
+    <tr>
+      <td><input class="form-input" value="${g.name}" placeholder="如 U12组"></td>
+      <td><input type="number" class="form-input" value="${g.max}" style="width:80px"></td>
+      <td><input type="number" class="form-input" value="${g.price||0}" style="width:90px"></td>
+      <td><select class="form-select" style="width:90px"><option ${g.type==='个人'?'selected':''}>个人</option><option ${g.type==='团体'?'selected':''}>团体</option></select></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').remove()"><i data-lucide="trash-2" style="width:14px"></i></button></td>
+    </tr>`).join('');
+  if(window.lucide) lucide.createIcons();
+}
+window.addGroupRow = function(){
+  const g = {name:'', max:16, price:0, type:'个人'};
+  document.getElementById('groupTbody').insertAdjacentHTML('beforeend', `
+    <tr>
+      <td><input class="form-input" value="" placeholder="如 U12组"></td>
+      <td><input type="number" class="form-input" value="16" style="width:80px"></td>
+      <td><input type="number" class="form-input" value="0" style="width:90px"></td>
+      <td><select class="form-select" style="width:90px"><option>个人</option><option>团体</option></select></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').remove()"><i data-lucide="trash-2" style="width:14px"></i></button></td>
+    </tr>`);
+  if(window.lucide) lucide.createIcons();
+};
+
+window.saveEvent = function(id){
+  const name = document.getElementById('ef-name').value.trim();
+  if(!name){ toast('请填写赛事名称','error'); return; }
+  if(id){
+    toast('赛事档案已更新','success');
+  } else {
+    toast('赛事已创建，请继续选择比赛场地','success');
+  }
+  document.querySelector('.modal-overlay')?.remove();
+  renderEventList();
+};
+
+// ===== 场地选择（日历+多场地+多时段）=====
+window.selectVenue = function(eventId){
+  const e = getEventList().find(x=>x.id===eventId);
+  const ex = EVENT_EXTRA[eventId]||{};
+  const venue = MOCK.venues.find(v=>v.id===ex.venueId) || MOCK.venues[0];
+  const courts = MOCK.courts.filter(c=>c.venueId===venue.id);
+
+  // 生成赛事日期范围
+  const start = new Date(e.startDate);
+  const end = new Date(e.endDate);
+  const days = [];
+  for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
+    days.push(d.toISOString().slice(0,10));
+  }
+  const slots = ['08:00-10:00','10:00-12:00','13:00-15:00','15:00-17:00','18:00-20:00','20:00-22:00'];
+
+  // 已选占用
+  const selected = new Set((ex.occupancy||[]).map(o=>`${o.date}|${o.courtId}|${o.slot}`));
+
+  const html = `<div class="modal modal-xl">
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="map-pin" style="width:18px;vertical-align:-4px"></i> 赛事场地选择 - ${e.name}</div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">赛事周期</div><div class="v">${e.startDate} 至 ${e.endDate}（共 ${days.length} 天）</div></div>
+        <div class="kv-item"><div class="k">比赛场馆</div><div class="v">${venue.name}</div></div>
+      </div>
+      <div style="background:var(--info-bg);color:var(--info);padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:12px">
+        <i data-lucide="info" style="width:16px;vertical-align:-3px"></i>
+        点击单元格选择场地时段。红色表示已被常规订单占用，无法选定；支持多日多块场地批量选择。
+      </div>
+      <div style="overflow-x:auto">
+        <table class="data-table" style="min-width:900px">
+          <thead>
+            <tr>
+              <th style="position:sticky;left:0;background:#fafafa;min-width:120px">场地</th>
+              ${days.map(d=>`<th colspan="${slots.length}">${d}</th>`).join('')}
+            </tr>
+            <tr>
+              <th style="position:sticky;left:0;background:#fafafa"></th>
+              ${days.map(()=>slots.map(s=>`<th style="font-size:11px;font-weight:400;color:var(--text-4)">${s.split('-')[0]}</th>`).join('')).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${courts.map(c=>`
+              <tr>
+                <td style="position:sticky;left:0;background:#fff;font-weight:500">
+                  <div>${c.name}</div>
+                  <div class="text-muted" style="font-size:11px">${c.area}·${c.attr}</div>
+                </td>
+                ${days.map(d=>slots.map(s=>{
+                  const key = `${d}|${c.id}|${s}`;
+                  const conflict = (CONFLICT_SLOTS[c.id]?.[d]||[]).some(cs=>{
+                    const csStart = parseInt(cs.split('-')[0]);
+                    const csEnd = parseInt(cs.split('-')[1]);
+                    const sStart = parseInt(s.split('-')[0]);
+                    const sEnd = parseInt(s.split('-')[1]);
+                    return sStart<csEnd && sEnd>csStart;
+                  });
+                  const sel = selected.has(key);
+                  let cls='available', style='', icon='', title='可选择';
+                  if(conflict){ cls='locked'; style='background:var(--error-bg);color:var(--error);cursor:not-allowed'; title='已被常规订单占用'; icon='<i data-lucide="x" style="width:12px"></i>'; }
+                  else if(sel){ cls='booked'; style='background:var(--primary);color:#fff'; title='已选中'; icon='<i data-lucide="check" style="width:12px"></i>'; }
+                  return `<td class="schedule-cell ${cls}" style="text-align:center;padding:6px;${style}" onclick="${conflict?'showConflict(\''+c.name+'\',\''+d+'\',\''+s+'\')':'toggleVenueSlot(\''+key+'\',this)'}" title="${title}">${icon}</td>`;
+                }).join('')).join('')}
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="tag tag-gray">已选 <b id="selCount" class="text-primary">${selected.size}</b> 个时段</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+          <button class="btn btn-primary" onclick="confirmVenue('${eventId}')"><i data-lucide="check"></i> 确认场地占用</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  openModal(html);
+  if(window.lucide) lucide.createIcons();
+};
+
+window.showConflict = function(court, date, slot){
+  toast(`${court} ${date} ${slot} 已被常规订单占用，请更换时段`, 'error');
+};
+
+window.toggleVenueSlot = function(key, el){
+  const sel = el.classList.contains('booked');
+  if(sel){
+    el.classList.remove('booked');
+    el.style.background=''; el.style.color=''; el.innerHTML='';
+  } else {
+    el.classList.add('booked');
+    el.style.background='var(--primary)'; el.style.color='#fff';
+    el.innerHTML='<i data-lucide="check" style="width:12px"></i>';
+    if(window.lucide) lucide.createIcons();
+  }
+  const count = document.querySelectorAll('.schedule-cell.booked').length;
+  document.getElementById('selCount').textContent = count;
+};
+
+window.confirmVenue = function(eventId){
+  const selected = document.querySelectorAll('.schedule-cell.booked').length;
+  if(selected===0){ toast('请至少选择一个时段','warning'); return; }
+  toast(`已锁定 ${selected} 个赛事时段，顾客端将不可预约这些时段`, 'success');
+  document.querySelector('.modal-overlay').remove();
+  renderEventList();
+};
+
+// ===== 赛事详情（档案+场地占用+账单+收款+发票+报名）=====
+window.viewEvent = function(id){
+  const e = getEventList().find(x=>x.id===id);
+  const ex = EVENT_EXTRA[id]||{};
+  const venue = MOCK.venues.find(v=>v.id===ex.venueId);
+  const courts = (ex.courtIds||[]).map(cid=>MOCK.courts.find(c=>c.id===cid)?.name).filter(Boolean).join('、');
+  const paidPct = e.totalAmount>0 ? Math.round((e.received/e.totalAmount)*100) : 0;
+  const signupTotal = (ex.groups||[]).reduce((s,g)=>s+(g.enrolled||0),0);
+  const quotaTotal = (ex.groups||[]).reduce((s,g)=>s+(g.max||0),0);
+
+  const html = `<div class="modal modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i data-lucide="trophy" style="width:18px;vertical-align:-4px"></i> ${e.name}
+        <span class="tag ${STATUS_TAG[e.status]}" style="margin-left:8px">${e.status}</span>
+        ${e.online?'<span class="tag tag-cyan" style="margin-left:4px">线上报名</span>':''}
+      </div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <!-- 档案 -->
+      <div class="card" style="box-shadow:none;border:1px solid var(--border)">
+        <div class="card-header"><div class="card-title">赛事档案</div></div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv-item"><div class="k">赛事编号</div><div class="v mono">${e.id}</div></div>
+            <div class="kv-item"><div class="k">赛事类型</div><div class="v">${e.type}</div></div>
+            <div class="kv-item"><div class="k">主办单位</div><div class="v">${ex.organizer||'-'}</div></div>
+            <div class="kv-item"><div class="k">联系人</div><div class="v">${ex.contact||'-'}</div></div>
+            <div class="kv-item"><div class="k">起止日期</div><div class="v">${e.startDate} 至 ${e.endDate}</div></div>
+            <div class="kv-item"><div class="k">比赛场馆</div><div class="v">${venue?.name||'-'}</div></div>
+            ${ex.online?`
+            <div class="kv-item"><div class="k">承办方</div><div class="v">${ex.contractor||'-'}</div></div>
+            <div class="kv-item"><div class="k">赛制</div><div class="v">${ex.rules||'-'}</div></div>`:''}
+            <div class="kv-item" style="grid-column:1/-1"><div class="k">赛事简介</div><div class="v" style="font-weight:400">${ex.intro||'-'}</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 场地占用 -->
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-top:16px">
+        <div class="card-header"><div class="card-title"><i data-lucide="calendar-clock" style="width:16px;vertical-align:-3px"></i> 场地占用（顾客端已锁定）</div>
+          <span class="text-muted" style="font-size:13px">${courts}</span>
+        </div>
+        <div class="card-body no-pad">
+          <table class="data-table">
+            <thead><tr><th>日期</th><th>场地</th><th>时段</th><th>状态</th></tr></thead>
+            <tbody>${(ex.occupancy||[]).map(o=>{
+              const c = MOCK.courts.find(x=>x.id===o.courtId);
+              return `<tr><td>${o.date}</td><td>${c?.name||o.courtId}</td><td>${o.slot}</td><td><span class="tag tag-orange">赛事占用</span></td></tr>`;
+            }).join('') || `<tr><td colspan="4" class="text-center text-muted">暂无场地占用</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 账单收款 -->
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-top:16px">
+        <div class="stat-card"><div class="stat-label">账单总额</div><div class="stat-value text-primary" style="font-size:22px">¥${e.totalAmount.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">已收款</div><div class="stat-value text-success" style="font-size:22px">¥${e.received.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">收款进度</div><div class="stat-value" style="font-size:22px;color:var(--warning)">${paidPct}%</div></div>
+      </div>
+
+      <!-- 发票 -->
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-top:16px">
+        <div class="card-header"><div class="card-title"><i data-lucide="file-invoice" style="width:16px;vertical-align:-3px"></i> 发票记录</div></div>
+        <div class="card-body no-pad">
+          <table class="data-table">
+            <thead><tr><th>发票号</th><th>金额</th><th>状态</th><th>开票日期</th></tr></thead>
+            <tbody>${(ex.invoices||[]).map(i=>`<tr><td class="mono" style="font-size:12px">${i.no}</td><td>¥${i.amount.toLocaleString()}</td><td><span class="tag tag-green">${i.status}</span></td><td>${i.date}</td></tr>`).join('') || `<tr><td colspan="4" class="text-center text-muted">暂无发票</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+
+      ${ex.online?`
+      <!-- 报名统计 -->
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-top:16px">
+        <div class="card-header"><div class="card-title"><i data-lucide="users" style="width:16px;vertical-align:-3px"></i> 报名情况 <span class="text-muted" style="font-weight:400;font-size:13px">${signupTotal}/${quotaTotal}</span></div></div>
+        <div class="card-body no-pad">
+          <table class="data-table">
+            <thead><tr><th>组别</th><th>已报名</th><th>名额上限</th><th>满额状态</th></tr></thead>
+            <tbody>${(ex.groups||[]).map(g=>{
+              const full = (g.enrolled||0)>=(g.max||0);
+              return `<tr><td>${g.name}</td><td>${g.enrolled||0}</td><td>${g.max||0}</td><td><span class="tag ${full?'tag-red':'tag-green'}">${full?'已满':'可报名'}</span></td></tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>
+      </div>`:''}
+
+      <!-- 状态流转 -->
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-top:16px">
+        <div class="card-header"><div class="card-title"><i data-lucide="git-commit" style="width:16px;vertical-align:-3px"></i> 状态流转记录</div></div>
+        <div class="card-body">
+          ${(ex.flow||[]).map((f,i)=>`
+            <div style="display:flex;gap:12px;${i>0?'margin-top:12px':''}">
+              <div style="width:10px;height:10px;border-radius:50%;background:var(--primary);margin-top:6px;flex-shrink:0"></div>
+              <div style="flex:1">
+                <div class="font-medium">${f.action} <span class="text-muted" style="font-weight:400;font-size:12px;margin-left:8px">${f.time} · ${f.user}</span></div>
+                <div class="text-muted" style="font-size:12px">${f.remark}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      ${e.status==='筹备中'?'<button class="btn btn-primary" onclick="changeStatus(\''+e.id+'\',\'进行中\')">标记为进行中</button>':''}
+      ${e.status==='进行中'?'<button class="btn btn-primary" onclick="changeStatus(\''+e.id+'\',\'已结束\')">结束赛事</button>':''}
+      ${(e.status==='筹备中'||e.status==='报名中')?`<button class="btn btn-default" style="color:var(--error)" onclick="cancelEvent('${e.id}')"><i data-lucide="x"></i> 取消赛事</button>`:''}
+    </div>
+  </div>`;
+  openModal(html);
+  if(window.lucide) lucide.createIcons();
+};
+
+window.changeStatus = function(id, status){
+  confirmDialog(`确定将赛事状态变更为「${status}」吗？`, ()=>{
+    const ex = EVENT_EXTRA[id];
+    if(ex){
+      ex.status = status;
+      ex.flow.push({time:new Date().toLocaleString('zh-CN'), user:'当前管理员', action:'状态变更', remark:`变更为 ${status}`});
+      const ev = MOCK.events.find(x=>x.id===id);
+      if(ev) ev.status = status;
+    }
+    toast('赛事状态已更新','success');
+    document.querySelector('.modal-overlay')?.remove();
+    renderEventList();
+  });
+};
+
+window.cancelEvent = function(id){
+  confirmDialog('取消赛事将释放所有已占用场地，并生成退款及发票红冲清单，确认继续？', ()=>{
+    const ex = EVENT_EXTRA[id];
+    if(ex){
+      ex.status = '已取消';
+      const ev = MOCK.events.find(x=>x.id===id);
+      if(ev) ev.status = '已取消';
+    }
+    toast('赛事已取消，场地已释放，退款及红冲清单已生成','warning');
+    document.querySelector('.modal-overlay')?.remove();
+    renderEventList();
+  });
+};
+
+window.editEvent = function(id){ window.openEventForm(id); };
+
+// ===== 页面结构 =====
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">赛事档案与场地</div>
+  <div class="page-desc">管理赛事档案、比赛场地占用与状态流转，支持线上赛事分组报名配置</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card"><div class="stat-label">赛事总数</div><div class="stat-value" style="font-size:24px">${MOCK.events.length}</div></div>
+  <div class="stat-card"><div class="stat-label">筹备中</div><div class="stat-value" style="font-size:24px;color:var(--warning)">${MOCK.events.filter(e=>e.status==='筹备中').length}</div></div>
+  <div class="stat-card"><div class="stat-label">进行中</div><div class="stat-value" style="font-size:24px;color:var(--primary)">${MOCK.events.filter(e=>e.status==='进行中').length}</div></div>
+  <div class="stat-card"><div class="stat-label">线上报名中</div><div class="stat-value" style="font-size:24px;color:var(--info)">${MOCK.events.filter(e=>e.status==='报名中').length}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">赛事列表</div>
+    <button class="btn btn-primary" onclick="openEventForm()"><i data-lucide="plus"></i> 新建赛事</button>
+  </div>
+  <div class="card-body">
+    <div class="toolbar">
+      <input class="form-input" id="fKw" placeholder="搜索赛事名称/主办单位" style="flex:1;max-width:280px" oninput="applyFilter()">
+      <select class="form-select" id="fType" onchange="applyFilter()">
+        <option value="">全部类型</option>${EVENT_TYPES.map(t=>`<option>${t}</option>`).join('')}
+      </select>
+      <select class="form-select" id="fStatus" onchange="applyFilter()">
+        <option value="">全部状态</option>
+        <option>筹备中</option><option>进行中</option><option>已结束</option><option>已取消</option><option>报名中</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>编号</th><th>赛事名称</th><th>日期</th><th>场馆</th><th>场地占用</th><th>账单/收款</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
+        <tbody id="eventTbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+`;
+
+renderEventList();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

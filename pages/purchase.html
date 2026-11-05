@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>采购管理 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+<style>/* 页面级补充样式：优先复用 styles.css */</style>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('purchase', '采购管理');
+
+/* ========== 工具与基础数据 ========== */
+const PAGE_SIZE = 5;
+const TODAY = '2026-11-05';
+let seq = 0;
+let activeModal = null;
+let pg = { orders: 1, inbound: 1 };
+
+function todayStr(){ return TODAY; }
+function nowStr(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${TODAY} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function genNo(prefix){
+  seq++;
+  return prefix + TODAY.replace(/-/g, '') + String(seq).padStart(3, '0');
+}
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+
+const VENUE_NAMES = MOCK.venues.map(v => {
+  if(v.name.includes('总部')) return '总部';
+  if(v.name.includes('篮球')) return '篮球公园';
+  if(v.name.includes('网球')) return '网球中心';
+  if(v.name.includes('羽毛球')) return '羽毛球馆';
+  return v.name;
+});
+
+const PO_STATUS_TAG = {
+  '待OA审批': 'tag-orange',
+  '已审批': 'tag-blue',
+  '已入库': 'tag-green',
+  '已取消': 'tag-gray'
+};
+
+/* 采购订单：以 MOCK.purchaseOrders 为基础，补充少量演示单据便于分页演示 */
+let PURCHASES = MOCK.purchaseOrders.map(o => ({
+  ...o,
+  venues: String(o.venue || '').split(/[,，、]/).filter(Boolean),
+  supplier: o.supplier || '',
+  expectedDate: o.createDate,
+  remark: '',
+  lines: []
+}));
+
+PURCHASES.find(o => o.id === 'PO20261028001').lines = [
+  { code: 'SP001', name: '农夫山泉550ml', qty: 200, price: 6 },
+  { code: 'SP002', name: '脉动运动饮料', qty: 100, price: 6 }
+];
+PURCHASES.find(o => o.id === 'PO20261025002').lines = [
+  { code: 'SP004', name: '斯伯丁篮球7号', qty: 10, price: 150 }
+];
+PURCHASES.find(o => o.id === 'PO20261020003').lines = [
+  { code: 'SP003', name: '红双喜DHS羽毛球', qty: 20, price: 75 }
+];
+
+PURCHASES.push(
+  { id:'PO20261103004', venue:'篮球公园', venues:['篮球公园'], supplier:'鸿星体育批发', items:'斯伯丁篮球7号×8', amount:1200, status:'待OA审批', createDate:'2026-11-03', expectedDate:'2026-11-08', remark:'篮球公园月度补货', lines:[{code:'SP004',name:'斯伯丁篮球7号',qty:8,price:150}] },
+  { id:'PO20261030005', venue:'总部', venues:['总部'], supplier:'', items:'农夫山泉550ml×50', amount:300, status:'已取消', createDate:'2026-10-30', expectedDate:'2026-11-05', remark:'临时取消', lines:[{code:'SP001',name:'农夫山泉550ml',qty:50,price:6}] },
+  { id:'PO20261012006', venue:'网球中心', venues:['网球中心'], supplier:'厦门体育用品有限公司', items:'运动毛巾×20', amount:900, status:'已入库', createDate:'2026-10-12', expectedDate:'2026-10-15', remark:'网球中心仓备货', lines:[{code:'SP006',name:'运动毛巾',qty:20,price:45}] }
+);
+PURCHASES.sort((a, b) => b.createDate.localeCompare(a.createDate));
+
+/* 采购入库记录（补充演示单据） */
+let INBOUNDS = [
+  { id:'RK20261020001', poId:'PO20261020003', venue:'总部', warehouse:'总部主仓库', location:'B-02-01', items:'红双喜DHS羽毛球×20', qty:20, amount:1500, date:'2026-10-20', operator:'刘库管' },
+  { id:'RK20261012002', poId:'PO20261012006', venue:'网球中心', warehouse:'网球中心仓', location:'A-01-01', items:'运动毛巾×20', qty:20, amount:900, date:'2026-10-12', operator:'周库管' },
+  { id:'RK20261005003', poId:'PO20261005007', venue:'总部', warehouse:'总部主仓库', location:'A-01-01', items:'农夫山泉550ml×120', qty:120, amount:720, date:'2026-10-05', operator:'刘库管' },
+  { id:'RK20260928004', poId:'PO20260928009', venue:'总部', warehouse:'总部主仓库', location:'C-01-01', items:'能量棒×50', qty:50, amount:375, date:'2026-09-28', operator:'刘库管' },
+  { id:'RK20260915005', poId:'PO20260915008', venue:'篮球公园', warehouse:'篮球公园仓', location:'A-01-02', items:'脉动运动饮料×30', qty:30, amount:180, date:'2026-09-15', operator:'陈库管' },
+  { id:'RK20260902006', poId:'PO20260902006', venue:'总部', warehouse:'总部主仓库', location:'B-02-01', items:'红双喜DHS羽毛球×12', qty:12, amount:900, date:'2026-09-02', operator:'刘库管' }
+];
+INBOUNDS.sort((a, b) => b.date.localeCompare(a.date));
+
+/* ========== 分页 ========== */
+const RENDERERS = {};
+function gotoPage(key, p){
+  pg[key] = p;
+  if(RENDERERS[key]) RENDERERS[key]();
+}
+function buildPager(key, total, elId){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg[key] > pages) pg[key] = pages;
+  if(pg[key] < 1) pg[key] = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg[key] ? 'active' : ''}" onclick="gotoPage('${key}',${i})">${i}</button>`;
+  }
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg[key]}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg[key] <= 1 ? 'disabled' : ''} onclick="gotoPage('${key}',${pg[key] - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg[key] >= pages ? 'disabled' : ''} onclick="gotoPage('${key}',${pg[key] + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 采购订单列表 ========== */
+function filteredOrders(){
+  const st = document.getElementById('po-status')?.value || '';
+  const ven = document.getElementById('po-venue')?.value || '';
+  const kw = (document.getElementById('po-kw')?.value || '').trim();
+  return PURCHASES.filter(o => {
+    if(st && o.status !== st) return false;
+    if(ven && !o.venues.includes(ven)) return false;
+    if(kw && !(o.id.includes(kw) || (o.items || '').includes(kw) || (o.supplier || '').includes(kw))) return false;
+    return true;
+  });
+}
+
+function renderOrders(){
+  const list = filteredOrders();
+  const start = (pg.orders - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(o => {
+    const summary = o.items || (o.lines || []).map(l => `${l.name}×${l.qty}`).join('、');
+    return `<tr>
+      <td class="mono" style="font-size:13px">${o.id}</td>
+      <td>${o.venues.map(v => `<span class="tag tag-cyan">${v}</span>`).join(' ')}</td>
+      <td>${o.supplier ? o.supplier : '<span class="text-muted">未填写</span>'}</td>
+      <td style="max-width:240px">${summary}</td>
+      <td class="text-right font-medium">¥${money(o.amount)}</td>
+      <td><span class="tag ${PO_STATUS_TAG[o.status] || 'tag-gray'}">${o.status}</span></td>
+      <td style="font-size:13px">${o.createDate}</td>
+      <td class="actions" style="flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="viewPurchase('${o.id}')">详情</button>
+        ${o.status === '待OA审批' ? `<button class="btn btn-primary btn-sm" onclick="markOA('${o.id}')">标记OA已审批</button>` : ''}
+        ${o.status === '已审批' ? `<button class="btn btn-success btn-sm" onclick="openInbound('${o.id}')">入库</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('po-rows').innerHTML = rows || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无符合条件的采购订单</div></div></td></tr>`;
+  buildPager('orders', list.length, 'po-pager');
+  refreshIcons();
+}
+
+/* ========== 采购入库记录 ========== */
+function filteredInbound(){
+  const wh = document.getElementById('in-wh')?.value || '';
+  const kw = (document.getElementById('in-kw')?.value || '').trim();
+  return INBOUNDS.filter(r => {
+    if(wh && r.warehouse !== wh) return false;
+    if(kw && !(r.id.includes(kw) || r.poId.includes(kw) || r.items.includes(kw))) return false;
+    return true;
+  });
+}
+
+function renderInbound(){
+  const list = filteredInbound();
+  const start = (pg.inbound - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(r => `
+    <tr>
+      <td class="mono" style="font-size:13px">${r.id}</td>
+      <td class="mono" style="font-size:13px">${r.poId}</td>
+      <td>${r.venue}</td>
+      <td>${r.warehouse}</td>
+      <td class="mono" style="font-size:12px">${r.location}</td>
+      <td>${r.items}</td>
+      <td class="text-right">${r.qty}</td>
+      <td class="text-right">¥${money(r.amount)}</td>
+      <td style="font-size:13px">${r.date}</td>
+      <td class="text-muted">${r.operator}</td>
+    </tr>`).join('');
+  document.getElementById('in-rows').innerHTML = rows || `<tr><td colspan="10"><div class="empty"><div class="empty-icon"><i data-lucide="package-open"></i></div><div class="empty-text">暂无入库记录</div></div></td></tr>`;
+  buildPager('inbound', list.length, 'in-pager');
+  refreshIcons();
+}
+
+/* ========== 顶部统计 ========== */
+function renderStats(){
+  const pending = PURCHASES.filter(o => o.status === '待OA审批').length;
+  const month = TODAY.slice(0, 7);
+  const monthAmount = PURCHASES.filter(o => o.status !== '已取消' && o.createDate.slice(0, 7) === month)
+    .reduce((s, o) => s + (Number(o.amount) || 0), 0);
+  const stocked = PURCHASES.filter(o => o.status === '已入库').length;
+  const pEl = document.getElementById('po-stat-pending');
+  const mEl = document.getElementById('po-stat-month');
+  const iEl = document.getElementById('po-stat-in');
+  if(pEl) pEl.textContent = pending;
+  if(mEl) mEl.textContent = '¥' + money(monthAmount);
+  if(iEl) iEl.textContent = stocked;
+}
+
+/* ========== 状态流转 ========== */
+function markOA(id){
+  const o = PURCHASES.find(x => x.id === id);
+  if(!o || o.status !== '待OA审批') return;
+  o.status = '已审批';
+  renderOrders();
+  renderStats();
+  toast(`OA审批结果已回写：${o.id}`, 'success');
+}
+
+function openInbound(id){
+  const o = PURCHASES.find(x => x.id === id);
+  if(!o) return;
+  const totalQty = (o.lines || []).reduce((s, l) => s + l.qty, 0) || 1;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header"><div class="modal-title">采购入库 - ${o.id}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">采购单号</div><div class="v mono">${o.id}</div></div>
+        <div class="kv-item"><div class="k">场馆</div><div class="v">${o.venues.join(' / ')}</div></div>
+        <div class="kv-item"><div class="k">供应商</div><div class="v">${o.supplier || '未填写'}</div></div>
+        <div class="kv-item"><div class="k">采购金额</div><div class="v">¥${money(o.amount)}</div></div>
+        <div class="kv-item" style="grid-column:1 / -1"><div class="k">采购清单</div><div class="v">${o.items}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">收货仓库<span class="required">*</span></label>
+          <select class="form-select" id="inb-wh">
+            <option value="">请选择仓库</option>
+            ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">库位<span class="required">*</span></label>
+          <input class="form-input" id="inb-loc" placeholder="如 A-01-01">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">实收数量<span class="required">*</span></label>
+          <input type="number" class="form-input" id="inb-qty" min="1" value="${totalQty}">
+          <div class="form-hint">采购数量合计 ${totalQty}，实收数量可与采购数量不同</div>
+        </div>
+        <div class="form-item"><label class="form-label">收货日期</label>
+          <input type="date" class="form-input" id="inb-date" value="${TODAY}">
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">入库备注</label>
+        <textarea class="form-textarea" id="inb-remark" placeholder="如：包装完好 / 少收原因说明"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-success" onclick="submitInbound('${o.id}')"><i data-lucide="package-check"></i> 确认入库</button>
+    </div></div>`);
+  refreshIcons();
+}
+
+function submitInbound(id){
+  const o = PURCHASES.find(x => x.id === id);
+  if(!o) return;
+  const wh = document.getElementById('inb-wh').value;
+  const loc = document.getElementById('inb-loc').value.trim();
+  const qty = parseInt(document.getElementById('inb-qty').value, 10);
+  const date = document.getElementById('inb-date').value || TODAY;
+  if(!wh){ toast('请选择收货仓库', 'error'); return; }
+  if(!loc){ toast('请填写库位', 'error'); return; }
+  if(!(qty > 0)){ toast('请输入有效的实收数量', 'error'); return; }
+
+  const rec = {
+    id: genNo('RK'),
+    poId: o.id,
+    venue: o.venues.join('、'),
+    warehouse: wh,
+    location: loc,
+    items: o.items,
+    qty,
+    amount: o.amount,
+    date,
+    operator: '刘库管'
+  };
+  INBOUNDS.unshift(rec);
+  o.status = '已入库';
+  o.inboundId = rec.id;
+  o.receivedQty = qty;
+  closeActiveModal();
+  pg.inbound = 1;
+  renderOrders();
+  renderInbound();
+  renderStats();
+  toast(`入库成功：${rec.id}，实收 ${qty} 件`, 'success');
+}
+
+/* ========== 新建采购订单 ========== */
+function openPurchaseForm(){
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">新建采购订单</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-item mb-16">
+        <label class="form-label">场馆（可多选）<span class="required">*</span></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${VENUE_NAMES.map(v => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--border);border-radius:20px;cursor:pointer">
+            <input type="checkbox" class="pf-venue" value="${v}"> ${v}
+          </label>`).join('')}
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">供应商（文本，非必填）</label>
+          <input class="form-input" id="pf-supplier" placeholder="如：厦门体育用品有限公司">
+          <div class="form-hint">系统不维护供应商主数据</div>
+        </div>
+        <div class="form-item"><label class="form-label">预计到货日期</label>
+          <input type="date" class="form-input" id="pf-expected" value="2026-11-12">
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="flex items-center justify-between mb-12">
+        <div class="font-medium">采购用品清单<span class="required" style="color:var(--error)">*</span></div>
+        <button class="btn btn-default btn-sm" onclick="addPoLineRow()"><i data-lucide="plus" style="width:14px"></i> 添加一行</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>商品</th><th style="width:110px">数量</th><th style="width:130px">单价（元）</th><th class="text-right" style="width:110px">小计</th><th class="text-center" style="width:60px">操作</th></tr></thead>
+          <tbody id="po-line-rows"></tbody>
+        </table>
+      </div>
+      <div class="flex justify-between items-center mt-12">
+        <span class="text-muted" style="font-size:13px">金额为采购清单自动汇总</span>
+        <span>采购总额：<span class="font-bold text-primary" style="font-size:18px" id="po-total-amount">¥0.00</span></span>
+      </div>
+
+      <div class="form-item mt-16"><label class="form-label">备注</label>
+        <textarea class="form-textarea" id="pf-remark" placeholder="如：本次采购用于篮球公园周末活动"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="submitPurchase()"><i data-lucide="check"></i> 提交采购单</button>
+    </div></div>`);
+  refreshIcons();
+  addPoLineRow();
+  addPoLineRow();
+}
+
+function addPoLineRow(){
+  const opts = MOCK.goods.map(g => `<option value="${g.code}">${g.code} ${g.name}</option>`).join('');
+  const tbody = document.getElementById('po-line-rows');
+  if(!tbody) return;
+  tbody.insertAdjacentHTML('beforeend', `<tr>
+    <td><select class="form-select pl-goods" onchange="onPoGoodsChange(this)">${opts}</select></td>
+    <td><input type="number" class="form-input pl-qty" min="1" value="1" oninput="recalcPoTotal()"></td>
+    <td><input type="number" class="form-input pl-price" min="0" step="0.01" value="0" oninput="recalcPoTotal()"></td>
+    <td class="text-right pl-sub">¥0.00</td>
+    <td class="text-center"><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').remove();recalcPoTotal()"><i data-lucide="trash-2" style="width:14px;color:var(--error)"></i></button></td>
+  </tr>`);
+  refreshIcons();
+  onPoGoodsChange(tbody.querySelector('tr:last-child .pl-goods'));
+}
+
+function onPoGoodsChange(sel){
+  const code = sel.value;
+  const stock = MOCK_EXT.stockList.find(s => s.goodsCode === code);
+  const goods = MOCK.goods.find(g => g.code === code);
+  const price = stock ? stock.cost : (goods ? goods.retailPrice : 0);
+  const row = sel.closest('tr');
+  if(row){
+    row.querySelector('.pl-price').value = price;
+    recalcPoTotal();
+  }
+}
+
+function recalcPoTotal(){
+  let total = 0;
+  document.querySelectorAll('#po-line-rows tr').forEach(row => {
+    const qty = parseFloat(row.querySelector('.pl-qty').value) || 0;
+    const price = parseFloat(row.querySelector('.pl-price').value) || 0;
+    const sub = qty * price;
+    total += sub;
+    row.querySelector('.pl-sub').textContent = '¥' + money(sub);
+  });
+  const el = document.getElementById('po-total-amount');
+  if(el) el.textContent = '¥' + money(total);
+}
+
+function submitPurchase(){
+  const venues = [...document.querySelectorAll('.pf-venue:checked')].map(c => c.value);
+  if(!venues.length){ toast('请至少选择一个场馆', 'error'); return; }
+  const rows = [...document.querySelectorAll('#po-line-rows tr')];
+  if(!rows.length){ toast('请至少添加一条采购用品', 'error'); return; }
+  const lines = [];
+  let bad = false;
+  rows.forEach(r => {
+    const code = r.querySelector('.pl-goods').value;
+    const qty = parseInt(r.querySelector('.pl-qty').value, 10);
+    const price = parseFloat(r.querySelector('.pl-price').value);
+    const goods = MOCK.goods.find(g => g.code === code);
+    if(!goods || !(qty > 0) || isNaN(price) || price < 0){ bad = true; return; }
+    lines.push({ code, name: goods.name, qty, price });
+  });
+  if(bad || !lines.length){ toast('请完整填写采购清单（商品、数量、单价）', 'error'); return; }
+
+  const supplier = document.getElementById('pf-supplier').value.trim();
+  const expectedDate = document.getElementById('pf-expected').value;
+  const remark = document.getElementById('pf-remark').value.trim();
+  const amount = lines.reduce((s, l) => s + l.qty * l.price, 0);
+  const order = {
+    id: genNo('PO'),
+    venue: venues.join('、'),
+    venues,
+    supplier,
+    items: lines.map(l => `${l.name}×${l.qty}`).join('、'),
+    amount,
+    status: '待OA审批',
+    createDate: TODAY,
+    expectedDate,
+    remark,
+    lines
+  };
+  PURCHASES.unshift(order);
+  pg.orders = 1;
+  closeActiveModal();
+  renderOrders();
+  renderStats();
+  toast('采购订单已创建，请导出后上传OA审批', 'success');
+}
+
+/* ========== 采购单详情 ========== */
+function viewPurchase(id){
+  const o = PURCHASES.find(x => x.id === id);
+  if(!o) return;
+  const lineRows = (o.lines || []).map(l => `<tr>
+    <td>${l.name}</td>
+    <td class="text-right">${l.qty}</td>
+    <td class="text-right">¥${money(l.price)}</td>
+    <td class="text-right">¥${money(l.qty * l.price)}</td>
+  </tr>`).join('');
+  activeModal = openModal(`<div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">采购单详情 <span class="mono text-muted" style="font-size:13px">${o.id}</span> <span class="tag ${PO_STATUS_TAG[o.status]}" style="margin-left:8px">${o.status}</span></div>
+      <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">采购单号</div><div class="v mono">${o.id}</div></div>
+        <div class="kv-item"><div class="k">场馆</div><div class="v">${o.venues.join(' / ')}</div></div>
+        <div class="kv-item"><div class="k">供应商（文本）</div><div class="v">${o.supplier || '未填写'}</div></div>
+        <div class="kv-item"><div class="k">预计到货日期</div><div class="v">${o.expectedDate || '-'}</div></div>
+        <div class="kv-item"><div class="k">创建日期</div><div class="v">${o.createDate}</div></div>
+        <div class="kv-item"><div class="k">采购总额</div><div class="v">¥${money(o.amount)}</div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="font-medium mb-12">采购清单</div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>商品</th><th class="text-right">数量</th><th class="text-right">单价</th><th class="text-right">小计</th></tr></thead>
+          <tbody>${lineRows || `<tr><td colspan="4" class="text-muted">${o.items}</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="font-medium mb-12">状态流转</div>
+      <div class="timeline">
+        <div class="timeline-item success"><div class="timeline-time">${o.createDate}</div><div class="timeline-title">创建采购订单</div><div class="timeline-desc">系统生成采购单，导出 Excel 上传 OA 审批</div></div>
+        ${o.status !== '待OA审批' && o.status !== '已取消' ? `<div class="timeline-item success"><div class="timeline-time">${o.createDate}</div><div class="timeline-title">OA审批已通过</div><div class="timeline-desc">审批结果回写系统，状态更新为已审批</div></div>` : ''}
+        ${o.status === '已入库' ? `<div class="timeline-item success"><div class="timeline-time">${o.expectedDate || o.createDate}</div><div class="timeline-title">采购入库完成</div><div class="timeline-desc">入库单号：${o.inboundId || 'RK' + o.createDate.replace(/-/g, '')}</div></div>` : ''}
+        ${o.status === '已取消' ? `<div class="timeline-item warning"><div class="timeline-time">${o.createDate}</div><div class="timeline-title">采购单已取消</div><div class="timeline-desc">${o.remark || '业务需求取消'}</div></div>` : ''}
+      </div>
+      ${o.remark ? `<div class="text-muted mt-8" style="font-size:13px">备注：${o.remark}</div>` : ''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出采购单</button>
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+    </div></div>`);
+  refreshIcons();
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.style.display = p.dataset.panel === name ? 'block' : 'none');
+}
+
+/* ========== 页面结构 ========== */
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">采购管理</div>
+  <div class="page-desc">采购单创建与导出（上传OA审批）、审批结果回写、收货入库记录查询</div>
+</div>
+
+<div style="display:flex;gap:10px;align-items:flex-start;background:var(--primary-bg);border:1px solid #bae0ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:var(--text-2)">
+  <i data-lucide="info" style="width:18px;height:18px;color:var(--primary);flex-shrink:0;margin-top:1px"></i>
+  <div>系统内不设审批流，也不维护供应商主数据；供应商仅以文本记录。采购单创建后请导出 Excel 上传 OA 审批，审批结果在本页「标记OA已审批」回写。</div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+  <div class="stat-card">
+    <div class="stat-label">待OA审批单数 <span class="stat-icon orange"><i data-lucide="clock"></i></span></div>
+    <div class="stat-value" id="po-stat-pending" style="color:var(--warning)">0</div>
+    <div class="stat-trend" style="color:var(--text-3)">导出采购单后上传OA</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">本月采购金额 <span class="stat-icon blue"><i data-lucide="banknote"></i></span></div>
+    <div class="stat-value" id="po-stat-month">¥0.00</div>
+    <div class="stat-trend" style="color:var(--text-3)">不含已取消采购单</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">已入库单数 <span class="stat-icon green"><i data-lucide="package-check"></i></span></div>
+    <div class="stat-value" id="po-stat-in" style="color:var(--success)">0</div>
+    <div class="stat-trend up">库存可在仓储模块查看</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="orders" onclick="switchTab('orders')"><i data-lucide="clipboard-list" style="width:16px;vertical-align:middle"></i> 采购订单</div>
+      <div class="tab" data-tab="inbound" onclick="switchTab('inbound')"><i data-lucide="package-open" style="width:16px;vertical-align:middle"></i> 采购入库记录</div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="orders">
+    <div class="card-body">
+      <div class="toolbar">
+        <select class="form-select" id="po-status">
+          <option value="">全部状态</option>
+          <option>待OA审批</option><option>已审批</option><option>已入库</option><option>已取消</option>
+        </select>
+        <select class="form-select" id="po-venue">
+          <option value="">全部场馆</option>
+          ${VENUE_NAMES.map(v => `<option value="${v}">${v}</option>`).join('')}
+        </select>
+        <input class="form-input" id="po-kw" placeholder="单号/清单/供应商" style="width:220px">
+        <button class="btn btn-primary" onclick="pg.orders=1;renderOrders()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('po-status').value='';document.getElementById('po-venue').value='';document.getElementById('po-kw').value='';pg.orders=1;renderOrders()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出采购单</button>
+        <button class="btn btn-primary" onclick="openPurchaseForm()"><i data-lucide="plus"></i> 新建采购订单</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>采购单号</th><th>场馆</th><th>供应商</th><th>采购清单摘要</th>
+            <th class="text-right">金额</th><th>状态</th><th>创建日期</th><th>操作</th>
+          </tr></thead>
+          <tbody id="po-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="po-pager"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="inbound" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <select class="form-select" id="in-wh">
+          <option value="">全部仓库</option>
+          ${MOCK.warehouses.map(w => `<option value="${w.name}">${w.name}</option>`).join('')}
+        </select>
+        <input class="form-input" id="in-kw" placeholder="入库单号/采购单号/商品" style="width:240px">
+        <button class="btn btn-primary" onclick="pg.inbound=1;renderInbound()"><i data-lucide="search"></i> 查询</button>
+        <button class="btn btn-default" onclick="document.getElementById('in-wh').value='';document.getElementById('in-kw').value='';pg.inbound=1;renderInbound()"><i data-lucide="rotate-ccw"></i> 重置</button>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('导出成功，已生成 Excel 文件')"><i data-lucide="download"></i> 导出</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>入库单号</th><th>采购单号</th><th>场馆</th><th>仓库</th><th>库位</th>
+            <th>商品明细</th><th class="text-right">实收数量</th><th class="text-right">金额</th>
+            <th>入库日期</th><th>操作人</th>
+          </tr></thead>
+          <tbody id="in-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="in-pager"></div>
+    </div>
+  </div>
+</div>
+`;
+
+RENDERERS.orders = renderOrders;
+RENDERERS.inbound = renderInbound;
+window.switchTab = switchTab;
+window.gotoPage = gotoPage;
+window.markOA = markOA;
+window.openInbound = openInbound;
+window.submitInbound = submitInbound;
+window.openPurchaseForm = openPurchaseForm;
+window.addPoLineRow = addPoLineRow;
+window.onPoGoodsChange = onPoGoodsChange;
+window.recalcPoTotal = recalcPoTotal;
+window.submitPurchase = submitPurchase;
+window.viewPurchase = viewPurchase;
+
+renderStats();
+renderOrders();
+renderInbound();
+refreshIcons();
+</script>
+</body>
+</html>

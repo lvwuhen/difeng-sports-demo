@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 会员卡与储值</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="light">
+<div class="app" style="padding-top:0">
+  <div class="navbar transparent">
+    <button class="nav-back" onclick="M.go('me.html')">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+    </button>
+    <div class="nav-title">会员卡与储值</div>
+    <a class="nav-act" href="timecard.html">次卡</a>
+  </div>
+
+  <div class="scroll">
+    <div style="padding:100px 0 0;background:linear-gradient(160deg,#0b63e5,#1677ff 52%,#0ea5e9);color:#fff">
+      <div style="padding:0 18px 64px">
+        <div class="row between">
+          <div>
+            <div style="font-size:17px;font-weight:600">电子会员卡</div>
+            <div style="font-size:11px;opacity:.75;margin-top:3px">充值后即具备会员身份 · 不发行实体卡</div>
+          </div>
+          <span class="mc-badge" style="font-size:11px;padding:2px 9px;border-radius:5px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3)">普通会员</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin:-56px 16px 0;position:relative;z-index:2">
+      <div class="member-card">
+        <div class="mc-top">
+          <div class="mc-brand">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#fff" stroke-width="1.7"><circle cx="12" cy="12" r="8.4"/><path d="M5.4 7.8c3.4 2 9.8 2 13.2 0M5.4 16.2c3.4-2 9.8-2 13.2 0M12 3.6v16.8"/></svg>
+            地丰体育 · 会员卡
+          </div>
+          <span class="mc-badge">储值卡</span>
+        </div>
+        <div class="mc-label">可用余额（本金 + 赠送）</div>
+        <div class="mc-balance"><span class="rmb">¥</span><span class="num" id="balNum"></span></div>
+        <div class="mc-split">
+          <div class="mc-item"><div class="k">本金余额</div><div class="v" id="principal">¥0</div></div>
+          <div class="mc-item"><div class="k">赠送余额</div><div class="v" id="gift">¥0</div></div>
+          <div class="mc-item"><div class="k">积分</div><div class="v" id="points">0</div></div>
+        </div>
+        <div class="mc-foot">
+          <div>
+            <div class="mc-no">卡号</div>
+            <div class="mc-cardno" id="cardNo"></div>
+          </div>
+          <div style="text-align:right">
+            <div class="mc-no">有效期至</div>
+            <div class="mc-cardno" id="validUntil"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section tight" style="margin-top:14px">
+      <div class="card" style="display:grid;grid-template-columns:repeat(4,1fr);padding:14px 6px;text-align:center">
+        <a href="timecard.html" style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <span style="width:38px;height:38px;border-radius:11px;background:var(--m-primary-bg);color:var(--m-primary);display:grid;place-items:center">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8.2A2.2 2.2 0 0 1 6.2 6h11.6A2.2 2.2 0 0 1 20 8.2v.6a2.4 2.4 0 0 0 0 4.8v.6a2.2 2.2 0 0 1-2.2 2.2H6.2A2.2 2.2 0 0 1 4 15.8v-.6a2.4 2.4 0 0 0 0-4.8v-.6z"/><path d="M12 7.4v2.2M12 12v2.2M12 16.4v2.2"/></svg>
+          </span>
+          <span style="font-size:12px;color:var(--m-text-2)">我的次卡</span>
+        </a>
+        <div id="flowEntry" style="display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer">
+          <span style="width:38px;height:38px;border-radius:11px;background:var(--m-success-bg);color:var(--m-success);display:grid;place-items:center">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 4h14v16H5z"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>
+          </span>
+          <span style="font-size:12px;color:var(--m-text-2)">消费记录</span>
+        </div>
+        <div id="pointsEntry" style="display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer">
+          <span style="width:38px;height:38px;border-radius:11px;background:var(--m-warning-bg);color:#d97706;display:grid;place-items:center">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m12 3 2.6 5.6 6.1.8-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.4l6.1-.8z"/></svg>
+          </span>
+          <span style="font-size:12px;color:var(--m-text-2)">积分明细</span>
+        </div>
+        <a href="timecard.html" style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <span style="width:38px;height:38px;border-radius:11px;background:var(--m-purple-bg);color:var(--m-purple);display:grid;place-items:center">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8.2A2.2 2.2 0 0 1 6.2 6h11.6A2.2 2.2 0 0 1 20 8.2v.6a2.4 2.4 0 0 0 0 4.8v.6a2.2 2.2 0 0 1-2.2 2.2H6.2A2.2 2.2 0 0 1 4 15.8v-.6a2.4 2.4 0 0 0 0-4.8v-.6z"/></svg>
+          </span>
+          <span style="font-size:12px;color:var(--m-text-2)">购买次卡</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>储值充值</div>
+        <span class="sub">充值金额与赠送额度分别记账</span>
+      </div>
+      <div class="card">
+        <div class="recharge-grid" id="rechargeGrid"></div>
+        <button class="btn btn-primary btn-block mt16" id="rechargeBtn">立即充值</button>
+        <div class="tiny" style="text-align:center;margin-top:8px">充值成功后即时到账，并发送到账短信</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>会员权益</div>
+        <span class="tag tag-blue">本期不设等级</span>
+      </div>
+      <div class="card">
+        <div class="list-row"><span class="tag tag-green">充值</span><div class="flex1"><b style="font-size:13px">充值赠送</b><div class="tiny">按档位配置赠送比例，本金与赠送分账记录</div></div></div>
+        <div class="list-row"><span class="tag tag-blue">次卡</span><div class="flex1"><b style="font-size:13px">次卡购买资格</b><div class="tiny">会员可购买篮球 / 羽毛球 / 网球次卡</div></div></div>
+        <div class="list-row"><span class="tag tag-purple">赛事</span><div class="flex1"><b style="font-size:13px">专属活动参与资格</b><div class="tiny">可报名会员专属赛事与活动</div></div></div>
+        <div class="list-row"><span class="tag tag-orange">积分</span><div class="flex1"><b style="font-size:13px">消费累积积分</b><div class="tiny">每消费 1 元累积 1 分，使用规则以配置为准</div></div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title"><span class="bar"></span>收支明细</div>
+        <span class="section-more" id="allFlows">查看全部</span>
+      </div>
+      <div class="card" id="flowList"></div>
+    </div>
+
+    <div class="section">
+      <div class="notice-box">
+        <span style="flex-shrink:0">说明</span>
+        <span>退款按原支付渠道退回，储值余额支付的订单退回余额，不收取手续费；余额变动均形成流水可追溯。</span>
+      </div>
+    </div>
+    <div class="scroll-pad"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var PLANS = [
+    { amount:100, gift:10 },
+    { amount:300, gift:40 },
+    { amount:500, gift:80 },
+    { amount:1000, gift:200 }
+  ];
+  var picked = 500;
+  var m = M.state.member;
+
+  M.$('#balNum').textContent = M.rmb(m.balance);
+  M.$('#principal').textContent = '¥' + M.rmb(m.balance);
+  M.$('#gift').textContent = '¥' + M.rmb(m.gift);
+  M.$('#points').textContent = m.points;
+  M.$('#cardNo').textContent = m.cardNo;
+  M.$('#validUntil').textContent = m.validUntil;
+
+  function renderPlans(){
+    M.$('#rechargeGrid').innerHTML = PLANS.map(function(p){
+      return '<div class="recharge-item' + (p.amount === picked ? ' active' : '') + '" data-amount="' + p.amount + '">' +
+        '<div class="r-check"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="m4.5 12.4 4.8 4.8 10-10"/></svg></div>' +
+        '<div class="r-amount"><small>¥</small>' + p.amount + '</div>' +
+        '<div class="r-gift">赠 ¥' + p.gift + '</div>' +
+      '</div>';
+    }).join('');
+    M.$$('#rechargeGrid .recharge-item').forEach(function(el){
+      el.addEventListener('click', function(){
+        picked = +el.getAttribute('data-amount');
+        renderPlans();
+        M.$('#rechargeBtn').textContent = '立即充值 ¥' + picked + '（赠 ¥' + plan().gift + '）';
+      });
+    });
+    M.$('#rechargeBtn').textContent = '立即充值 ¥' + picked + '（赠 ¥' + plan().gift + '）';
+  }
+  function plan(){ return PLANS.filter(function(p){ return p.amount === picked; })[0]; }
+
+  function renderFlows(){
+    M.$('#flowList').innerHTML = M.state.flows.slice(0, 5).map(function(f){
+      var pos = f.type === 'recharge' || f.type === 'gift' || f.type === 'refund';
+      return '<div class="list-row">' +
+        '<div style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex-shrink:0;background:' + (pos ? 'var(--m-success-bg)' : '#f4f6fa') + ';color:' + (pos ? 'var(--m-success)' : 'var(--m-text-3)') + '">' +
+          M.icon(f.type === 'recharge' ? 'wallet' : (f.type === 'gift' ? 'gift' : (f.type === 'refund' ? 'refresh' : 'ticket')), 17) + '</div>' +
+        '<div class="flex1"><div style="font-size:13px">' + f.label + '</div><div class="tiny">' + f.date + ' · ' + f.method + '</div></div>' +
+        '<span style="font-size:14px;font-weight:600;color:' + (pos ? 'var(--m-success)' : 'var(--m-text)') + '">' + (pos ? '+' : '-') + '¥' + M.rmb(f.amount) + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  M.$('#rechargeBtn').addEventListener('click', function(){
+    var p = plan();
+    M.pay({ amount:p.amount, method:'wechat', onSuccess:function(){
+      m.balance += p.amount;
+      m.gift += p.gift;
+      m.points += p.amount;
+      M.state.flows.unshift({ date:M.today() + ' ' + hm(), label:'储值充值（赠 ' + p.gift + '）', type:'recharge', amount:p.amount, method:'微信支付' });
+      M.state.flows.unshift({ date:M.today() + ' ' + hm(), label:'充值赠送额度入账', type:'gift', amount:p.gift, method:'活动赠送' });
+      M.save();
+      M.$('#balNum').textContent = M.rmb(m.balance);
+      M.$('#principal').textContent = '¥' + M.rmb(m.balance);
+      M.$('#gift').textContent = '¥' + M.rmb(m.gift);
+      M.$('#points').textContent = m.points;
+      renderFlows();
+      M.toast('充值成功，已到账并发送短信通知', 'success');
+    }});
+  });
+
+  M.$('#pointsEntry').addEventListener('click', function(){
+    M.modal({ title:'积分明细', text:'当前积分 <b style="color:#141b26;font-size:18px">' + m.points + '</b><br>• 消费累积：1 元 = 1 分<br>• 积分抵现 / 换券 / 换礼品规则<br>按运营配置执行，本期原型保留入口', confirmText:'知道了', cancelText:false });
+  });
+
+  M.$('#flowEntry').addEventListener('click', function(){
+    M.modal({ title:'消费记录', text:'已汇总场地预约、赛事报名、次卡购买等消费明细。<br>完整消费记录可在后台客户档案中查询导出。', confirmText:'知道了', cancelText:false });
+  });
+  M.$('#allFlows').addEventListener('click', function(){
+    M.modal({ title:'收支明细', text:'共 ' + M.state.flows.length + ' 条记录。<br>原型仅展示最近 5 条，完整流水由后台会员模块维护。', confirmText:'知道了', cancelText:false });
+  });
+
+  function hm(){
+    var d = new Date();
+    return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+
+  renderPlans(); renderFlows();
+  M.init({});
+})();
+</script>
+</body>
+</html>

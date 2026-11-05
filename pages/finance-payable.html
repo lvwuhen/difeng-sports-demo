@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>付款单管理 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('finance-payable', '付款单管理');
+
+/* ========== 工具 ========== */
+const PAGE_SIZE = 6;
+const TODAY = '2026-11-05';
+let pg = { list: 1 };
+let seq = 0;
+let activeModal = null;
+
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function genFinNo(){
+  seq++;
+  return 'NCC-AP-' + TODAY.replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+
+const P_STATUS_TAG = {
+  '接口预留未启用':'tag-gray',
+  '付款成功':'tag-green',
+  '付款失败':'tag-red',
+  '已部分付款':'tag-orange'
+};
+const TYPE_TAG = { '采购付款':'tag-blue', '供应商结算':'tag-purple' };
+
+/* ========== 数据 ========== */
+let PAYABLES = MOCK_EXT.payables.map(p => ({
+  ...p,
+  project: p.type === '采购付款' ? '商品采购支出' : '供应商结算支出',
+  remark: '',
+  payDate: ''
+}));
+
+PAYABLES.push(
+  { id:'AP20261104001', supplier:'厦门体育用品有限公司', venue:'总部', amount:2400.00, type:'采购付款', status:'接口预留未启用', finNo:'', date:'2026-11-04', project:'商品采购支出', remark:'11月运动饮料补货', payDate:'' },
+  { id:'AP20261102002', supplier:'鸿星体育批发', venue:'篮球公园', amount:3200.00, type:'供应商结算', status:'接口预留未启用', finNo:'', date:'2026-11-02', project:'供应商结算支出', remark:'篮球采购结算', payDate:'' },
+  { id:'AP20261030003', supplier:'厦门市网球协会', venue:'网球中心', amount:5000.00, type:'供应商结算', status:'接口预留未启用', finNo:'', date:'2026-10-30', project:'供应商结算支出', remark:'网球赛事合作结算', payDate:'' },
+  { id:'AP20261026004', supplier:'厦门建工集团有限公司', venue:'总部', amount:8600.00, type:'供应商结算', status:'接口预留未启用', finNo:'', date:'2026-10-26', project:'供应商结算支出', remark:'场馆维修工程结算', payDate:'' },
+  { id:'AP20261022005', supplier:'鹭岛篮球俱乐部', venue:'羽毛球馆', amount:2600.00, type:'供应商结算', status:'接口预留未启用', finNo:'', date:'2026-10-22', project:'供应商结算支出', remark:'联合活动结算', payDate:'' },
+  { id:'AP20261018006', supplier:'顺达物流', venue:'总部', amount:800.00, type:'采购付款', status:'接口预留未启用', finNo:'', date:'2026-10-18', project:'商品采购支出', remark:'仓储配送费用', payDate:'' }
+);
+
+PAYABLES.sort((a, b) => b.date.localeCompare(a.date));
+
+/* ========== 筛选与分页 ========== */
+function resetAndRender(){ pg.list = 1; renderTable(); }
+
+function filteredPayables(){
+  const kw = (document.getElementById('ap-kw')?.value || '').trim();
+  const tp = document.getElementById('ap-type')?.value || '';
+  const venue = document.getElementById('ap-venue')?.value || '';
+  const st = document.getElementById('ap-status')?.value || '';
+  return PAYABLES.filter(p => {
+    if(tp && p.type !== tp) return false;
+    if(venue && p.venue !== venue) return false;
+    if(st && p.status !== st) return false;
+    if(kw && !(p.id.includes(kw) || (p.supplier || '').includes(kw) || (p.finNo || '').includes(kw))) return false;
+    return true;
+  });
+}
+
+function gotoPage(p){ pg.list = p; renderTable(); }
+
+function buildPager(total){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(pg.list > pages) pg.list = pages;
+  if(pg.list < 1) pg.list = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === pg.list ? 'active' : ''}" onclick="gotoPage(${i})">${i}</button>`;
+  }
+  const el = document.getElementById('ap-pager');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${pg.list}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${pg.list <= 1 ? 'disabled' : ''} onclick="gotoPage(${pg.list - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${pg.list >= pages ? 'disabled' : ''} onclick="gotoPage(${pg.list + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 统计 ========== */
+function renderStats(){
+  const total = PAYABLES.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const reserved = PAYABLES.filter(p => p.status === '接口预留未启用').length;
+  const synced = PAYABLES.filter(p => p.status !== '接口预留未启用').length;
+  const el = document.getElementById('ap-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">本期付款单 <span class="stat-icon blue"><i data-lucide="file-text"></i></span></div>
+      <div class="stat-value">${PAYABLES.length}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 张</span></div>
+      <div class="stat-trend"><i data-lucide="calendar" style="width:14px;color:var(--text-3)"></i>采购付款 / 供应商结算</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">付款金额合计 <span class="stat-icon purple"><i data-lucide="banknote"></i></span></div>
+      <div class="stat-value">¥${money(total)}</div>
+      <div class="stat-trend up"><i data-lucide="arrow-up-right" style="width:14px"></i>待与财务系统打通后推送</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">接口预留未启用 <span class="stat-icon gray" style="background:#f3f4f6;color:var(--text-3)"><i data-lucide="plug-zap"></i></span></div>
+      <div class="stat-value">${reserved}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 张</span></div>
+      <div class="stat-trend down"><i data-lucide="alert-triangle" style="width:14px"></i>${synced} 张已完成金额回写</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 列表 ========== */
+function renderTable(){
+  const list = filteredPayables();
+  const start = (pg.list - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(p => `
+    <tr>
+      <td class="mono" style="font-size:13px">${p.id}</td>
+      <td>${p.supplier}</td>
+      <td>${p.venue}</td>
+      <td class="text-right font-medium">¥${money(p.amount)}</td>
+      <td><span class="tag ${TYPE_TAG[p.type] || 'tag-gray'}">${p.type}</span></td>
+      <td><span class="tag ${P_STATUS_TAG[p.status] || 'tag-gray'}">${p.status}</span></td>
+      <td class="mono" style="font-size:12px">${p.finNo || '<span class="text-muted">—</span>'}</td>
+      <td style="font-size:13px;white-space:nowrap">${p.date}${p.payDate ? `<div class="text-muted" style="font-size:12px">回写 ${p.payDate}</div>` : ''}</td>
+      <td class="actions" style="flex-wrap:wrap">
+        <span title="接口预留未启用：采购与供应商结算业务明确后再开通">
+          <button class="btn btn-primary btn-sm" disabled style="opacity:.5;cursor:not-allowed">推送付款单</button>
+        </span>
+        <button class="btn btn-default btn-sm" onclick="viewPayable('${p.id}')">查看</button>
+        <button class="btn btn-ghost btn-sm" onclick="openWriteback('${p.id}')">模拟回写</button>
+      </td>
+    </tr>`).join('');
+  const tb = document.getElementById('ap-rows');
+  if(tb){
+    tb.innerHTML = rows || `<tr><td colspan="9"><div class="empty"><div class="empty-icon"><i data-lucide="arrow-up-circle"></i></div><div class="empty-text">当前筛选条件下暂无付款单</div></div></td></tr>`;
+  }
+  const cnt = document.getElementById('ap-count');
+  if(cnt) cnt.textContent = `当前筛选 ${list.length} 张`;
+  buildPager(list.length);
+  refreshIcons();
+}
+
+function renderAll(){
+  renderStats();
+  renderTable();
+}
+
+/* ========== 查看付款单 ========== */
+function viewPayable(id){
+  const p = PAYABLES.find(x => x.id === id);
+  if(!p) return;
+  closeActiveModal();
+  activeModal = openModal(`
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">付款单详情 · ${p.id}</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="kv-grid">
+          <div class="kv-item"><span class="k">付款单号</span><span class="v mono">${p.id}</span></div>
+          <div class="kv-item"><span class="k">供应商</span><span class="v">${p.supplier}</span></div>
+          <div class="kv-item"><span class="k">场馆</span><span class="v">${p.venue}</span></div>
+          <div class="kv-item"><span class="k">付款金额</span><span class="v">¥${money(p.amount)}</span></div>
+          <div class="kv-item"><span class="k">类型 / 收支项目</span><span class="v">${p.type} · ${p.project}</span></div>
+          <div class="kv-item"><span class="k">付款日期</span><span class="v">${p.payDate || p.date}</span></div>
+          <div class="kv-item"><span class="k">状态</span><span class="v"><span class="tag ${P_STATUS_TAG[p.status] || 'tag-gray'}">${p.status}</span></span></div>
+          <div class="kv-item"><span class="k">财务单据号</span><span class="v mono">${p.finNo || '—'}</span></div>
+        </div>
+        <div class="divider"></div>
+        <div class="kv-item">
+          <span class="k">备注</span>
+          <span class="v" style="font-weight:400">${p.remark || '无'}</span>
+        </div>
+        <div class="form-hint mt-16">本次未维护供应商主数据，供应商名称取自采购单/结算单快照；付款单推送接口预留，正式开通后将同步至用友NCC付款申请。</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    </div>`);
+}
+
+/* ========== 模拟接收财务付款结果 ========== */
+function openWriteback(presetId){
+  closeActiveModal();
+  const options = PAYABLES.map(p => `<option value="${p.id}" ${presetId === p.id ? 'selected' : ''}>${p.id} · ${p.supplier} · ¥${money(p.amount)}</option>`).join('');
+  activeModal = openModal(`
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">模拟接收财务付款结果</div>
+        <div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div>
+      </div>
+      <div class="modal-body">
+        <div class="form-item mb-16">
+          <label class="form-label">付款单<span class="required">*</span></label>
+          <select class="form-select" id="wb-payable">
+            <option value="">请选择付款单</option>
+            ${options}
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">财务付款结果<span class="required">*</span></label>
+            <select class="form-select" id="wb-result" onchange="toggleWbFinNo()">
+              <option value="">请选择回写结果</option>
+              <option value="付款成功">付款成功</option>
+              <option value="付款失败">付款失败</option>
+              <option value="已部分付款">已部分付款</option>
+            </select>
+          </div>
+          <div class="form-item">
+            <label class="form-label">财务单据号<span id="wb-fin-required" class="required">*</span></label>
+            <input class="form-input" id="wb-fin" placeholder="财务付款单号 / 凭证号" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-item">
+            <label class="form-label">付款日期</label>
+            <input class="form-input" type="date" id="wb-date" value="${TODAY}" />
+          </div>
+          <div class="form-item">
+            <label class="form-label">备注</label>
+            <input class="form-input" id="wb-remark" placeholder="选填" />
+          </div>
+        </div>
+        <div class="form-hint">该操作用于演示财务付款结果回写，回写后付款单状态与财务单据号同步更新；正式环境由 NCC 付款接口回调触发。</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+        <button class="btn btn-primary" onclick="submitWriteback()">确认回写</button>
+      </div>
+    </div>`);
+}
+
+function toggleWbFinNo(){
+  const result = document.getElementById('wb-result')?.value || '';
+  const req = document.getElementById('wb-fin-required');
+  if(req) req.style.visibility = result === '付款失败' ? 'hidden' : 'visible';
+}
+
+function submitWriteback(){
+  const payId = document.getElementById('wb-payable')?.value || '';
+  const result = document.getElementById('wb-result')?.value || '';
+  const finNo = (document.getElementById('wb-fin')?.value || '').trim();
+  const payDate = document.getElementById('wb-date')?.value || '';
+  const remark = (document.getElementById('wb-remark')?.value || '').trim();
+  if(!payId){ toast('请选择付款单', 'error'); return; }
+  if(!result){ toast('请选择财务付款结果', 'error'); return; }
+  if(result !== '付款失败' && !finNo){ toast('请填写财务单据号', 'error'); return; }
+  const p = PAYABLES.find(x => x.id === payId);
+  if(!p){ toast('付款单不存在', 'error'); return; }
+  p.status = result;
+  p.finNo = result === '付款失败' ? '' : (finNo || genFinNo());
+  p.payDate = payDate;
+  if(remark) p.remark = remark;
+  closeActiveModal();
+  renderAll();
+  toast(`付款单 ${p.id} 已回写财务结果「${result}」`, result === '付款失败' ? 'warning' : 'success');
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">付款单管理</div>
+        <div class="page-desc">采购付款与供应商结算付款单，本期保留接口与数据结构，业务明确后再开通财务推送</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="toast('付款单已导出为 Excel','success')"><i data-lucide="download"></i>导出</button>
+        <button class="btn btn-default" onclick="openWriteback('')"><i data-lucide="history"></i>模拟接收财务付款结果</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16" style="border-left:4px solid var(--warning);background:var(--warning-bg)">
+    <div class="card-body" style="display:flex;gap:12px;align-items:flex-start;padding:16px 20px">
+      <i data-lucide="alert-triangle" style="width:22px;height:22px;color:var(--warning);flex-shrink:0;margin-top:2px"></i>
+      <div style="font-size:13px;color:var(--text-2)">
+        <div class="font-bold" style="color:var(--text-1);margin-bottom:4px">接口预留未启用：本期不维护供应商主数据</div>
+        付款单联动保留接口与数据结构，采购与供应商结算业务明确后再开通。页面付款单以「接口预留未启用」状态展示，推送付款单按钮禁用；可先通过「模拟接收财务付款结果」验证状态回写链路。
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="ap-stats"></div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="toolbar">
+        <input class="form-input" id="ap-kw" placeholder="搜索付款单号 / 供应商 / 财务单据号" oninput="resetAndRender()" style="min-width:240px" />
+        <select class="form-select" id="ap-type" onchange="resetAndRender()">
+          <option value="">全部类型</option>
+          <option value="采购付款">采购付款</option>
+          <option value="供应商结算">供应商结算</option>
+        </select>
+        <select class="form-select" id="ap-venue" onchange="resetAndRender()">
+          <option value="">全部场馆</option>
+          <option value="总部">总部</option>
+          <option value="篮球公园">篮球公园</option>
+          <option value="网球中心">网球中心</option>
+          <option value="羽毛球馆">羽毛球馆</option>
+        </select>
+        <select class="form-select" id="ap-status" onchange="resetAndRender()">
+          <option value="">全部状态</option>
+          <option value="接口预留未启用">接口预留未启用</option>
+          <option value="付款成功">付款成功</option>
+          <option value="付款失败">付款失败</option>
+          <option value="已部分付款">已部分付款</option>
+        </select>
+        <div class="spacer"></div>
+        <span class="text-muted" id="ap-count" style="font-size:13px"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>付款单号</th>
+              <th>供应商</th>
+              <th>场馆</th>
+              <th class="text-right">金额</th>
+              <th>类型</th>
+              <th>状态</th>
+              <th>财务单据号</th>
+              <th>日期</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="ap-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="ap-pager"></div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-header">
+      <div class="card-title">付款单接口字段说明</div>
+      <span class="tag tag-gray">接口预留</span>
+    </div>
+    <div class="card-body">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">paymentNo</td><td>string</td><td><span class="tag tag-red">是</span></td><td>付款单号，系统按 AP + 日期 + 流水生成</td></tr>
+            <tr><td class="mono">supplierName</td><td>string</td><td><span class="tag tag-red">是</span></td><td>供应商名称，本期取自采购单/结算单快照，不维护供应商主数据</td></tr>
+            <tr><td class="mono">amount</td><td>decimal(18,2)</td><td><span class="tag tag-red">是</span></td><td>付款金额（含税），与采购单/结算单金额一致</td></tr>
+            <tr><td class="mono">project</td><td>string</td><td><span class="tag tag-red">是</span></td><td>收支项目：采购付款 / 供应商结算</td></tr>
+            <tr><td class="mono">venue</td><td>string</td><td><span class="tag tag-red">是</span></td><td>归属场馆，用于分场馆核算</td></tr>
+            <tr><td class="mono">payDate</td><td>date</td><td><span class="tag tag-red">是</span></td><td>付款日期，财务回写时更新</td></tr>
+            <tr><td class="mono">remark</td><td>string</td><td><span class="tag tag-gray">否</span></td><td>备注，最多 200 字</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="form-hint mt-12">接口开通后，付款单将推送至用友NCC生成付款申请，财务付款结果通过回调回写状态与财务单据号；当前仅演示状态回写。</div>
+    </div>
+  </div>
+`;
+
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 支付结果</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="dark">
+<div class="app">
+  <div class="scroll">
+    <div class="navbar">
+      <button class="nav-back" onclick="M.go('home.html')">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+      </button>
+      <div class="nav-title">支付结果</div>
+      <span class="nav-spacer"></span>
+    </div>
+    <div id="body"></div>
+  </div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var id = new URLSearchParams(location.search).get('id');
+  var order = id ? M.getOrder(id) : M.latestOrder(function(o){ return o.status === 'paid'; });
+  if (!order){
+    M.$('#body').innerHTML = '<div class="empty"><div class="e-ico">' + M.icon('receipt', 28) + '</div><p>还没有可展示的订单<br>请先完成一次预约或报名</p>' +
+      '<a class="btn btn-primary btn-md mt12" href="venues.html" style="display:inline-flex">去预约</a></div>';
+    M.init({});
+    return;
+  }
+
+  var isEvent = order.type === 'event';
+  var isCardOrder = order.type === 'card';
+  var sm = M.statusMeta(order.status);
+
+  M.$('#body').innerHTML =
+    '<div class="result-hero">' +
+      '<div class="result-icon">' +
+        '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m4.5 12.4 4.8 4.8 10-10"/></svg>' +
+      '</div>' +
+      '<div class="result-title">' + (isEvent ? '报名成功' : '支付成功') + '</div>' +
+      '<div class="result-amount">¥' + M.rmb(order.paid != null ? order.paid : order.amount) + '</div>' +
+      '<div class="result-sub">' + (isEvent ? '报名信息已确认，请按赛事通知到场签到' : '时段已锁定，请按时到场使用场地') + '</div>' +
+    '</div>' +
+
+    (order.verifyCode
+      ? '<div class="section" style="margin-top:0"><div class="card" style="text-align:center;background:linear-gradient(180deg,#fff,#f8fbff)">' +
+          '<div class="qr-wrap" style="padding-top:14px">' +
+            '<div class="qr-box"><canvas id="qr"></canvas></div>' +
+            '<div class="qr-code">' + order.verifyCode.replace(/(\d{4})(\d{4})/, '$1 $2') + '</div>' +
+            '<div class="qr-tip">' + (isEvent ? '报名电子凭证 · 签到时出示' : '到场核销码 · 请勿泄露给他人') + '</div>' +
+          '</div>' +
+          '<div style="border-top:1px dashed var(--m-line);margin:6px 8px 2px;padding:12px 4px 4px" class="sub">' +
+            (isEvent ? '报名不设现场核销，赛前凭本凭证与身份证件签到' : '可扫码、订单号或手机号三种方式核销') +
+          '</div>' +
+        '</div></div>'
+      : '') +
+
+    '<div class="section">' +
+      '<div class="card">' +
+        '<div class="kv-row"><span class="k">订单编号</span><span class="v mono">' + order.id + '</span></div>' +
+        '<div class="kv-row"><span class="k">' + (isEvent ? '赛事名称' : (isCardOrder ? '卡项' : '场馆场地')) + '</span><span class="v">' + order.title + '</span></div>' +
+        (isEvent
+          ? '<div class="kv-row"><span class="k">报名组别</span><span class="v">' + (order.group || '-') + '</span></div><div class="kv-row"><span class="k">比赛时间</span><span class="v">' + (order.time || '-') + '</span></div>'
+          : '<div class="kv-row"><span class="k">预约时段</span><span class="v">' + M.dateCN(order.date) + ' ' + order.time + '</span></div>') +
+        '<div class="kv-row"><span class="k">支付方式</span><span class="v">' + M.methodCN(order.payment) + '</span></div>' +
+        '<div class="kv-row"><span class="k">订单状态</span><span class="v"><span class="tag ' + sm.tone + '">' + sm.label + '</span></span></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="section">' +
+      '<div class="notice-box">' +
+        '<span style="flex-shrink:0">通知</span>' +
+        '<span>' + (isEvent ? '报名成功通知已发送至站内消息，可在「我的 · 消息中心」查看。' : '预约成功通知已发送至站内消息；开场前 30 分钟会推送提醒。') + '</span>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="section" style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px">' +
+      '<a class="btn btn-primary btn-block" href="order-detail.html?id=' + order.id + '">查看订单</a>' +
+      '<a class="btn btn-line btn-block" href="home.html">返回首页</a>' +
+    '</div>';
+
+  var canvas = M.$('#qr');
+  if (canvas) M.drawQR(canvas, order.id + '|' + order.verifyCode, 168);
+
+  M.init({});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>场地排期与锁定 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('schedule', '场地锁定与可视化排期');
+
+// 时段定义（每小时一格，06:00 - 23:00）
+const timeSlots = [];
+for(let h=6; h<23; h++){
+  timeSlots.push(`${String(h).padStart(2,'0')}:00-${String(h+1).padStart(2,'0')}:00`);
+}
+
+// 状态配色
+const statusColor = {
+  available:'', booked:'booked', paid:'paid', locked:'locked', training:'training', event:'event'
+};
+const statusLabel = {
+  available:'可用', booked:'已预订', paid:'已支付', locked:'锁定', training:'培训', event:'赛事'
+};
+const statusIcon = {
+  booked:'ticket', paid:'check-circle-2', locked:'lock', training:'graduation-cap', event:'trophy'
+};
+
+// 生成排期 mock 数据：每个场地随机占用
+function genSchedule(venueId){
+  const courts = MOCK.courts.filter(c=>c.venueId===venueId);
+  const data = {};
+  const statuses = ['booked','paid','locked','training','event'];
+  courts.forEach(c=>{
+    data[c.id] = {};
+    timeSlots.forEach((ts, idx)=>{
+      // 随机决定占用（约30%）
+      if(Math.random() < 0.3){
+        const st = statuses[Math.floor(Math.random()*statuses.length)];
+        data[c.id][ts] = {
+          status: st,
+          order: st==='booked'||st==='paid' ? 'ORD'+Math.floor(Math.random()*900000+100000) : null,
+          customer: st==='booked'||st==='paid' ? ['陈晓明','林雅婷','鹭岛俱乐部','建工集团'][Math.floor(Math.random()*4)] : null,
+          reason: st==='locked' ? ['维修','赛事','培训','内部使用'][Math.floor(Math.random()*4)] : (st==='training'?'青少年篮球培训':st==='event'?'地丰杯邀请赛':null),
+        };
+      }
+    });
+  });
+  return data;
+}
+
+let curVenue = MOCK.venues[0].id;
+let curDate = new Date().toISOString().slice(0,10);
+let scheduleData = genSchedule(curVenue);
+let filterType = '', filterAttr = '';
+
+function renderSchedule(){
+  const courts = MOCK.courts.filter(c=>c.venueId===curVenue && (!filterType||c.type===filterType) && (!filterAttr||c.attr===filterAttr));
+  if(courts.length===0){
+    document.getElementById('scheduleBody').innerHTML = `<tr><td colspan="${timeSlots.length+1}"><div class="empty"><div class="empty-icon"><i data-lucide="filter-x"></i></div><div class="empty-text">当前筛选条件下无场地</div></div></td></tr>`;
+    return;
+  }
+  const header = `<th style="min-width:120px;position:sticky;left:0;background:#fafafa;z-index:3">场地</th>` +
+    timeSlots.map(ts=>`<th style="min-width:90px">${ts.split('-')[0]}</th>`).join('');
+  const rows = courts.map(c=>{
+    const cells = timeSlots.map(ts=>{
+      const cell = scheduleData[c.id]?.[ts];
+      if(!cell){
+        return `<td class="schedule-cell available" onclick="bookSlot('${c.id}','${ts}')" title="可用 - 点击代客预订"><span class="cell-time">${ts.split('-')[0]}</span><span class="cell-label" style="color:var(--text-4)">可约</span></td>`;
+      }
+      const cls = statusColor[cell.status];
+      const ico = statusIcon[cell.status];
+      const title = cell.status==='locked' ? `锁定：${cell.reason}` :
+                    cell.status==='training' ? `培训：${cell.reason}` :
+                    cell.status==='event' ? `赛事：${cell.reason}` :
+                    `${cell.customer||''} · ${cell.order||''}`;
+      const extra = (cell.status==='booked'||cell.status==='paid') ?
+        `<button class="btn btn-ghost btn-sm" style="padding:0 4px;font-size:11px" onclick="event.stopPropagation();viewOrder('${cell.order}')">订单</button>` :
+        (cell.status==='locked' ? `<button class="btn btn-ghost btn-sm" style="padding:0 4px;font-size:11px" onclick="event.stopPropagation();unlockCourt('${c.id}','${ts}')">解锁</button>` : '');
+      return `<td class="schedule-cell ${cls}" style="vertical-align:top" title="${title}" onclick="cellAction('${c.id}','${ts}')">
+        <span class="cell-time">${ts.split('-')[0]}</span>
+        <span class="cell-label"><i data-lucide="${ico}" style="width:12px;height:12px;vertical-align:-2px"></i> ${statusLabel[cell.status]}</span>
+        <div style="font-size:11px;opacity:.8;margin-top:2px">${cell.customer||cell.reason||''}</div>
+        <div style="margin-top:4px">${extra}</div>
+      </td>`;
+    }).join('');
+    return `<tr><td class="schedule-cell header" style="position:sticky;left:0;z-index:2;min-width:120px">
+      <div class="font-medium">${c.name}</div>
+      <div class="text-muted" style="font-size:11px">${c.type}·${c.area}·${c.attr}</div>
+    </td>${cells}</tr>`;
+  }).join('');
+  document.getElementById('scheduleHead').innerHTML = header;
+  document.getElementById('scheduleBody').innerHTML = rows;
+  if(window.lucide) lucide.createIcons();
+}
+
+window.cellAction = function(courtId, ts){
+  const cell = scheduleData[courtId]?.[ts];
+  if(!cell) return;
+  const court = MOCK.courts.find(c=>c.id===courtId);
+  const cname = court?.name||courtId;
+  if(cell.status==='booked'||cell.status==='paid'){
+    viewOrder(cell.order);
+  } else if(cell.status==='locked'){
+    toast(`${cname} ${ts} 锁定中：${cell.reason}`,'warning');
+  } else if(cell.status==='training'||cell.status==='event'){
+    toast(`${cname} ${ts} 用于：${cell.reason}`,'info');
+  }
+};
+window.bookSlot = function(courtId, ts){
+  const court = MOCK.courts.find(c=>c.id===courtId);
+  confirmDialog(`是否为场地「${court.name}」时段「${ts}」创建代客预订？`, ()=>{
+    toast('已跳转至预约下单页面','success');
+    // 模拟跳转
+    setTimeout(()=>window.location.href='booking.html', 300);
+  });
+};
+window.viewOrder = function(orderId){
+  toast('查看订单 '+orderId,'info');
+};
+window.unlockCourt = function(courtId, ts){
+  confirmDialog(`确认解除该时段锁定？`, ()=>{
+    if(scheduleData[courtId]?.[ts]) delete scheduleData[courtId][ts];
+    renderSchedule();
+    toast('已解除锁定','success');
+  });
+};
+
+// 创建锁定
+window.openLockModal = function(){
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">创建场地锁定</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">所属场馆</label>
+          <select class="form-select" id="lk-venue" onchange="updateLockCourts()">
+            ${MOCK.venues.map(v=>`<option value="${v.id}" ${v.id===curVenue?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label">锁定原因<span class="required">*</span></label>
+          <select class="form-select" id="lk-reason"><option>维修</option><option>赛事</option><option>培训</option><option>内部使用</option></select>
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">锁定场地范围<span class="required">*</span></label>
+        <div id="lk-courts" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">开始日期</label><input type="date" class="form-input" id="lk-start" value="${curDate}"></div>
+        <div class="form-item"><label class="form-label">结束日期</label><input type="date" class="form-input" id="lk-end" value="${curDate}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">开始时间</label>
+          <select class="form-select" id="lk-stime">${timeSlots.map(t=>`<option>${t.split('-')[0]}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">结束时间</label>
+          <select class="form-select" id="lk-etime">${timeSlots.map(t=>`<option>${t.split('-')[1]}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="form-item"><label class="form-label">锁定说明</label><textarea class="form-textarea" id="lk-desc" placeholder="如：灯光维修、企业包场等"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-danger" onclick="createLock()"><i data-lucide="lock"></i> 确认锁定</button>
+    </div>
+  </div>`;
+  openModal(html);
+  updateLockCourts();
+};
+window.updateLockCourts = function(){
+  const vid = document.getElementById('lk-venue').value;
+  const courts = MOCK.courts.filter(c=>c.venueId===vid);
+  document.getElementById('lk-courts').innerHTML = courts.map(c=>`
+    <label style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+      <input type="checkbox" value="${c.id}" checked> ${c.name}
+    </label>`).join('');
+};
+window.createLock = function(){
+  const reason = document.getElementById('lk-reason').value;
+  const courts = [...document.querySelectorAll('#lk-courts input:checked')].map(i=>i.value);
+  if(courts.length===0){ toast('请选择锁定场地','error'); return; }
+  toast(`已锁定 ${courts.length} 片场地，原因：${reason}`,'success');
+  document.querySelector('.modal-overlay').remove();
+};
+
+// 长期占用分布
+function renderLongTerm(){
+  const reasons = ['维修','赛事','培训','内部使用','企业包场'];
+  const rows = reasons.map((r,i)=>{
+    const hours = [24, 18, 36, 12, 8][i];
+    const pct = (hours/60*100).toFixed(0);
+    const color = ['var(--error)','var(--warning)','var(--purple)','var(--info)','var(--primary)'][i];
+    return `<div class="list-row">
+      <div style="width:100px">${r}</div>
+      <div class="flex-1"><div class="progress"><div class="progress-bar" style="width:${pct}%;background:${color}"></div></div></div>
+      <div style="width:120px;text-align:right" class="font-medium">${hours} 小时</div>
+    </div>`;
+  }).join('');
+  document.getElementById('longTermList').innerHTML = rows;
+}
+
+// 日期切换
+window.changeDate = function(delta){
+  const d = new Date(curDate);
+  d.setDate(d.getDate()+delta);
+  curDate = d.toISOString().slice(0,10);
+  scheduleData = genSchedule(curVenue);
+  document.getElementById('dateInput').value = curDate;
+  renderSchedule();
+};
+window.onVenueChange = function(vid){
+  curVenue = vid;
+  scheduleData = genSchedule(curVenue);
+  renderSchedule();
+};
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">场地锁定与可视化排期</div>
+  <div class="page-desc">以场地×时段网格直观展示占用情况，支持锁定管理与代客预订</div>
+</div>
+
+<!-- 图例 -->
+<div class="card mb-16">
+  <div class="card-body" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+    <div class="font-medium">状态图例：</div>
+    <span class="tag" style="background:#fff;border:1px solid var(--border)">可用</span>
+    <span class="tag tag-blue">已预订</span>
+    <span class="tag tag-green">已支付</span>
+    <span class="tag tag-red">锁定</span>
+    <span class="tag tag-purple">培训</span>
+    <span class="tag tag-orange">赛事</span>
+    <div class="spacer" style="flex:1"></div>
+    <div style="font-size:13px;color:var(--text-3)">点击「可用」格子可代客预订，点击已占用格子查看订单/解锁</div>
+  </div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(5,1fr)">
+  <div class="stat-card"><div class="stat-label">已预订场次</div><div class="stat-value" style="font-size:22px">18</div></div>
+  <div class="stat-card"><div class="stat-label">已支付场次</div><div class="stat-value" style="font-size:22px;color:var(--success)">12</div></div>
+  <div class="stat-card"><div class="stat-label">锁定场次</div><div class="stat-value" style="font-size:22px;color:var(--error)">5</div></div>
+  <div class="stat-card"><div class="stat-label">培训占用</div><div class="stat-value" style="font-size:22px;color:var(--purple)">8</div></div>
+  <div class="stat-card"><div class="stat-label">赛事占用</div><div class="stat-value" style="font-size:22px;color:var(--warning)">3</div></div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-body">
+    <div class="toolbar">
+      <div class="filter-group">
+        <label class="form-label" style="margin:0">场馆</label>
+        <select class="form-select" onchange="onVenueChange(this.value)">
+          ${MOCK.venues.map(v=>`<option value="${v.id}">${v.name}</option>`).join('')}
+        </select>
+        <label class="form-label" style="margin:0">运动类型</label>
+        <select class="form-select" onchange="filterType=this.value;renderSchedule()">
+          <option value="">全部</option><option>篮球</option><option>足球</option><option>网球</option><option>羽毛球</option>
+        </select>
+        <label class="form-label" style="margin:0">属性</label>
+        <select class="form-select" onchange="filterAttr=this.value;renderSchedule()">
+          <option value="">全部</option><option>普通</option><option>VIP</option>
+        </select>
+      </div>
+      <div class="spacer"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-default btn-sm" onclick="changeDate(-1)"><i data-lucide="chevron-left" style="width:14px"></i></button>
+        <input type="date" class="form-input" id="dateInput" value="${curDate}" style="width:150px" onchange="curDate=this.value;scheduleData=genSchedule(curVenue);renderSchedule()">
+        <button class="btn btn-default btn-sm" onclick="changeDate(1)"><i data-lucide="chevron-right" style="width:14px"></i></button>
+        <button class="btn btn-default btn-sm" onclick="curDate=new Date().toISOString().slice(0,10);document.getElementById('dateInput').value=curDate;scheduleData=genSchedule(curVenue);renderSchedule()">今天</button>
+      </div>
+      <button class="btn btn-danger" onclick="openLockModal()"><i data-lucide="lock"></i> 创建锁定</button>
+    </div>
+
+    <div class="table-wrap" style="max-height:560px;overflow:auto">
+      <table class="data-table" style="border-collapse:separate;border-spacing:0">
+        <thead id="scheduleHead"></thead>
+        <tbody id="scheduleBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:2fr 1fr">
+  <div class="card">
+    <div class="card-header"><div class="card-title">长期占用分布（近7日）</div>
+      <select class="form-select" style="width:auto"><option>近7日</option><option>近30日</option><option>近90日</option></select>
+    </div>
+    <div class="card-body"><div id="longTermList"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-header"><div class="card-title">锁定记录</div></div>
+    <div class="card-body no-pad">
+      <div class="list-row" style="padding:10px 20px">
+        <span class="tag tag-red">维修</span>
+        <div class="flex-1"><div class="font-medium">3号网球场</div><div class="text-muted" style="font-size:12px">11-02 ~ 11-03 全天</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="toast('解除锁定','info')">解锁</button>
+      </div>
+      <div class="list-row" style="padding:10px 20px">
+        <span class="tag tag-orange">赛事</span>
+        <div class="flex-1"><div class="font-medium">1号足球场</div><div class="text-muted" style="font-size:12px">11-15 08:00-18:00</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="toast('解除锁定','info')">解锁</button>
+      </div>
+      <div class="list-row" style="padding:10px 20px">
+        <span class="tag tag-purple">培训</span>
+        <div class="flex-1"><div class="font-medium">A1/A2篮球场</div><div class="text-muted" style="font-size:12px">每周六 09:00-11:00</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="toast('解除锁定','info')">解锁</button>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+renderSchedule();
+renderLongTerm();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

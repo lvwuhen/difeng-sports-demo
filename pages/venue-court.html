@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>场馆及场地管理 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('venue-court', '场馆及场地管理');
+
+// 场馆公告 mock（MOCK 中无，就地补充）
+const announcements = [
+  {id:'A001', venue:'地丰体育中心（总部）', title:'11月篮球特训营报名启动', content:'总部篮球馆11月1日-30日开设青少年篮球特训营，报名享早鸟价。', start:'2026-11-01', end:'2026-11-30', miniShow:true, top:1, status:'生效中'},
+  {id:'A002', venue:'地丰篮球公园', title:'夜场灯光升级通知', content:'篮球公园A区场地将于11月5日进行灯光升级，暂停营业一天。', start:'2026-11-04', end:'2026-11-05', miniShow:true, top:0, status:'生效中'},
+  {id:'A003', venue:'地丰网球中心', title:'网球公开赛圆满落幕', content:'厦门市业余网球公开赛已于10月12日圆满结束，感谢各位选手参与。', start:'2026-10-12', end:'2026-10-20', miniShow:false, top:0, status:'已失效'},
+  {id:'A004', venue:'地丰羽毛球馆', title:'双十一储值特惠', content:'11月11日当天储值满1000送150，满3000送500，仅限当日。', start:'2026-11-11', end:'2026-11-11', miniShow:true, top:2, status:'待生效'},
+];
+
+const statusTagMap = {
+  '运营中':'tag-green','筹备中':'tag-orange','停业':'tag-red','装修中':'tag-blue'
+};
+const courtStatusTagMap = {
+  '可用':'tag-green','已预定':'tag-blue','开单未结算':'tag-orange','已支付':'tag-cyan',
+  '培训使用':'tag-purple','比赛使用':'tag-orange','场地维修':'tag-red','维修':'tag-red'
+};
+
+let venuePage = 1, courtPage = 1, annPage = 1;
+const pageSize = 8;
+
+function venueFilter(){
+  const kw = (document.getElementById('vKw')?.value||'').trim();
+  const st = document.getElementById('vStatus')?.value||'';
+  return MOCK.venues.filter(v=>(!kw||v.name.includes(kw)||v.address.includes(kw)||v.contact.includes(kw)||v.phone.includes(kw))&&(!st||v.status===st));
+}
+function renderVenues(){
+  const list = venueFilter();
+  const total = list.length;
+  const start = (venuePage-1)*pageSize;
+  const rows = list.slice(start, start+pageSize).map(v=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${v.id}</td>
+      <td><div class="font-medium">${v.name}</div><div class="text-muted" style="font-size:12px">${v.address}</div></td>
+      <td>${v.contact}</td>
+      <td>${v.phone}</td>
+      <td>${v.openTime}</td>
+      <td><span class="tag ${statusTagMap[v.status]||'tag-gray'}">${v.status}</span></td>
+      <td class="text-center">${v.courts}</td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="editVenue('${v.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('查看 ${v.name} 场地列表','info')">场地</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无场馆数据</div></div></td></tr>`;
+  document.getElementById('venueTbody').innerHTML = rows;
+  renderPagination('venuePag', total, venuePage, p=>{venuePage=p;renderVenues();});
+  if(window.lucide) lucide.createIcons();
+}
+
+function courtFilter(){
+  const vid = document.getElementById('cVenue')?.value||'';
+  const type = document.getElementById('cType')?.value||'';
+  const st = document.getElementById('cStatus')?.value||'';
+  return MOCK.courts.filter(c=>(!vid||c.venueId===vid)&&(!type||c.type===type)&&(!st||c.status===st));
+}
+function renderCourts(){
+  const list = courtFilter();
+  const total = list.length;
+  const start = (courtPage-1)*pageSize;
+  const vMap = Object.fromEntries(MOCK.venues.map(v=>[v.id,v.name]));
+  const rows = list.slice(start, start+pageSize).map(c=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${c.id}</td>
+      <td>${vMap[c.venueId]||c.venueId}</td>
+      <td><div class="font-medium">${c.name}</div>${c.type==='篮球'?'<span class="tag tag-gray" style="margin-left:4px">全场</span>':''}</td>
+      <td><span class="tag ${c.type==='篮球'?'tag-orange':c.type==='足球'?'tag-green':c.type==='网球'?'tag-blue':'tag-purple'}">${c.type}</span></td>
+      <td>${c.area}</td>
+      <td>${c.attr}</td>
+      <td class="text-center">${c.capacity}</td>
+      <td>${c.billing}</td>
+      <td><span class="tag ${courtStatusTagMap[c.status]||'tag-gray'}">${c.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="editCourt('${c.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('设置 ${c.name} 价格规则','info')">价格</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="10"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无场地数据</div></div></td></tr>`;
+  document.getElementById('courtTbody').innerHTML = rows;
+  renderPagination('courtPag', total, courtPage, p=>{courtPage=p;renderCourts();});
+  if(window.lucide) lucide.createIcons();
+}
+
+function renderAnnouncements(){
+  const list = announcements;
+  const total = list.length;
+  const start = (annPage-1)*pageSize;
+  const annTagMap = {'生效中':'tag-green','待生效':'tag-blue','已失效':'tag-gray'};
+  const rows = list.slice(start, start+pageSize).map(a=>`
+    <tr>
+      <td class="mono" style="font-size:13px">${a.id}</td>
+      <td>${a.venue}</td>
+      <td><div class="font-medium">${a.title}</div><div class="text-muted" style="font-size:12px;max-width:320px">${a.content}</div></td>
+      <td style="font-size:12px">${a.start}<br>~ ${a.end}</td>
+      <td class="text-center">${a.miniShow?'<i data-lucide="check" style="color:var(--success)"></i>':'<i data-lucide="x" style="color:var(--text-4)"></i>'}</td>
+      <td class="text-center">${a.top||0}</td>
+      <td><span class="tag ${annTagMap[a.status]||'tag-gray'}">${a.status}</span></td>
+      <td class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="editAnnouncement('${a.id}')">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('预览公告 ${a.title}','info')">预览</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="8"><div class="empty"><div class="empty-icon"><i data-lucide="inbox"></i></div><div class="empty-text">暂无公告</div></div></td></tr>`;
+  document.getElementById('annTbody').innerHTML = rows;
+  renderPagination('annPag', total, annPage, p=>{annPage=p;renderAnnouncements();});
+  if(window.lucide) lucide.createIcons();
+}
+
+function renderPagination(containerId, total, cur, onChange){
+  const pages = Math.max(1, Math.ceil(total/pageSize));
+  let btns = '';
+  for(let i=1;i<=pages;i++){
+    btns += `<button class="page-btn ${i===cur?'active':''}" onclick="(${onChange})(${i})">${i}</button>`;
+  }
+  document.getElementById(containerId).innerHTML = `
+    <div class="pagination-info">共 ${total} 条</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${cur<=1?'disabled':''} onclick="(${onChange})(${cur-1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${cur>=pages?'disabled':''} onclick="(${onChange})(${cur+1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+}
+
+// 场馆新增/编辑
+window.editVenue = function(id){
+  const v = id ? MOCK.venues.find(x=>x.id===id) : {name:'',address:'',contact:'',phone:'',openTime:'06:00-23:00',status:'运营中',intro:''};
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">${id?'编辑场馆':'新增场馆'}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">场馆名称<span class="required">*</span></label><input class="form-input" id="vf-name" value="${v.name}"></div>
+        <div class="form-item"><label class="form-label">经营状态</label>
+          <select class="form-select" id="vf-status">
+            ${['运营中','筹备中','停业','装修中'].map(s=>`<option ${s===v.status?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">场馆地址<span class="required">*</span></label><input class="form-input" id="vf-addr" value="${v.address}"></div>
+        <div class="form-item"><label class="form-label">营业时间</label><input class="form-input" id="vf-open" value="${v.openTime}" placeholder="如 06:00-23:00"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">联系人</label><input class="form-input" id="vf-contact" value="${v.contact}"></div>
+        <div class="form-item"><label class="form-label">联系电话</label><input class="form-input" id="vf-phone" value="${v.phone}"></div>
+      </div>
+      <div class="form-item"><label class="form-label">场馆简介</label><textarea class="form-textarea" id="vf-intro" placeholder="场馆特色、配套设施、交通指引等">${v.intro||''}</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveVenue('${id||''}')">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+window.saveVenue = function(id){
+  const name = document.getElementById('vf-name').value.trim();
+  if(!name){ toast('请填写场馆名称','error'); return; }
+  toast(id?'场馆已更新':'场馆已创建','success');
+  document.querySelector('.modal-overlay').remove();
+};
+
+// 场地编辑
+window.editCourt = function(id){
+  const c = MOCK.courts.find(x=>x.id===id);
+  const html = `<div class="modal">
+    <div class="modal-header"><div class="modal-title">编辑场地 - ${c.name}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">所属场馆</label>
+          <select class="form-select" id="cf-venue">${MOCK.venues.map(v=>`<option value="${v.id}" ${v.id===c.venueId?'selected':''}>${v.name}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">场地名称/编号</label><input class="form-input" id="cf-name" value="${c.name}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">运动类型</label>
+          <select class="form-select" id="cf-type">${['篮球','足球','网球','羽毛球','乒乓球','游泳'].map(s=>`<option ${s===c.type?'selected':''}>${s}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">分区</label>
+          <select class="form-select" id="cf-area">${['室内','室外','半室外'].map(s=>`<option ${s===c.area?'selected':''}>${s}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">场地属性</label>
+          <select class="form-select" id="cf-attr">${['普通','VIP','豪华'].map(s=>`<option ${s===c.attr?'selected':''}>${s}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">可容纳人数</label><input type="number" class="form-input" id="cf-cap" value="${c.capacity}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">计费方式</label>
+          <select class="form-select" id="cf-bill">${['按小时','按半场','按全场','按次'].map(s=>`<option ${s===c.billing?'selected':''}>${s}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">场地状态</label>
+          <select class="form-select" id="cf-status">${['可用','已预定','开单未结算','已支付','培训使用','比赛使用','场地维修'].map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div id="basketball-spec" style="display:none">
+        <div class="form-item"><label class="form-label">篮球场地规格</label>
+          <select class="form-select"><option>全场</option><option>半场</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('场地已保存','success');this.closest('.modal-overlay').remove()">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+  setTimeout(()=>{
+    const sel = document.getElementById('cf-type');
+    const spec = document.getElementById('basketball-spec');
+    sel.onchange = ()=>{ spec.style.display = sel.value==='篮球'?'block':'none'; };
+    spec.style.display = sel.value==='篮球'?'block':'none';
+  },50);
+};
+
+// 公告编辑
+window.editAnnouncement = function(id){
+  const a = id ? announcements.find(x=>x.id===id) : {venue:'',title:'',content:'',start:'',end:'',miniShow:true,top:0};
+  const html = `<div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">${id?'编辑公告':'发布公告'}</div><div class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</div></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">所属场馆<span class="required">*</span></label>
+          <select class="form-select" id="af-venue">${MOCK.venues.map(v=>`<option ${v.name===a.venue?'selected':''}>${v.name}</option>`).join('')}</select>
+        </div>
+        <div class="form-item"><label class="form-label">置顶排序</label><input type="number" class="form-input" id="af-top" value="${a.top||0}"></div>
+      </div>
+      <div class="form-item"><label class="form-label">公告标题<span class="required">*</span></label><input class="form-input" id="af-title" value="${a.title}"></div>
+      <div class="form-item"><label class="form-label">公告内容（支持图文）</label>
+        <textarea class="form-textarea" id="af-content" style="min-height:120px">${a.content}</textarea>
+        <div class="form-hint">支持富文本编辑，可上传封面图与正文配图</div>
+      </div>
+      <div class="form-row">
+        <div class="form-item"><label class="form-label">生效时间</label><input type="date" class="form-input" id="af-start" value="${a.start}"></div>
+        <div class="form-item"><label class="form-label">失效时间</label><input type="date" class="form-input" id="af-end" value="${a.end}"></div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">小程序展示</label>
+        <label class="switch"><input type="checkbox" id="af-mini" ${a.miniShow?'checked':''}><span class="switch-slider"></span></label>
+        <span style="margin-left:10px;font-size:13px;color:var(--text-3)">开启后将在地丰体育小程序首页展示</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-primary" onclick="toast('公告已保存','success');this.closest('.modal-overlay').remove()">保存</button>
+    </div>
+  </div>`;
+  openModal(html);
+};
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.dataset.panel===name?'block':'none');
+}
+
+document.getElementById('page-content').innerHTML = `
+<div class="page-header">
+  <div class="page-title">场馆及场地管理</div>
+  <div class="page-desc">管理场馆档案、场地信息与场馆公告，支持多场馆集中运营</div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-label">场馆总数 <span class="stat-icon blue"><i data-lucide="building-2"></i></span></div>
+    <div class="stat-value">${MOCK.venues.length}</div>
+    <div class="stat-trend" style="color:var(--text-3)">运营中 ${MOCK.venues.filter(v=>v.status==='运营中').length} 家</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">场地总数 <span class="stat-icon green"><i data-lucide="map-pin"></i></span></div>
+    <div class="stat-value">${MOCK.courts.length}</div>
+    <div class="stat-trend" style="color:var(--text-3)">可用 ${MOCK.courts.filter(c=>c.status==='可用').length} 片</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">维护中场地 <span class="stat-icon red"><i data-lucide="wrench"></i></span></div>
+    <div class="stat-value">${MOCK.courts.filter(c=>c.status==='场地维修'||c.status==='维修').length}</div>
+    <div class="stat-trend down">需及时跟进维修进度</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">生效公告 <span class="stat-icon purple"><i data-lucide="megaphone"></i></span></div>
+    <div class="stat-value">${announcements.filter(a=>a.status==='生效中').length}</div>
+    <div class="stat-trend" style="color:var(--text-3)">小程序展示 ${announcements.filter(a=>a.miniShow).length} 条</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding-bottom:0">
+    <div class="tabs" style="margin-bottom:0">
+      <div class="tab active" data-tab="venue" onclick="switchTab('venue')">场馆档案</div>
+      <div class="tab" data-tab="court" onclick="switchTab('court')">场地档案</div>
+      <div class="tab" data-tab="announcement" onclick="switchTab('announcement')">场馆公告</div>
+    </div>
+  </div>
+
+  <!-- 场馆档案 -->
+  <div class="tab-panel" data-panel="venue">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <input class="form-input" id="vKw" placeholder="搜索名称/地址/联系人/电话" style="width:260px" oninput="venuePage=1;renderVenues()">
+          <select class="form-select" id="vStatus" onchange="venuePage=1;renderVenues()">
+            <option value="">全部状态</option>
+            <option>运营中</option><option>筹备中</option><option>停业</option><option>装修中</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出场馆列表','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="editVenue()"><i data-lucide="plus"></i> 新增场馆</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>编号</th><th>场馆名称</th><th>联系人</th><th>电话</th><th>营业时间</th><th>状态</th><th class="text-center">场地数</th><th>操作</th></tr></thead>
+          <tbody id="venueTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="venuePag"></div>
+    </div>
+  </div>
+
+  <!-- 场地档案 -->
+  <div class="tab-panel" data-panel="court" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select" id="cVenue" onchange="courtPage=1;renderCourts()">
+            <option value="">全部场馆</option>
+            ${MOCK.venues.map(v=>`<option value="${v.id}">${v.name}</option>`).join('')}
+          </select>
+          <select class="form-select" id="cType" onchange="courtPage=1;renderCourts()">
+            <option value="">全部类型</option>
+            <option>篮球</option><option>足球</option><option>网球</option><option>羽毛球</option>
+          </select>
+          <select class="form-select" id="cStatus" onchange="courtPage=1;renderCourts()">
+            <option value="">全部状态</option>
+            <option>可用</option><option>已预定</option><option>开单未结算</option><option>已支付</option><option>培训使用</option><option>比赛使用</option><option>场地维修</option><option>维修</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-default" onclick="toast('已导出场地列表','success')"><i data-lucide="download"></i> 导出</button>
+        <button class="btn btn-primary" onclick="toast('打开新增场地表单','info')"><i data-lucide="plus"></i> 新增场地</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>编号</th><th>所属场馆</th><th>场地名称</th><th>类型</th><th>分区</th><th>属性</th><th class="text-center">容纳</th><th>计费</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="courtTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="courtPag"></div>
+    </div>
+  </div>
+
+  <!-- 场馆公告 -->
+  <div class="tab-panel" data-panel="announcement" style="display:none">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="filter-group">
+          <select class="form-select">
+            <option value="">全部场馆</option>
+            ${MOCK.venues.map(v=>`<option>${v.name}</option>`).join('')}
+          </select>
+          <select class="form-select">
+            <option value="">全部状态</option><option>生效中</option><option>待生效</option><option>已失效</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="editAnnouncement()"><i data-lucide="plus"></i> 发布公告</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>编号</th><th>场馆</th><th>标题/内容</th><th>生效-失效</th><th class="text-center">小程序</th><th class="text-center">置顶</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="annTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="annPag"></div>
+    </div>
+  </div>
+</div>
+`;
+
+renderVenues();
+renderCourts();
+renderAnnouncements();
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

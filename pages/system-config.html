@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统基础配置 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('system-config', '系统基础配置');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var currentTab = 'params';
+var currentDictId = 'D001';
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+/* ========== 数据 ========== */
+var CONFIGS = MOCK_EXT.systemConfigs.map(function(c){ return Object.assign({}, c); });
+var GROUP_ORDER = ['预约参数','收银参数','库存参数','财务参数','系统参数'];
+var GROUP_ICONS = {'预约参数':'calendar-clock','收银参数':'banknote','库存参数':'archive','财务参数':'scale','系统参数':'settings'};
+
+var DICTS = MOCK_EXT.dicts.map(function(d){
+  return {
+    id:d.id, type:d.type, code:d.code, status:d.status,
+    items:d.items.map(function(name, i){ return {name:name, enabled:true, order:i}; })
+  };
+});
+
+var MESSAGES = MOCK_EXT.messageConfigs.map(function(m){ return Object.assign({}, m); });
+
+/* ========== Tab ========== */
+function switchTab(name){
+  currentTab = name;
+  ['params','dict','messages'].forEach(function(k){
+    var btn = document.getElementById('tabbtn-' + k);
+    var panel = document.getElementById('tab-' + k);
+    if(!btn || !panel) return;
+    btn.className = 'tab' + (k === name ? ' active' : '');
+    panel.style.display = k === name ? '' : 'none';
+  });
+  if(name === 'params') renderParams();
+  else if(name === 'dict'){ renderDictTypes(); renderDictItems(); }
+  else renderMessages();
+}
+
+/* ========== 系统与业务参数 ========== */
+function renderParams(){
+  var el = document.getElementById('param-list');
+  if(!el) return;
+  var html = '';
+  GROUP_ORDER.forEach(function(group){
+    var list = CONFIGS.filter(function(c){ return c.group === group; });
+    if(!list.length) return;
+    var rows = list.map(function(c){
+      return '<tr>' +
+        '<td><div class="font-medium">' + esc(c.label) + '</div><div class="mono text-muted" style="font-size:12px">' + esc(c.key) + '</div></td>' +
+        '<td><span class="font-medium">' + esc(c.value) + '</span>' + (c.unit ? ' <span class="text-muted" style="font-size:12px">' + esc(c.unit) + '</span>' : '') + '</td>' +
+        '<td>' + (c.unit ? esc(c.unit) : '<span class="text-muted">—</span>') + '</td>' +
+        '<td class="text-muted" style="font-size:13px">' + (c.desc ? esc(c.desc) : '—') + '</td>' +
+        '<td class="actions"><button class="btn btn-default btn-sm" onclick="openParamForm(\'' + esc(c.key) + '\')">编辑</button></td>' +
+      '</tr>';
+    }).join('');
+    html += '<div class="card mb-16">' +
+      '<div class="card-header"><div class="card-title" style="display:flex;align-items:center;gap:8px;font-size:15px">' +
+        '<i data-lucide="' + (GROUP_ICONS[group] || 'settings') + '" style="width:16px;height:16px;color:var(--primary)"></i>' + esc(group) + '</div>' +
+        '<span class="text-muted" style="font-size:12px">' + list.length + ' 项参数</span></div>' +
+      '<div class="card-body" style="padding:0"><div class="table-wrap"><table class="data-table"><thead><tr>' +
+        '<th>参数名称</th><th>当前值</th><th>单位</th><th>说明</th><th>操作</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
+    '</div>';
+  });
+  html += '<div class="card" style="border-color:var(--primary);background:var(--primary-bg)">' +
+    '<div class="card-body" style="padding:12px 20px;font-size:13px;color:var(--text-2);line-height:1.9">' +
+      '参数调整无需修改代码：保存后即时生效并写入配置变更日志；涉及金额、税额、权限的参数建议在业务低峰期调整，调整前的历史单据按原参数留存。' +
+    '</div></div>';
+  el.innerHTML = html;
+  refreshIcons();
+}
+function openParamForm(key){
+  var c = CONFIGS.filter(function(x){ return x.key === key; })[0];
+  if(!c) return;
+  var isBool = c.value === '是' || c.value === '否';
+  var valueField = isBool
+    ? '<select class="form-select" id="param-value-select"><option value="是"' + (c.value === '是' ? ' selected' : '') + '>是</option><option value="否"' + (c.value === '否' ? ' selected' : '') + '>否</option></select>'
+    : '<input class="form-input" id="param-value" value="' + esc(c.value) + '" />';
+  activeModal = openModal('<div class="modal">' +
+    '<div class="modal-header"><div class="modal-title">编辑参数</div><div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-item mb-16"><label class="form-label">参数名称</label>' +
+        '<input class="form-input" value="' + esc(c.label) + '" disabled /></div>' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">参数值 <span class="required">*</span></label>' + valueField + '</div>' +
+        '<div class="form-item"><label class="form-label">单位</label>' +
+          '<input class="form-input" value="' + esc(c.unit || '—') + '" disabled /></div>' +
+      '</div>' +
+      '<div class="form-item mb-16"><label class="form-label">说明</label>' +
+        '<input class="form-input" value="' + esc(c.desc || '无') + '" disabled /></div>' +
+      '<div class="card" style="background:var(--warning-bg);border-color:var(--warning)"><div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2)">' +
+        '保存后配置即时生效，并记录「配置变更」日志（操作人、参数键、调整前后值）。' +
+      '</div></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="saveParamForm(\'' + esc(key) + '\')">保存</button></div>' +
+  '</div>');
+}
+function saveParamForm(key){
+  var c = CONFIGS.filter(function(x){ return x.key === key; })[0];
+  if(!c) return;
+  var valueEl = document.getElementById('param-value') || document.getElementById('param-value-select');
+  var value = valueEl ? String(valueEl.value).trim() : '';
+  if(!value){ toast('参数值不能为空', 'error'); return; }
+  var old = c.value;
+  c.value = value;
+  closeActiveModal();
+  renderParams();
+  toast('「' + c.label + '」已更新：' + old + ' → ' + value + '，即时生效', 'success');
+}
+
+/* ========== 字典配置 ========== */
+function dictById(id){ return DICTS.filter(function(d){ return d.id === id; })[0]; }
+function renderDictTypes(){
+  var el = document.getElementById('dict-types');
+  if(!el) return;
+  el.innerHTML = DICTS.map(function(d){
+    var active = d.id === currentDictId;
+    return '<div onclick="selectDict(\'' + d.id + '\')" style="padding:10px 12px;border-radius:6px;cursor:pointer;margin-bottom:4px;' +
+      (active ? 'background:var(--primary-bg)' : '') + '">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+        '<span class="font-medium" style="font-size:13px;' + (active ? 'color:var(--primary)' : '') + '">' + esc(d.type) + '</span>' +
+        '<span class="tag ' + (d.status === '启用' ? 'tag-green' : 'tag-gray') + '" style="font-size:11px">' + esc(d.status) + '</span>' +
+      '</div>' +
+      '<div class="text-muted mono" style="font-size:11px;margin-top:2px">' + esc(d.code) + ' · ' + d.items.length + ' 项</div>' +
+    '</div>';
+  }).join('');
+}
+function selectDict(id){
+  currentDictId = id;
+  renderDictTypes();
+  renderDictItems();
+}
+function renderDictItems(){
+  var d = dictById(currentDictId);
+  var el = document.getElementById('dict-items');
+  if(!el) return;
+  if(!d){ el.innerHTML = '<div class="empty"><div class="empty-icon">📚</div><div class="empty-text">请选择字典类型</div></div>'; return; }
+  var rows = d.items.map(function(item, i){
+    return '<tr>' +
+      '<td class="text-muted mono">' + (i + 1) + '</td>' +
+      '<td><input class="form-input" value="' + esc(item.name) + '" style="max-width:260px;padding:5px 10px" onchange="renameDictItem(' + i + ', this.value)" /></td>' +
+      '<td><div class="flex items-center gap-8">' +
+        '<label class="switch"><input type="checkbox" ' + (item.enabled ? 'checked' : '') + ' onchange="toggleDictItem(' + i + ', this.checked)"><span class="switch-slider"></span></label>' +
+        '<span class="tag ' + (item.enabled ? 'tag-green' : 'tag-gray') + '">' + (item.enabled ? '启用' : '停用') + '</span>' +
+      '</div></td>' +
+      '<td class="actions">' +
+        '<button class="btn btn-ghost btn-sm" ' + (i === 0 ? 'disabled' : '') + ' onclick="moveDictItem(' + i + ', -1)">上移</button>' +
+        '<button class="btn btn-ghost btn-sm" ' + (i === d.items.length - 1 ? 'disabled' : '') + ' onclick="moveDictItem(' + i + ', 1)">下移</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="deleteDictItem(' + i + ')">删除</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML = '<div class="card">' +
+      '<div class="card-header"><div>' +
+        '<div class="card-title" style="font-size:15px">' + esc(d.type) + '</div>' +
+        '<div class="mono text-muted" style="font-size:12px;margin-top:2px">字典编码：' + esc(d.code) + '</div>' +
+      '</div>' +
+      '<div class="flex items-center gap-8">' +
+        '<span class="text-muted" style="font-size:12px">类型状态</span>' +
+        '<label class="switch"><input type="checkbox" ' + (d.status === '启用' ? 'checked' : '') + ' onchange="toggleDictType(\'' + d.id + '\', this.checked)"><span class="switch-slider"></span></label>' +
+      '</div></div>' +
+      '<div class="card-body">' +
+        '<div class="toolbar">' +
+          '<input class="form-input" id="dict-new-item" placeholder="新增字典项名称" style="min-width:220px" />' +
+          '<button class="btn btn-primary btn-sm" onclick="addDictItem()"><i data-lucide="plus" style="width:14px"></i>新增字典项</button>' +
+          '<div class="spacer"></div>' +
+          '<span class="text-muted" style="font-size:12px">停用的字典项不再出现在新单据下拉中，历史单据保持原值</span>' +
+        '</div>' +
+        '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+          '<th style="width:70px">排序</th><th>字典项</th><th>状态</th><th>操作</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '</div>' +
+    '</div>';
+  refreshIcons();
+}
+function toggleDictType(id, checked){
+  var d = dictById(id);
+  if(!d) return;
+  d.status = checked ? '启用' : '停用';
+  renderDictTypes();
+  renderDictItems();
+  toast('字典「' + d.type + '」已' + d.status, checked ? 'success' : 'info');
+}
+function addDictItem(){
+  var d = dictById(currentDictId);
+  if(!d) return;
+  var name = trimVal('dict-new-item');
+  if(!name){ toast('请输入字典项名称', 'error'); return; }
+  if(d.items.some(function(x){ return x.name === name; })){ toast('该字典项已存在', 'warning'); return; }
+  d.items.push({name:name, enabled:true, order:d.items.length});
+  renderDictTypes();
+  renderDictItems();
+  toast('字典项「' + name + '」已新增', 'success');
+}
+function renameDictItem(index, value){
+  var d = dictById(currentDictId);
+  if(!d || !d.items[index]) return;
+  var name = String(value || '').trim();
+  if(!name){ toast('字典项名称不能为空', 'error'); renderDictItems(); return; }
+  if(d.items.some(function(x, i){ return i !== index && x.name === name; })){ toast('字典项名称重复', 'warning'); renderDictItems(); return; }
+  d.items[index].name = name;
+  toast('字典项已更新为「' + name + '」', 'success');
+}
+function toggleDictItem(index, checked){
+  var d = dictById(currentDictId);
+  if(!d || !d.items[index]) return;
+  d.items[index].enabled = checked;
+  renderDictItems();
+  toast('字典项「' + d.items[index].name + '」已' + (checked ? '启用' : '停用'), checked ? 'success' : 'info');
+}
+function moveDictItem(index, dir){
+  var d = dictById(currentDictId);
+  if(!d) return;
+  var target = index + dir;
+  if(target < 0 || target >= d.items.length) return;
+  var tmp = d.items[index];
+  d.items[index] = d.items[target];
+  d.items[target] = tmp;
+  d.items.forEach(function(x, i){ x.order = i; });
+  renderDictItems();
+  toast('字典项排序已调整', 'success');
+}
+function deleteDictItem(index){
+  var d = dictById(currentDictId);
+  if(!d || !d.items[index]) return;
+  var item = d.items[index];
+  confirmDialog('确认删除字典项「' + esc(item.name) + '」？历史单据已使用的值不受影响。', function(){
+    d.items.splice(index, 1);
+    d.items.forEach(function(x, i){ x.order = i; });
+    renderDictTypes();
+    renderDictItems();
+    toast('字典项「' + item.name + '」已删除', 'warning');
+  });
+}
+
+/* ========== 消息配置 ========== */
+function renderMessages(){
+  var el = document.getElementById('message-list');
+  if(!el) return;
+  var rows = MESSAGES.map(function(m){
+    return '<tr>' +
+      '<td><div class="font-medium">' + esc(m.scene) + '</div><div class="mono text-muted" style="font-size:12px">' + esc(m.id) + '</div></td>' +
+      '<td>' + esc(m.wechat) + '</td>' +
+      '<td>' + esc(m.sms) + '</td>' +
+      '<td>' + esc(m.station) + '</td>' +
+      '<td><div class="flex items-center gap-8">' +
+        '<label class="switch"><input type="checkbox" ' + (m.status === '启用' ? 'checked' : '') + ' onchange="toggleMessage(\'' + m.id + '\', this.checked)"><span class="switch-slider"></span></label>' +
+        '<span class="tag ' + (m.status === '启用' ? 'tag-green' : 'tag-gray') + '">' + esc(m.status) + '</span>' +
+      '</div></td>' +
+      '<td class="actions"><button class="btn btn-default btn-sm" onclick="openMessageForm(\'' + m.id + '\')">编辑</button></td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML = '<div class="card mb-16">' +
+      '<div class="card-header"><div class="card-title">消息场景配置</div>' +
+        '<span class="text-muted" style="font-size:13px">关闭后该场景不再通过对应渠道发送，不影响其他渠道</span></div>' +
+      '<div class="card-body" style="padding:0"><div class="table-wrap"><table class="data-table"><thead><tr>' +
+        '<th>场景</th><th>小程序消息</th><th>短信模板</th><th>站内提示</th><th>状态</th><th>操作</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
+    '</div>' +
+    '<div class="card" style="border-color:var(--primary);background:var(--primary-bg)">' +
+      '<div class="card-body" style="padding:12px 20px;font-size:13px;color:var(--text-2);line-height:1.9">' +
+        '消息模板内容支持变量占位（如 {会员名}、{场馆名称}、{预约时间}），发送前按业务数据自动填充；短信模板须在短信服务商侧完成报备。' +
+      '</div>' +
+    '</div>';
+}
+function toggleMessage(id, checked){
+  var m = MESSAGES.filter(function(x){ return x.id === id; })[0];
+  if(!m) return;
+  m.status = checked ? '启用' : '停用';
+  renderMessages();
+  toast('「' + m.scene + '」消息场景已' + m.status, checked ? 'success' : 'info');
+}
+function openMessageForm(id){
+  var m = MESSAGES.filter(function(x){ return x.id === id; })[0];
+  if(!m) return;
+  activeModal = openModal('<div class="modal modal-lg">' +
+    '<div class="modal-header"><div class="modal-title">编辑消息配置 · ' + esc(m.scene) + '</div>' +
+      '<div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-item mb-16"><label class="form-label">场景名称</label>' +
+        '<input class="form-input" value="' + esc(m.scene) + '" disabled /></div>' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">小程序消息模板</label>' +
+          '<input class="form-input" id="msg-wechat" value="' + esc(m.wechat) + '" placeholder="填 - 表示不发送" /></div>' +
+        '<div class="form-item"><label class="form-label">短信模板</label>' +
+          '<input class="form-input" id="msg-sms" value="' + esc(m.sms) + '" placeholder="填 - 表示不发送" /></div>' +
+      '</div>' +
+      '<div class="form-item mb-16"><label class="form-label">站内提示</label>' +
+        '<input class="form-input" id="msg-station" value="' + esc(m.station) + '" /></div>' +
+      '<div class="form-item"><label class="form-label">状态</label>' +
+        '<select class="form-select" id="msg-status"><option value="启用"' + (m.status === '启用' ? ' selected' : '') + '>启用</option>' +
+        '<option value="停用"' + (m.status === '停用' ? ' selected' : '') + '>停用</option></select></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="saveMessageForm(\'' + m.id + '\')">保存</button></div>' +
+  '</div>');
+}
+function saveMessageForm(id){
+  var m = MESSAGES.filter(function(x){ return x.id === id; })[0];
+  if(!m) return;
+  var wechat = trimVal('msg-wechat');
+  var sms = trimVal('msg-sms');
+  var station = trimVal('msg-station');
+  var status = document.getElementById('msg-status').value;
+  if(!wechat || !sms || !station){ toast('消息模板与站内提示不能为空（不发送请填 -）', 'error'); return; }
+  m.wechat = wechat; m.sms = sms; m.station = station; m.status = status;
+  closeActiveModal();
+  renderMessages();
+  toast('「' + m.scene + '」消息配置已保存', 'success');
+}
+
+/* ========== 页面渲染 ========== */
+document.getElementById('page-content').innerHTML =
+  '<div class="page-header"><div class="page-title">系统基础配置</div>' +
+    '<div class="page-desc">集中维护业务参数、数据字典与消息模板，调整即时生效，无需修改程序代码。</div></div>' +
+
+  '<div class="tabs">' +
+    '<div class="tab active" id="tabbtn-params" onclick="switchTab(\'params\')">系统与业务参数</div>' +
+    '<div class="tab" id="tabbtn-dict" onclick="switchTab(\'dict\')">字典配置</div>' +
+    '<div class="tab" id="tabbtn-messages" onclick="switchTab(\'messages\')">消息配置</div>' +
+  '</div>' +
+
+  '<div id="tab-params"><div id="param-list"></div></div>' +
+
+  '<div id="tab-dict" style="display:none">' +
+    '<div style="display:flex;gap:16px;align-items:flex-start">' +
+      '<div class="card" style="width:300px;flex-shrink:0">' +
+        '<div class="card-header"><div class="card-title" style="font-size:15px">字典类型</div>' +
+          '<span class="tag tag-blue">' + DICTS.length + ' 类</span></div>' +
+        '<div class="card-body" style="padding:8px" id="dict-types"></div>' +
+        '<div class="card-body" style="padding:12px 16px;border-top:1px solid var(--border-light);font-size:12px;color:var(--text-3)">' +
+          '字典用于统一场地、客户、订单、支付、发票、收支、商品等下拉选项，新增类型需开发配合建立存储表。' +
+        '</div>' +
+      '</div>' +
+      '<div style="flex:1;min-width:0" id="dict-items"></div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div id="tab-messages" style="display:none"><div id="message-list"></div></div>';
+
+renderParams();
+renderDictTypes();
+renderDictItems();
+renderMessages();
+refreshIcons();
+</script>
+</body>
+</html>

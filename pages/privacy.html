@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隐私数据安全管控 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('privacy', '隐私数据安全管控');
+
+/* ========== 基础工具 ========== */
+var activeModal = null;
+var currentTab = 'mask';
+var exportLimit = 500;
+var secondAuth = true;
+var nextPrivacyNo = 7;
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){ if(activeModal){ closeModal(activeModal); activeModal = null; } }
+function esc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trimVal(id){ var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+/* ========== 数据 ========== */
+var PRIVACY_FIELDS = MOCK_EXT.privacyFields.map(function(f){
+  return Object.assign({}, f, { status:'启用' });
+});
+var MODULES = ['会员','客商','发票','订单','员工','财务'];
+var RULES = ['保留姓+*','138****1234','前6后4其余*','前6后4','部分掩码','企业名称完整展示'];
+var DECRYPT_ROLES = ['会员管理员','财务主管','财务','系统管理员','运营主管'];
+
+var ROLE_SCOPES = [
+  {role:'前台操作员', scope:'本场馆', venue:'仅所属场馆', fields:'会员姓名、手机号（脱敏）、订单金额'},
+  {role:'场馆负责人', scope:'本场馆', venue:'所属场馆', fields:'脱敏字段 + 本场馆经营报表'},
+  {role:'财务角色', scope:'全部场馆', venue:'全部场馆', fields:'客商联系人、税号（脱敏）、发票信息'},
+  {role:'会员管理员', scope:'全部场馆', venue:'全部场馆', fields:'会员姓名、手机号（可解密）'},
+  {role:'系统管理员', scope:'全部场馆', venue:'全部组织', fields:'全部字段（解密需二次验证）'}
+];
+
+var EXPORT_RECORDS = [
+  {time:'2026-11-05 10:42', user:'刘芳', object:'商品列表', count:126, auth:'否'},
+  {time:'2026-11-04 16:20', user:'王磊', object:'会员明细', count:800, auth:'是'},
+  {time:'2026-11-03 09:15', user:'张敏', object:'预约订单', count:468, auth:'否'},
+  {time:'2026-10-31 14:05', user:'admin', object:'操作日志', count:1200, auth:'是'},
+  {time:'2026-10-30 11:30', user:'王磊', object:'应收明细', count:260, auth:'否'}
+];
+
+/* ========== Tab ========== */
+function switchTab(name){
+  currentTab = name;
+  ['mask','permission','export'].forEach(function(k){
+    var btn = document.getElementById('tabbtn-' + k);
+    var panel = document.getElementById('tab-' + k);
+    if(!btn || !panel) return;
+    btn.className = 'tab' + (k === name ? ' active' : '');
+    panel.style.display = k === name ? '' : 'none';
+  });
+}
+
+/* ========== 脱敏字段配置 ========== */
+function renderPrivacyTable(){
+  var el = document.getElementById('privacy-table');
+  if(!el) return;
+  var rows = PRIVACY_FIELDS.map(function(f){
+    return '<tr>' +
+      '<td><span class="tag tag-blue">' + esc(f.module) + '</span></td>' +
+      '<td class="font-medium">' + esc(f.field) + '</td>' +
+      '<td><span class="mono" style="font-size:13px">' + esc(f.rule) + '</span></td>' +
+      '<td>' + esc(f.decrypt) + '</td>' +
+      '<td><div class="flex items-center gap-8">' +
+        '<label class="switch"><input type="checkbox" ' + (f.status === '启用' ? 'checked' : '') + ' onchange="togglePrivacyField(\'' + f.id + '\', this.checked)"><span class="switch-slider"></span></label>' +
+        '<span class="tag ' + (f.status === '启用' ? 'tag-green' : 'tag-gray') + '">' + f.status + '</span>' +
+      '</div></td>' +
+      '<td class="actions"><button class="btn btn-default btn-sm" onclick="openPrivacyForm(\'' + f.id + '\')">编辑</button></td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th>模块</th><th>字段</th><th>脱敏规则</th><th>解密权限角色</th><th>状态</th><th>操作</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<div class="form-hint" style="margin-top:10px">启用后，列表、详情、导出默认按配置规则展示脱敏值；具备解密权限的角色在查看单条记录时可解密，解密行为记录审计日志。</div>';
+}
+function togglePrivacyField(id, checked){
+  var f = PRIVACY_FIELDS.filter(function(x){ return x.id === id; })[0];
+  if(!f) return;
+  f.status = checked ? '启用' : '停用';
+  renderPrivacyTable();
+  toast('「' + f.module + ' / ' + f.field + '」脱敏规则已' + f.status, checked ? 'success' : 'info');
+}
+function openPrivacyForm(id){
+  var f = PRIVACY_FIELDS.filter(function(x){ return x.id === id; })[0];
+  var data = f || {module:'会员', field:'', rule:'保留姓+*', decrypt:'会员管理员'};
+  var moduleOptions = MODULES.map(function(m){
+    return '<option value="' + esc(m) + '"' + (m === data.module ? ' selected' : '') + '>' + esc(m) + '</option>';
+  }).join('');
+  var ruleOptions = RULES.map(function(r){
+    return '<option value="' + esc(r) + '"' + (r === data.rule ? ' selected' : '') + '>' + esc(r) + '</option>';
+  }).join('');
+  var roleOptions = DECRYPT_ROLES.map(function(r){
+    return '<option value="' + esc(r) + '"' + (r === data.decrypt ? ' selected' : '') + '>' + esc(r) + '</option>';
+  }).join('');
+  activeModal = openModal('<div class="modal">' +
+    '<div class="modal-header"><div class="modal-title">' + (f ? '编辑脱敏字段' : '新增脱敏字段') + '</div>' +
+      '<div class="modal-close" onclick="closeActiveModal()">×</div></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">所属模块 <span class="required">*</span></label>' +
+          '<select class="form-select" id="pv-module">' + moduleOptions + '</select></div>' +
+        '<div class="form-item"><label class="form-label">字段名称 <span class="required">*</span></label>' +
+          '<input class="form-input" id="pv-field" value="' + esc(data.field) + '" placeholder="如：会员手机号" /></div>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<div class="form-item"><label class="form-label">脱敏规则 <span class="required">*</span></label>' +
+          '<select class="form-select" id="pv-rule">' + ruleOptions + '</select></div>' +
+        '<div class="form-item"><label class="form-label">解密权限角色 <span class="required">*</span></label>' +
+          '<select class="form-select" id="pv-decrypt">' + roleOptions + '</select></div>' +
+      '</div>' +
+      '<div class="card" style="background:var(--primary-bg);border-color:var(--primary)"><div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2)">' +
+        '脱敏规则示例：保留姓+*（陈*）、138****1234、前6后4其余*（360102********1234）；仅解密权限角色可在单条查看时解密，批量导出始终脱敏。' +
+      '</div></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-default" onclick="closeActiveModal()">取消</button>' +
+      '<button class="btn btn-primary" onclick="savePrivacyForm(\'' + (f ? f.id : '') + '\')">保存</button></div>' +
+  '</div>');
+}
+function savePrivacyForm(id){
+  var module = document.getElementById('pv-module').value;
+  var field = trimVal('pv-field');
+  var rule = document.getElementById('pv-rule').value;
+  var decrypt = document.getElementById('pv-decrypt').value;
+  if(!field){ toast('请填写字段名称', 'error'); return; }
+  if(id){
+    var f = PRIVACY_FIELDS.filter(function(x){ return x.id === id; })[0];
+    if(f){ f.module = module; f.field = field; f.rule = rule; f.decrypt = decrypt; }
+    toast('脱敏字段「' + field + '」已更新', 'success');
+  }else{
+    var dup = PRIVACY_FIELDS.some(function(x){ return x.module === module && x.field === field; });
+    if(dup){ toast('该模块下已存在同名字段的脱敏规则', 'warning'); return; }
+    PRIVACY_FIELDS.push({id:'PF0' + (nextPrivacyNo++), module:module, field:field, rule:rule, decrypt:decrypt, status:'启用'});
+    toast('脱敏字段「' + field + '」已新增', 'success');
+  }
+  closeActiveModal();
+  renderPrivacyTable();
+}
+
+/* ========== 导出管控 ========== */
+function saveExportConfig(){
+  var limit = parseInt(trimVal('export-limit'), 10);
+  if(isNaN(limit) || limit < 1 || limit > 10000){ toast('单次导出条数上限需在 1-10000 之间', 'error'); return; }
+  exportLimit = limit;
+  toast('导出管控配置已保存：单次上限 ' + exportLimit + ' 条，超阈值二次授权' + (secondAuth ? '已开启' : '已关闭'), 'success');
+}
+function toggleSecondAuth(checked){
+  secondAuth = checked;
+  toast('超阈值二次授权已' + (checked ? '开启' : '关闭'), checked ? 'success' : 'warning');
+}
+function renderExportRecords(){
+  var el = document.getElementById('export-records');
+  if(!el) return;
+  var rows = EXPORT_RECORDS.map(function(r){
+    return '<tr>' +
+      '<td class="mono" style="font-size:13px">' + esc(r.time) + '</td>' +
+      '<td>' + esc(r.user) + '</td>' +
+      '<td>' + esc(r.object) + '</td>' +
+      '<td>' + r.count + ' 条</td>' +
+      '<td>' + (r.auth === '是' ? '<span class="tag tag-orange">已二次授权</span>' : '<span class="tag tag-gray">未触发</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th>时间</th><th>操作人</th><th>导出对象</th><th>条数</th><th>是否二次授权</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+/* ========== 页面渲染 ========== */
+document.getElementById('page-content').innerHTML =
+  '<div class="page-header"><div class="page-title">隐私数据安全管控</div>' +
+    '<div class="page-desc">遵循最小必要原则，对客户隐私字段脱敏展示、按组织与场馆隔离数据、并对批量导出实施管控与追溯。</div></div>' +
+
+  '<div class="tabs">' +
+    '<div class="tab active" id="tabbtn-mask" onclick="switchTab(\'mask\')">脱敏字段配置</div>' +
+    '<div class="tab" id="tabbtn-permission" onclick="switchTab(\'permission\')">数据权限</div>' +
+    '<div class="tab" id="tabbtn-export" onclick="switchTab(\'export\')">导出管控</div>' +
+  '</div>' +
+
+  '<div id="tab-mask">' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">脱敏字段</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="openPrivacyForm()"><i data-lucide="plus" style="width:14px"></i>新增脱敏字段</button></div>' +
+      '<div class="card-body"><div id="privacy-table"></div></div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div id="tab-permission" style="display:none">' +
+    '<div class="card mb-16">' +
+      '<div class="card-header"><div class="card-title">组织与场馆数据隔离</div><span class="tag tag-blue">默认最小可见</span></div>' +
+      '<div class="card-body" style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+        '· 数据按「公司 → 部门 → 场馆」组织层级隔离，前台、库管等操作员默认仅可见本人所属场馆数据；<br>' +
+        '· 跨场馆查询需通过角色授予「指定场馆」或「全部场馆」数据范围，财务汇总、系统管理员等管理岗按需开放；<br>' +
+        '· 会员资产、订单、发票等数据不因跨场馆授权而合并展示，跨场馆统计仅提供汇总口径，不提供他场馆明细导出。' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">各角色可见范围</div>' +
+        '<span class="text-muted" style="font-size:13px">范围与角色配置保持一致</span></div>' +
+      '<div class="card-body" style="padding:0">' +
+        '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+          '<th>角色</th><th>数据范围</th><th>可见组织 / 场馆</th><th>可见字段</th>' +
+        '</tr></thead><tbody>' +
+        ROLE_SCOPES.map(function(r){
+          return '<tr><td class="font-medium">' + esc(r.role) + '</td>' +
+            '<td><span class="tag ' + (r.scope === '全部场馆' ? 'tag-purple' : 'tag-blue') + '">' + esc(r.scope) + '</span></td>' +
+            '<td>' + esc(r.venue) + '</td><td class="text-muted">' + esc(r.fields) + '</td></tr>';
+        }).join('') +
+        '</tbody></table></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div id="tab-export" style="display:none">' +
+    '<div class="card mb-16">' +
+      '<div class="card-header"><div class="card-title">导出管控配置</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="saveExportConfig()">保存配置</button></div>' +
+      '<div class="card-body">' +
+        '<div class="form-row">' +
+          '<div class="form-item"><label class="form-label">单次导出条数上限</label>' +
+            '<div class="input-group"><input class="form-input" id="export-limit" type="number" min="1" max="10000" value="' + exportLimit + '" /><span class="btn btn-default" style="cursor:default">条</span></div>' +
+            '<div class="form-hint">超过上限时需拆分导出或申请临时授权。</div></div>' +
+          '<div class="form-item"><label class="form-label">超阈值二次授权</label>' +
+            '<div class="flex items-center gap-8" style="height:38px">' +
+              '<label class="switch"><input type="checkbox" ' + (secondAuth ? 'checked' : '') + ' onchange="toggleSecondAuth(this.checked)"><span class="switch-slider"></span></label>' +
+              '<span class="text-muted" style="font-size:13px">开启后，超过上限的导出需管理员审批确认</span>' +
+            '</div></div>' +
+        '</div>' +
+        '<div class="card" style="background:var(--warning-bg);border-color:var(--warning)"><div class="card-body" style="padding:10px 16px;font-size:13px;color:var(--text-2)">' +
+          '导出文件不做加密与水印处理，但每次导出均记录操作人、对象、条数与授权状态，可按时间追溯；请勿将导出文件外发至无关人员。' +
+        '</div></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">导出行为记录</div>' +
+        '<span class="tag tag-purple">可追溯</span></div>' +
+      '<div class="card-body"><div id="export-records"></div></div>' +
+    '</div>' +
+  '</div>' +
+
+  '<div class="card mt-16" style="border-color:var(--primary);background:var(--primary-bg)">' +
+    '<div class="card-header" style="border-bottom-color:rgba(22,119,255,.15)"><div class="card-title">合规说明</div>' +
+      '<span class="tag tag-blue">最小必要原则</span></div>' +
+    '<div class="card-body" style="font-size:13px;color:var(--text-2);line-height:1.9">' +
+      '· 仅采集业务必需信息，遵循最小必要原则；不保存银行卡号、支付密码、短信验证码等敏感支付要素；<br>' +
+      '· 支付由兴业银行兴E付完成，系统仅保存支付结果、交易流水号与对账金额，不接触客户支付凭据；<br>' +
+      '· 导出文件不加密、不加水印，但所有导出行为均记录操作人、对象、条数与授权状态，可追溯至具体操作。' +
+    '</div>' +
+  '</div>';
+
+renderPrivacyTable();
+renderExportRecords();
+refreshIcons();
+</script>
+</body>
+</html>

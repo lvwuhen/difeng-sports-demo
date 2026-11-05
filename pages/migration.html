@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>旧系统数据迁移 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('migration', '旧系统数据迁移');
+
+/* ========== 工具 ========== */
+var TODAY = '2026-11-05';
+var activeModal = null;
+var signedOff = false;
+var timers = {};
+
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function nowStr(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2, '0'); };
+  return TODAY + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function fmt(n){ return Number(n).toLocaleString('zh-CN'); }
+function getBatch(id){
+  return BATCHES.filter(function(b){ return b.id === id; })[0];
+}
+
+/* ========== 数据 ========== */
+var BATCHES = MOCK_EXT.migrationBatches.map(function(b){
+  var copy = Object.assign({}, b);
+  copy.progress = null;
+  copy.startMigrated = copy.migrated;
+  return copy;
+});
+
+var STATUS_STYLE = {'待执行':'tag-gray', '迁移中':'tag-blue', '差异待处理':'tag-orange', '已核对':'tag-green'};
+
+var DIFFS = {
+  MG03: [
+    {type:'重复客户', count:2, detail:'「厦门市体育发展有限公司」与「厦门体育发展有限公司」名称近似且税号相同，旧系统未做唯一约束', suggestion:'按税号合并为主档，保留创建时间较早的客商编码，另一条标记为「合并停用」并保留映射关系'},
+    {type:'编码冲突', count:3, detail:'旧系统客商编码 C00012 / C00056 / C00109 与新系统已有编码重复，直接导入会覆盖现有客商', suggestion:'按「旧系统前缀 + 原编码」重新映射，新系统编码保持不变，映射表归档备查'},
+    {type:'缺失关联', count:7, detail:'7 家客商缺少银行账户或发票抬头信息，迁移后无法发起付款与开票', suggestion:'迁移后由财务在客商主数据补全银行账户与开票资料，补全前不参与付款与开票流程'}
+  ],
+  MG04: [
+    {type:'异常余额', count:12, detail:'12 张储值卡余额为负数或超出充值上限（如 -35 元、12,000 元），与历史流水不符', suggestion:'按历史充值/消费流水重算余额，重算不一致的卡片先冻结，由会员主管人工确认后调整'},
+    {type:'缺失关联', count:20, detail:'20 条会员资产（储值/次卡）无对应会员档案，疑似旧系统删除会员后残留', suggestion:'归入「待认领资产」临时池，客户认领后补关联；30 天未认领按无主资产处理并留痕'},
+    {type:'编码冲突', count:16, detail:'会员卡号与次卡号在旧系统内部重复，无法唯一映射到新系统卡号', suggestion:'按「会员手机号 + 卡种 + 有效期」生成新卡号，旧卡号写入备注供追溯查询'}
+  ]
+};
+
+/* ========== 统计 ========== */
+function computeStats(){
+  var total = 0, migrated = 0, done = 0;
+  BATCHES.forEach(function(b){
+    total += b.total;
+    migrated += b.migrated;
+    if(b.status === '已核对') done++;
+  });
+  var diff = total - migrated;
+  var rate = total ? (migrated / total * 100).toFixed(1) : '0.0';
+  return {
+    objects: BATCHES.length,
+    total: total,
+    migrated: migrated,
+    diff: diff,
+    rate: rate,
+    done: done,
+    pending: BATCHES.length - done
+  };
+}
+
+function renderStats(){
+  var s = computeStats();
+  var diffParts = BATCHES.filter(function(b){ return b.total - b.migrated > 0; })
+    .map(function(b){ return b.object + ' ' + fmt(b.total - b.migrated); });
+  var diffText = diffParts.length ? diffParts.join(' · ') : '暂无差异记录';
+  var el = document.getElementById('mig-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">迁移对象总数 <span class="stat-icon blue"><i data-lucide="boxes"></i></span></div>
+      <div class="stat-value">${s.objects}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 个批次</span></div>
+      <div class="stat-trend"><i data-lucide="list" style="width:14px;color:var(--text-3)"></i>场馆场地 / 商品 / 客商 / 会员 / 订单 / 库存</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">已迁移记录 <span class="stat-icon green"><i data-lucide="database"></i></span></div>
+      <div class="stat-value">${fmt(s.migrated)}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend up"><i data-lucide="check-circle-2" style="width:14px"></i>已核对批次 ${s.done} / ${s.objects}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">差异记录 <span class="stat-icon orange"><i data-lucide="alert-triangle"></i></span></div>
+      <div class="stat-value">${fmt(s.diff)}<span style="font-size:14px;font-weight:400;color:var(--text-3)"> 条</span></div>
+      <div class="stat-trend ${s.diff > 0 ? 'down' : 'up'}"><i data-lucide="${s.diff > 0 ? 'flag' : 'check'}" style="width:14px"></i>${diffText}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">完成率 <span class="stat-icon cyan"><i data-lucide="percent"></i></span></div>
+      <div class="stat-value">${s.rate}%</div>
+      <div class="stat-trend"><i data-lucide="loader-2" style="width:14px;color:var(--info)"></i>还剩 ${s.pending} 个批次未核对</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 批次表 ========== */
+function filteredBatches(){
+  var kwEl = document.getElementById('mig-kw');
+  var stEl = document.getElementById('mig-status');
+  var kw = (kwEl ? kwEl.value : '').trim();
+  var st = stEl ? stEl.value : '';
+  return BATCHES.filter(function(b){
+    if(st && b.status !== st) return false;
+    if(kw && (b.id.indexOf(kw) < 0 && b.object.indexOf(kw) < 0)) return false;
+    return true;
+  });
+}
+
+function actionButtons(b){
+  var diff = b.total - b.migrated;
+  var html = '';
+  if(b.status === '待执行' || b.status === '差异待处理'){
+    html += `<button class="btn btn-primary btn-sm" onclick="runMigration('${b.id}')"><i data-lucide="play"></i>执行迁移</button>`;
+  }
+  if(b.status === '迁移中'){
+    html += `<button class="btn btn-default btn-sm" disabled><i data-lucide="loader-2"></i>迁移中…</button>`;
+  }
+  if(diff > 0){
+    html += `<button class="btn btn-default btn-sm" onclick="viewDiff('${b.id}')"><i data-lucide="git-compare"></i>查看差异</button>`;
+  }
+  if(b.status === '差异待处理' || b.status === '已核对'){
+    html += `<button class="btn btn-default btn-sm" onclick="openRerun('${b.id}')"><i data-lucide="rotate-ccw"></i>重跑</button>`;
+  }
+  if(b.status === '已核对'){
+    html += `<button class="btn btn-ghost btn-sm" onclick="downloadReport('${b.id}')"><i data-lucide="download"></i>核对报告</button>`;
+  }
+  return html || '<span class="text-muted" style="font-size:12px">—</span>';
+}
+
+function renderTable(){
+  var list = filteredBatches();
+  var rows = document.getElementById('mig-rows');
+  if(rows){
+    if(!list.length){
+      rows.innerHTML = `<tr><td colspan="8"><div class="empty">
+        <div class="empty-icon"><i data-lucide="database-import"></i></div>
+        <div class="empty-text">当前筛选条件下暂无迁移批次</div>
+      </div></td></tr>`;
+    } else {
+      rows.innerHTML = list.map(function(b){
+        var diff = b.total - b.migrated;
+        var progress = b.progress || 0;
+        return `<tr>
+          <td class="mono" style="font-size:13px">${b.id}</td>
+          <td class="font-medium">${b.object}</td>
+          <td class="text-right">${fmt(b.total)}</td>
+          <td class="text-right">${fmt(b.migrated)}</td>
+          <td class="text-right ${diff > 0 ? 'text-error' : 'text-muted'}">${fmt(diff)}</td>
+          <td>
+            <span class="tag ${STATUS_STYLE[b.status]}">${b.status}</span>
+            ${b.status === '迁移中' ? `<div class="progress" style="margin-top:8px;width:120px"><div class="progress-bar" style="width:${progress}%"></div></div><div class="text-muted" style="font-size:11px;margin-top:2px">${progress}%</div>` : ''}
+          </td>
+          <td style="font-size:13px;white-space:nowrap">${b.lastTime || '—'}</td>
+          <td><div class="actions" style="flex-wrap:wrap">${actionButtons(b)}</div></td>
+        </tr>`;
+      }).join('');
+    }
+  }
+  var cnt = document.getElementById('mig-count');
+  if(cnt) cnt.textContent = `当前筛选 ${list.length} 个批次`;
+  refreshIcons();
+}
+
+function renderAll(){
+  renderStats();
+  renderTable();
+}
+
+/* ========== 执行迁移 / 重跑 ========== */
+function runMigration(id){
+  var b = getBatch(id);
+  if(!b) return;
+  if(b.status === '迁移中'){ toast('该批次正在迁移中，请等待完成', 'warning'); return; }
+  confirmDialog(`确认执行「${b.object}」批次迁移？迁移期间该业务对象暂停录入，完成后自动进入已核对。`, function(){
+    doMigration(b);
+  });
+}
+
+function doMigration(b, startMsg){
+  b.status = '迁移中';
+  b.progress = 0;
+  b.startMigrated = b.migrated;
+  b.lastTime = nowStr();
+  renderAll();
+  toast(startMsg || `批次 ${b.id} 已开始迁移，正在转换导入…`, 'info');
+  if(timers[b.id]) clearInterval(timers[b.id]);
+  timers[b.id] = setInterval(function(){
+    b.progress = Math.min(100, (b.progress || 0) + 8);
+    b.migrated = Math.round(b.startMigrated + (b.total - b.startMigrated) * (b.progress / 100));
+    if(b.migrated > b.total) b.migrated = b.total;
+    renderAll();
+    if(b.progress >= 100){
+      clearInterval(timers[b.id]);
+      delete timers[b.id];
+      b.status = '已核对';
+      b.migrated = b.total;
+      b.progress = null;
+      b.lastTime = nowStr();
+      renderAll();
+      toast(`批次 ${b.id}「${b.object}」迁移完成，已核对 ${fmt(b.total)} 条`, 'success');
+    }
+  }, 250);
+}
+
+function openRerun(id){
+  var b = getBatch(id);
+  if(!b) return;
+  if(b.status === '迁移中'){ toast('该批次正在迁移中，无法重跑', 'warning'); return; }
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">重跑迁移 · ${b.id}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="card" style="background:var(--warning-bg);border-color:var(--warning);margin-bottom:16px">
+        <div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">
+          重跑会重新执行抽取、转换与导入，按主键覆盖同一条记录，不会产生重复数据；已签认的结果需走变更审批后才能重跑。
+        </div>
+      </div>
+      <div class="form-item" style="margin-bottom:16px">
+        <label class="form-label">业务对象</label>
+        <input class="form-input" value="${b.object}（应迁 ${fmt(b.total)} 条 / 已迁 ${fmt(b.migrated)} 条）" disabled />
+      </div>
+      <div class="form-item" style="margin-bottom:16px">
+        <label class="form-label">重跑范围 <span class="required">*</span></label>
+        <select class="form-select" id="rerun-scope">
+          <option value="">请选择重跑范围</option>
+          <option value="差异记录重跑">差异记录重跑（仅重跑差异与未迁记录）</option>
+          <option value="全量重跑">全量重跑（覆盖该批次全部记录）</option>
+        </select>
+      </div>
+      <div class="form-item">
+        <label class="form-label">重跑原因 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="rerun-reason" placeholder="请说明重跑原因、责任人与处理依据，不少于 4 个字"></textarea>
+      </div>
+      <div class="form-hint">重跑原因将记录到迁移日志，供审计追溯。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="submitRerun('${b.id}')">确认重跑</button>
+    </div>
+  </div>`);
+}
+
+function submitRerun(id){
+  var scopeEl = document.getElementById('rerun-scope');
+  var reasonEl = document.getElementById('rerun-reason');
+  var scope = scopeEl ? scopeEl.value : '';
+  var reason = reasonEl ? reasonEl.value.trim() : '';
+  if(!scope){ toast('请选择重跑范围', 'error'); return; }
+  if(reason.length < 4){ toast('请填写不少于 4 个字的重跑原因', 'error'); return; }
+  var b = getBatch(id);
+  if(!b){ toast('未找到该迁移批次', 'error'); return; }
+  if(b.status === '迁移中'){ toast('该批次正在迁移中，无法重跑', 'warning'); return; }
+  closeActiveModal();
+  doMigration(b, `批次 ${b.id} 已按「${scope}」重新发起，原因已记录`);
+}
+
+/* ========== 查看差异 ========== */
+function viewDiff(id){
+  var b = getBatch(id);
+  if(!b) return;
+  var diff = b.total - b.migrated;
+  if(diff <= 0){ toast('该批次当前无差异记录', 'info'); return; }
+  var rows = DIFFS[id] || [];
+  if(!rows.length){ toast('该批次差异需在差异清单中查看', 'info'); return; }
+  var count = rows.reduce(function(s, r){ return s + r.count; }, 0);
+  var body = rows.map(function(r){
+    return `<tr>
+      <td><span class="tag tag-orange" style="white-space:nowrap">${r.type}</span></td>
+      <td class="text-right">${r.count}</td>
+      <td style="font-size:13px">${r.detail}</td>
+      <td class="text-muted" style="font-size:13px">${r.suggestion}</td>
+    </tr>`;
+  }).join('');
+
+  activeModal = openModal(`<div class="modal modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">差异明细 · ${b.id} ${b.object}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="flex justify-between items-center mb-16" style="flex-wrap:wrap;gap:8px">
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <span class="tag tag-blue">应迁 ${fmt(b.total)} 条</span>
+          <span class="tag tag-green">已迁 ${fmt(b.migrated)} 条</span>
+          <span class="tag tag-red">差异 ${fmt(diff)} 条</span>
+        </div>
+        <span class="text-muted" style="font-size:12px">差异明细合计 ${count} 条</span>
+      </div>
+      <div class="table-wrap" style="border:1px solid var(--border-light);border-radius:8px">
+        <table class="data-table">
+          <thead><tr><th>差异类型</th><th class="text-right">涉及条数</th><th>问题描述</th><th>处理建议</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+      <div class="card mt-16" style="background:var(--warning-bg);border-color:var(--warning)">
+        <div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">
+          <i data-lucide="alert-triangle" style="width:14px;height:14px;vertical-align:middle;color:var(--warning)"></i>
+          差异未处理完成前不得进行核对签认；差异处理需逐条留痕，处理完成后重新执行迁移并复核。
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">关闭</button>
+      <button class="btn btn-primary" onclick="toast('差异清单已导出为 Excel，含处理建议与责任人','success')"><i data-lucide="download"></i>导出差异清单</button>
+    </div>
+  </div>`);
+}
+
+/* ========== 核对报告 / 刷新 / 导出 ========== */
+function downloadReport(id){
+  var b = getBatch(id);
+  if(!b) return;
+  toast(`批次 ${b.id}「${b.object}」核对报告已开始下载（Excel）`, 'success');
+}
+function refreshPage(){
+  renderAll();
+  toast('迁移进度与统计已刷新', 'info');
+}
+function exportLedger(){
+  var s = computeStats();
+  toast(`迁移台账已导出：${s.objects} 个批次，应迁 ${fmt(s.total)} 条，已迁 ${fmt(s.migrated)} 条`, 'success');
+}
+function resetFilters(){
+  var kw = document.getElementById('mig-kw');
+  var st = document.getElementById('mig-status');
+  if(kw) kw.value = '';
+  if(st) st.value = '';
+  renderTable();
+}
+
+/* ========== 核对签认 ========== */
+function confirmSignOff(){
+  if(signedOff){ toast('已完成核对签认，无需重复操作', 'info'); return; }
+  var items = [
+    {id:'chk-qty', label:'数量核对'},
+    {id:'chk-amount', label:'金额总额核对'},
+    {id:'chk-field', label:'关键字段核对'}
+  ];
+  var missing = items.filter(function(it){
+    var el = document.getElementById(it.id);
+    return !el || !el.checked;
+  });
+  if(missing.length){
+    toast(`还有 ${missing.length} 项未核对：${missing.map(function(m){ return m.label; }).join('、')}，无法签认`, 'error');
+    return;
+  }
+  confirmDialog('确认完成核对签认？签认后本次迁移结果将锁定，如需修改需走变更审批。', function(){
+    signedOff = true;
+    var tag = document.getElementById('sign-tag');
+    if(tag){
+      tag.className = 'tag tag-green';
+      tag.textContent = '已签认 · ' + TODAY;
+    }
+    var checks = document.querySelectorAll('.sign-check');
+    for(var i = 0; i < checks.length; i++){ checks[i].disabled = true; }
+    var btn = document.getElementById('sign-btn');
+    if(btn){
+      btn.className = 'btn btn-default';
+      btn.disabled = true;
+    }
+    toast('核对签认完成，迁移结果已锁定并记录审计日志', 'success');
+  });
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">旧系统数据迁移</div>
+        <div class="page-desc">按「数据探查 → 清洗校验 → 转换导入 → 核对签认」推进旧系统数据迁移，按场馆分批切换</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="refreshPage()"><i data-lucide="refresh-cw"></i>刷新进度</button>
+        <button class="btn btn-primary" onclick="exportLedger()"><i data-lucide="download"></i>导出迁移台账</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">迁移阶段</div>
+      <span class="tag tag-blue">当前：转换导入（第 3 步 / 共 4 步）</span>
+    </div>
+    <div class="card-body">
+      <div class="step-bar" style="margin-bottom:0">
+        <div class="step done">
+          <div class="step-num">1</div>
+          <div style="min-width:0">
+            <div class="font-medium" style="font-size:13px">数据探查</div>
+            <div class="text-muted" style="font-size:12px">已完成 · 09-10</div>
+          </div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step done">
+          <div class="step-num">2</div>
+          <div style="min-width:0">
+            <div class="font-medium" style="font-size:13px">清洗校验</div>
+            <div class="text-muted" style="font-size:12px">已完成 · 09-12</div>
+          </div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step active">
+          <div class="step-num">3</div>
+          <div style="min-width:0">
+            <div class="font-medium" style="font-size:13px">转换导入</div>
+            <div class="text-muted" style="font-size:12px">进行中 · 差异待处理</div>
+          </div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div style="min-width:0">
+            <div class="font-medium" style="font-size:13px">核对签认</div>
+            <div class="text-muted" style="font-size:12px">未开始 · 待三项核对</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="mig-stats"></div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">迁移批次</div>
+      <span class="text-muted" id="mig-count" style="font-size:13px"></span>
+    </div>
+    <div class="card-body">
+      <div class="toolbar">
+        <select class="form-select" id="mig-status" onchange="renderTable()" style="min-width:150px">
+          <option value="">全部状态</option>
+          <option value="待执行">待执行</option>
+          <option value="迁移中">迁移中</option>
+          <option value="差异待处理">差异待处理</option>
+          <option value="已核对">已核对</option>
+        </select>
+        <input class="form-input" id="mig-kw" placeholder="搜索批次号 / 业务对象" oninput="renderTable()" style="min-width:220px" />
+        <button class="btn btn-ghost btn-sm" onclick="resetFilters()">重置</button>
+        <div class="spacer"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>批次</th>
+              <th>业务对象</th>
+              <th class="text-right">应迁条数</th>
+              <th class="text-right">已迁条数</th>
+              <th class="text-right">差异</th>
+              <th>状态</th>
+              <th>最后操作时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="mig-rows"></tbody>
+        </table>
+      </div>
+      <div class="text-muted mt-12" style="font-size:12px">
+        <i data-lucide="info" style="width:13px;height:13px;vertical-align:middle"></i>
+        执行迁移期间该业务对象暂停新增录入；差异批次需先处理差异，重新执行并复核后才能签认。
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">迁移范围说明</div>
+      <span class="tag tag-gray">范围已锁定</span>
+    </div>
+    <div class="card-body">
+      <div class="font-medium mb-8">迁移对象清单（按主数据优先顺序）</div>
+      <div class="flex gap-8" style="flex-wrap:wrap">
+        ${BATCHES.map(function(b){ return `<span class="tag tag-blue">${b.object} · ${fmt(b.total)} 条</span>`; }).join('')}
+      </div>
+      <div class="divider"></div>
+      <div class="font-medium mb-8">场馆迁移范围（共 ${MOCK.venues.length} 个场馆）</div>
+      <div class="table-wrap" style="border:1px solid var(--border-light);border-radius:8px">
+        <table class="data-table">
+          <thead><tr><th>场馆名称</th><th class="text-right">场地数</th><th>状态</th><th>迁移结论</th></tr></thead>
+          <tbody>
+            ${MOCK.venues.map(function(v){
+              var migrate = v.status === '运营中';
+              return `<tr>
+                <td class="font-medium" style="font-size:13px">${v.name}</td>
+                <td class="text-right">${v.courts}</td>
+                <td><span class="tag ${migrate ? 'tag-green' : 'tag-gray'}">${v.status}</span></td>
+                <td style="font-size:13px">${migrate ? '整体迁移，场地同步启用' : '不迁移（已停用场馆）'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="list-row">
+        <span class="stat-icon red" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="ban"></i></span>
+        <div>
+          <div class="font-medium">已停用场馆不迁移</div>
+          <div class="text-muted" style="font-size:13px">旧系统中状态为停用的场馆整体排除，不迁移场馆、场地及其关联商品与库存，仅保留历史订单快照供查询。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="map-pin-off"></i></span>
+        <div>
+          <div class="font-medium">场馆内已停用场地随场馆迁移并标记停用</div>
+          <div class="text-muted" style="font-size:13px">已停用场地保留历史订单与排期关联，迁移后标记为停用，不进入新系统可预约场地池。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon gray" style="width:32px;height:32px;flex-shrink:0;background:var(--border-light);color:var(--text-3)"><i data-lucide="user-x"></i></span>
+        <div>
+          <div class="font-medium">已注销会员不迁移</div>
+          <div class="text-muted" style="font-size:13px">仅迁移状态正常的会员及其储值、次卡资产；已注销会员只保留历史订单中的姓名快照，不重建会员档案。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-header">
+      <div class="card-title">切换方案</div>
+      <span class="tag tag-purple">按场馆分批切换</span>
+    </div>
+    <div class="card-body">
+      <div class="timeline">
+        <div class="timeline-item success">
+          <div class="timeline-time">切换原则</div>
+          <div class="timeline-title">按场馆一次性切换</div>
+          <div class="timeline-desc">同一场馆的场地、商品、库存、订单一次性切换，不做场馆内分批，避免同一场馆跨系统并行。</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-time">第 3 个月末</div>
+          <div class="timeline-title">试点场馆切换：地丰体育中心（总部）</div>
+          <div class="timeline-desc">以总部场馆作为试点，验证系统稳定性与业务流程后再推广；试点期问题清单逐项闭环。</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-time">第 4-5 月</div>
+          <div class="timeline-title">其余场馆分批切换</div>
+          <div class="timeline-desc">V002 4 月中、V003 4 月底、V004 5 月中，每批间隔不少于 1 周，观察无异常后再推进下一批。</div>
+        </div>
+        <div class="timeline-item warning">
+          <div class="timeline-time">切换窗口</div>
+          <div class="timeline-title">业务低峰期执行</div>
+          <div class="timeline-desc">统一选择周一 22:00 至次日 06:00，避开周末与赛事高峰，切换期间暂停线上预约并提前公示。</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-time">切换前</div>
+          <div class="timeline-title">全量备份</div>
+          <div class="timeline-desc">旧系统业务库、文件与配置全量备份，记录备份校验值，确认备份可恢复后方可执行切换。</div>
+        </div>
+        <div class="timeline-item success">
+          <div class="timeline-time">切换后</div>
+          <div class="timeline-title">业务验证：下单 / 支付 / 核销 / 开票 / 推送各走通</div>
+          <div class="timeline-desc">每类业务各走通一笔真实流程，核对订单、收款、发票、渠道推送结果一致后开放对外预约。</div>
+        </div>
+        <div class="timeline-item error">
+          <div class="timeline-time">验证不通过</div>
+          <div class="timeline-title">按回退预案恢复</div>
+          <div class="timeline-desc">停止新系统写入，按全量备份恢复旧系统并回切入口，差异数据登记后重新排期切换。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-16" style="border-left:3px solid var(--warning)">
+    <div class="card-header">
+      <div class="card-title">双轨边界说明</div>
+      <span class="tag tag-orange">过渡期只读</span>
+    </div>
+    <div class="card-body">
+      <div class="list-row">
+        <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="search"></i></span>
+        <div>
+          <div class="font-medium">旧系统仅作历史查询</div>
+          <div class="text-muted" style="font-size:13px">过渡期旧系统保留只读账号，用于查询历史订单、会员与财务单据，不得作为业务办理入口。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon red" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="lock"></i></span>
+        <div>
+          <div class="font-medium">旧系统不得录入新数据</div>
+          <div class="text-muted" style="font-size:13px">切换完成后旧系统关闭写入口，新增订单、收款、发票、库存变动一律在新系统办理，违规录入按事故登记。</div>
+        </div>
+      </div>
+      <div class="list-row">
+        <span class="stat-icon blue" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="bar-chart-2"></i></span>
+        <div>
+          <div class="font-medium">统计口径以新系统为准</div>
+          <div class="text-muted" style="font-size:13px">过渡期报表、对账与经营分析统一取新系统数据，旧系统数据仅用于历史追溯，不得混算。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">核对签认</div>
+      <span class="tag tag-orange" id="sign-tag">待签认</span>
+    </div>
+    <div class="card-body">
+      <div class="text-muted mb-12" style="font-size:13px">三项核对全部勾选后方可签认；签认后本次迁移结果锁定，如需修改需走变更审批。</div>
+      <label class="list-row" style="cursor:pointer;align-items:flex-start">
+        <input type="checkbox" class="sign-check" id="chk-qty" style="margin-top:3px;width:16px;height:16px;flex-shrink:0;accent-color:var(--primary);cursor:pointer" />
+        <div>
+          <div class="font-medium">数量核对</div>
+          <div class="text-muted" style="font-size:13px">各批次应迁条数与已迁条数一致，差异记录与差异清单逐条对应，差异处理完成后重新执行并复核。</div>
+        </div>
+      </label>
+      <label class="list-row" style="cursor:pointer;align-items:flex-start">
+        <input type="checkbox" class="sign-check" id="chk-amount" style="margin-top:3px;width:16px;height:16px;flex-shrink:0;accent-color:var(--primary);cursor:pointer" />
+        <div>
+          <div class="font-medium">金额总额核对</div>
+          <div class="text-muted" style="font-size:13px">应收、收款、付款金额合计与旧系统报表一致，按场馆与期间抽查，金额差额为 0。</div>
+        </div>
+      </label>
+      <label class="list-row" style="cursor:pointer;align-items:flex-start">
+        <input type="checkbox" class="sign-check" id="chk-field" style="margin-top:3px;width:16px;height:16px;flex-shrink:0;accent-color:var(--primary);cursor:pointer" />
+        <div>
+          <div class="font-medium">关键字段核对</div>
+          <div class="text-muted" style="font-size:13px">场馆编码、场地编码、客商编码、会员卡号、订单号映射完整，关键字段完整率 ≥ 99.9%。</div>
+        </div>
+      </label>
+      <div class="divider"></div>
+      <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+        <div class="text-muted" style="font-size:13px">签认人：系统管理员 · 财务负责人　签认日期：${TODAY}</div>
+        <button class="btn btn-primary" id="sign-btn" onclick="confirmSignOff()"><i data-lucide="file-check-2"></i>确认签认</button>
+      </div>
+    </div>
+  </div>
+`;
+
+renderStats();
+renderTable();
+</script>
+</body>
+</html>

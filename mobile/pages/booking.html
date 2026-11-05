@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地丰体育 · 选择时段</title>
+<link rel="stylesheet" href="../mobile.css">
+</head>
+<body data-status="dark">
+<div class="app">
+  <div class="scroll" id="scroll">
+    <div class="navbar">
+      <button class="nav-back" id="backBtn">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg>
+      </button>
+      <div class="nav-title">选择日期与时段</div>
+      <span class="nav-spacer"></span>
+    </div>
+
+    <div class="section tight" style="margin-top:10px">
+      <div class="card" style="display:flex;align-items:center;gap:12px;padding:14px">
+        <div style="width:46px;height:46px;border-radius:12px;background:var(--m-primary-bg);color:var(--m-primary);display:grid;place-items:center;flex-shrink:0">
+          <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.4"/><path d="M5.4 7.8c3.4 2 9.8 2 13.2 0M5.4 16.2c3.4-2 9.8-2 13.2 0M12 3.6v16.8"/></svg>
+        </div>
+        <div class="flex1">
+          <div style="font-size:15px;font-weight:600" id="courtName"></div>
+          <div class="sub" id="courtMeta" style="margin-top:2px"></div>
+        </div>
+        <span class="tag tag-blue" id="courtAttr"></span>
+      </div>
+    </div>
+
+    <div class="section tight" style="margin-top:16">
+      <div class="section-head" style="padding:0 16px">
+        <div class="section-title" style="font-size:14px">选择日期</div>
+        <span class="sub" id="dateHint"></span>
+      </div>
+      <div class="date-strip" id="dateStrip"></div>
+    </div>
+
+    <div class="section" style="margin-top:14px">
+      <div class="section-head" style="padding:0 16px">
+        <div class="section-title"><span class="bar"></span>可预约时段</div>
+        <span class="sub">30 分钟 / 段</span>
+      </div>
+      <div class="slot-grid" id="slotGrid"></div>
+      <div class="legend">
+        <span><i class="on"></i>已选</span>
+        <span><i></i>可预约</span>
+        <span><i class="off"></i>已订 / 已过</span>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:14px">
+      <div class="notice-box">
+        <span style="flex-shrink:0">提示</span>
+        <span>预约成功后生成核销码，请于开场前 10 分钟到场出示；开场前可在订单详情申请退款，退款原路退回且不收取手续费。</span>
+      </div>
+    </div>
+    <div class="scroll-pad lg"></div>
+  </div>
+
+  <div class="sticky-bar">
+    <div class="sum">
+      <div class="sum-label" id="selLabel">未选择时段</div>
+      <div class="sum-total">¥<span id="totalNum">0</span><small> 元</small></div>
+    </div>
+    <button class="btn btn-primary" id="nextBtn" disabled style="min-width:132px">提交订单</button>
+  </div>
+  <div class="homebar"></div>
+</div>
+<script src="../mobile-mock.js"></script>
+<script>
+(function(){
+  var qcourt = new URLSearchParams(location.search).get('court') || 'C004';
+  var court = M.court(qcourt) || M.COURTS[3];
+  var venue = M.venue(court.venueId);
+  var dates = M.dates(14);
+  var date = dates[0].date;
+  var picked = [];   // startMin 列表，需连续
+  var slots = [];
+
+  M.$('#courtName').textContent = court.name;
+  M.$('#courtMeta').textContent = venue.name + ' · ' + court.type + ' · ' + court.area + ' · 可容纳 ' + court.capacity + ' 人';
+  M.$('#courtAttr').textContent = court.attr === 'VIP' ? 'VIP 场' : '普通场';
+  M.$('#courtAttr').className = 'tag ' + (court.attr === 'VIP' ? 'tag-purple' : 'tag-blue');
+  M.$('#backBtn').addEventListener('click', function(){ M.go('venue-detail.html?id=' + venue.id); });
+
+  function renderDates(){
+    M.$('#dateStrip').innerHTML = dates.map(function(d){
+      return '<div class="date-item' + (d.date === date ? ' active' : '') + '" data-date="' + d.date + '">' +
+        '<span class="d-week">' + d.week + '</span><span class="d-day">' + d.day + '</span></div>';
+    }).join('');
+    M.$$('#dateStrip .date-item').forEach(function(el){
+      el.addEventListener('click', function(){
+        date = el.getAttribute('data-date');
+        picked = [];
+        renderDates(); renderSlots(); updateBar();
+      });
+    });
+    var d = dates.filter(function(x){ return x.date === date; })[0];
+    M.$('#dateHint').textContent = d ? (M.dateCN(date) + ' ' + M.weekCN(date)) : '';
+  }
+
+  function renderSlots(){
+    slots = M.slots(court.id, date);
+    M.$('#slotGrid').innerHTML = slots.map(function(s){
+      var cls = 'slot';
+      if (s.disabled) cls += ' disabled';
+      if (picked.indexOf(s.startMin) >= 0) cls += ' active';
+      return '<div class="' + cls + '" data-min="' + s.startMin + '">' +
+        (s.reason ? '<span class="slot-flag">' + s.reason + '</span>' : '') +
+        '<span>' + s.start + '</span>' +
+        '<span class="slot-price">¥' + s.price + '</span>' +
+      '</div>';
+    }).join('');
+    M.$$('#slotGrid .slot').forEach(function(el){
+      el.addEventListener('click', function(){
+        var min = +el.getAttribute('data-min');
+        var i = picked.indexOf(min);
+        if (i >= 0){
+          picked.splice(i, 1);
+          picked.sort(function(a, b){ return a - b; });
+          // 取消中间时段会打断连续性，此时清空重选
+          for (var k = 1; k < picked.length; k++){
+            if (picked[k] !== picked[k - 1] + 30){
+              picked = [];
+              M.toast('时段需连续预约，已清空重选');
+              break;
+            }
+          }
+        }
+        else {
+          // 必须连续：允许向上或向下延伸
+          if (picked.length){
+            var max = Math.max.apply(null, picked), minv = Math.min.apply(null, picked);
+            if (min !== max + 30 && min !== minv - 30){
+              picked = [];
+              M.toast('请选择连续时段');
+            }
+          }
+          if (picked.length >= 4){ M.toast('单次最多预约 4 个时段（2 小时）'); return; }
+          picked.push(min);
+        }
+        picked.sort(function(a, b){ return a - b; });
+        renderSlots(); updateBar();
+      });
+    });
+  }
+
+  function updateBar(){
+    var total = 0;
+    picked.forEach(function(min){ total += M.price(court, date, min); });
+    M.$('#totalNum').textContent = total;
+    M.$('#selLabel').textContent = picked.length
+      ? ('已选 ' + picked.length + ' 段 · ' + picked.length * 30 + ' 分钟')
+      : '未选择时段';
+    M.$('#nextBtn').disabled = picked.length === 0;
+  }
+
+  M.$('#nextBtn').addEventListener('click', function(){
+    if (!picked.length) return;
+    var startMin = picked[0];
+    function fmt(min){ return (min < 600 ? '0' : '') + Math.floor(min / 60) + ':' + (min % 60 === 0 ? '00' : '30'); }
+    var total = 0;
+    picked.forEach(function(min){ total += M.price(court, date, min); });
+    var st = fmt(startMin), en = fmt(startMin + picked.length * 30);
+    M.state.draft = {
+      courtId: court.id, venueId: venue.id, courtName: court.name, venueName: venue.name,
+      sport: court.type, date: date, startMin: startMin, duration: picked.length * 30,
+      start: st, end: en, time: st + '-' + en, amount: total, count: picked.length,
+      createdAt: Date.now()
+    };
+    M.save();
+    M.go('confirm.html');
+  });
+
+  renderDates(); renderSlots(); updateBar();
+  M.init({});
+})();
+</script>
+</body>
+</html>

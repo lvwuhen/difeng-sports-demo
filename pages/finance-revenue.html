@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="../config.js?v=20261105"></script>
+<script src="../auth-gate.js?v=20261105"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>收入确认 - 地丰体育</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../mock.js"></script>
+<script src="../mock-extra.js"></script>
+<script src="../api.js"></script>
+<script src="../shell.js"></script>
+<script>
+window.__PREFIX__ = '../';
+renderShell('finance-revenue', '收入确认');
+
+/* ========== 工具 ========== */
+const PAGE_SIZE = 6;
+const TODAY = '2026-11-05';
+let curPage = 1;
+let activeModal = null;
+
+function money(n){
+  return (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+function closeActiveModal(){
+  if(activeModal){ closeModal(activeModal); activeModal = null; }
+}
+function nowStr(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${TODAY} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function shortVenue(name){
+  if(name.indexOf('总部') > -1) return '总部';
+  return name.replace('地丰', '');
+}
+const VENUES = MOCK.venues.map(v => shortVenue(v.name));
+
+/* ========== 数据 ========== */
+const REVENUE = [
+  {id:'RV001', order:'ORD20261030001', venue:'总部', bizType:'场地预约', occurTime:'2026-10-30 18:00', amount:240.00, preReceived:0, receivable:240.00, received:240.00, project:'体育服务收入', status:'已确认'},
+  {id:'RV002', order:'RC20261030002', venue:'总部', bizType:'会员充值', occurTime:'2026-10-30 16:40', amount:800.00, preReceived:800.00, receivable:0, received:800.00, project:'预收账款', status:'递延中'},
+  {id:'RV003', order:'ORD20261029003', venue:'篮球公园', bizType:'渠道订单', occurTime:'2026-10-29 19:00', amount:200.00, preReceived:0, receivable:200.00, received:200.00, project:'体育服务收入', status:'已确认'},
+  {id:'RV004', order:'EV002', venue:'网球中心', bizType:'赛事收入', occurTime:'2026-10-12 18:00', amount:18600.00, preReceived:0, receivable:18600.00, received:18600.00, project:'赛事活动收入', status:'已确认'},
+  {id:'RV005', order:'ORD20261031002', venue:'总部', bizType:'场地预约', occurTime:'2026-10-31 14:00', amount:60.00, preReceived:0, receivable:60.00, received:60.00, project:'体育服务收入', status:'已确认'},
+  {id:'RV006', order:'RC20261028006', venue:'篮球公园', bizType:'会员充值', occurTime:'2026-10-28 10:20', amount:1200.00, preReceived:1200.00, receivable:0, received:1200.00, project:'预收账款', status:'递延中'},
+  {id:'RV007', order:'MT202610290001', venue:'篮球公园', bizType:'渠道订单', occurTime:'2026-10-29 12:00', amount:158.00, preReceived:0, receivable:158.00, received:158.00, project:'体育服务收入', status:'已确认'},
+  {id:'RV008', order:'EV001', venue:'总部', bizType:'赛事收入', occurTime:'2026-11-02 09:00', amount:28500.00, preReceived:28500.00, receivable:0, received:28500.00, project:'赛事活动收入', status:'递延中'},
+  {id:'RV009', order:'ORD20261027006', venue:'总部', bizType:'场地预约', occurTime:'2026-10-27 10:00', amount:80.00, preReceived:0, receivable:80.00, received:80.00, project:'体育服务收入', status:'已冲销'},
+  {id:'RV010', order:'RC20261026007', venue:'网球中心', bizType:'会员充值', occurTime:'2026-10-26 15:30', amount:1200.00, preReceived:1200.00, receivable:0, received:1200.00, project:'预收账款', status:'递延中'},
+  {id:'RV011', order:'DY202610280003', venue:'网球中心', bizType:'渠道订单', occurTime:'2026-10-28 20:00', amount:199.00, preReceived:0, receivable:199.00, received:199.00, project:'体育服务收入', status:'已冲销'},
+  {id:'RV012', order:'ORD20261025005', venue:'羽毛球馆', bizType:'场地预约', occurTime:'2026-10-25 19:00', amount:120.00, preReceived:0, receivable:120.00, received:120.00, project:'体育服务收入', status:'已确认'},
+  {id:'RV013', order:'EV003', venue:'羽毛球馆', bizType:'赛事收入', occurTime:'2026-11-03 11:00', amount:4320.00, preReceived:0, receivable:4320.00, received:4320.00, project:'赛事活动收入', status:'已确认'}
+];
+
+const STATUS_TAG = {
+  '已确认':'tag-green',
+  '递延中':'tag-orange',
+  '已冲销':'tag-gray'
+};
+const BIZ_TAG = {
+  '场地预约':'tag-blue',
+  '会员充值':'tag-purple',
+  '渠道订单':'tag-cyan',
+  '赛事收入':'tag-orange'
+};
+
+let DEFERRED = [
+  {order:'RC20261030002', customer:'陈晓明', venue:'总部', principal:800, gift:80, confirmed:240, deferred:560, lastConfirm:'2026-10-30 18:00'},
+  {order:'RC20261028006', customer:'林雅婷', venue:'篮球公园', principal:1200, gift:120, confirmed:360, deferred:840, lastConfirm:'2026-10-28 11:00'},
+  {order:'RC20261026007', customer:'厦门建工集团有限公司', venue:'网球中心', principal:1200, gift:0, confirmed:300, deferred:900, lastConfirm:'2026-10-26 16:00'},
+  {order:'RC20261102001', customer:'鹭岛篮球俱乐部', venue:'总部', principal:5000, gift:500, confirmed:0, deferred:5000, lastConfirm:'—'}
+];
+
+const REVERSALS = [
+  {
+    order:'ORD20261027006', customer:'王志强', amount:80, bizType:'场地预约',
+    refundNo:'RF20261030001', redNo:'243500000001239998', reason:'客户临时有事取消',
+    steps:[
+      {time:'2026-10-27 10:00', title:'原收入确认', desc:'场地预约收入 ¥80.00 计入「体育服务收入」，确认状态 已确认', type:'success'},
+      {time:'2026-10-27 14:15', title:'退款申请与审批', desc:'客户申请取消，退款 ¥80.00，原路退回微信，审批人 王财务', type:'warning'},
+      {time:'2026-10-30 16:40', title:'退款完成', desc:'退款单 RF20261030001 处理完成，资金退回客户', type:'success'},
+      {time:'2026-10-30 16:42', title:'红字业务冲销', desc:'生成红字业务单 RV-REV20261030001，冲减原收入 ¥80.00，原收入置为已冲销', type:'error'}
+    ]
+  },
+  {
+    order:'EV002', customer:'厦门市网球协会', amount:18600, bizType:'赛事收入',
+    refundNo:'—', redNo:'243500000001239999', reason:'赛事取消，整单退款',
+    steps:[
+      {time:'2026-10-12 18:00', title:'原收入确认', desc:'赛事活动收入 ¥18,600.00 计入「赛事活动收入」，确认状态 已确认', type:'success'},
+      {time:'2026-10-13 08:40', title:'全额退款审批', desc:'赛事取消，按整单全额退款，审批人 李运营 → 王财务', type:'warning'},
+      {time:'2026-10-13 09:30', title:'红字发票开具', desc:'发起红冲，红字发票号 243500000001239999，原发票同步置为已红冲', type:'warning'},
+      {time:'2026-10-13 09:35', title:'红字业务冲销', desc:'生成红字业务单 RV-REV20261012002，冲减赛事收入 ¥18,600.00', type:'error'}
+    ]
+  }
+];
+
+/* ========== 统计 ========== */
+function renderStats(){
+  const confirmed = REVENUE.filter(r => r.status === '已确认');
+  const revTotal = confirmed.reduce((s, r) => s + r.amount, 0);
+  const receivable = REVENUE.filter(r => r.status !== '已冲销').reduce((s, r) => s + r.receivable, 0);
+  const received = REVENUE.reduce((s, r) => s + r.received, 0);
+  const preReceived = REVENUE.reduce((s, r) => s + r.preReceived, 0);
+  const el = document.getElementById('rev-stats');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">本期收入 <span class="stat-icon blue"><i data-lucide="trending-up"></i></span></div>
+      <div class="stat-value">¥${money(revTotal)}</div>
+      <div class="stat-trend up"><i data-lucide="check-circle-2" style="width:14px"></i>已确认口径 · 权责发生制</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">应收金额 <span class="stat-icon cyan"><i data-lucide="file-text"></i></span></div>
+      <div class="stat-value">¥${money(receivable)}</div>
+      <div class="stat-trend"><i data-lucide="info" style="width:14px;color:var(--text-3)"></i>服务已发生、尚未收款的金额</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">实收金额 <span class="stat-icon green"><i data-lucide="banknote"></i></span></div>
+      <div class="stat-value">¥${money(received)}</div>
+      <div class="stat-trend up"><i data-lucide="arrow-down-to-line" style="width:14px"></i>以到账流水为准，含预收</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">预收金额 <span class="stat-icon orange"><i data-lucide="wallet"></i></span></div>
+      <div class="stat-value">¥${money(preReceived)}</div>
+      <div class="stat-trend down"><i data-lucide="clock-3" style="width:14px"></i>尚未提供服务，计入递延</div>
+    </div>`;
+  refreshIcons();
+}
+
+/* ========== 台账筛选 / 分页 ========== */
+function filteredRevenue(){
+  const venue = document.getElementById('rev-venue')?.value || '';
+  const biz = document.getElementById('rev-biz')?.value || '';
+  const st = document.getElementById('rev-status')?.value || '';
+  const from = document.getElementById('rev-from')?.value || '';
+  const to = document.getElementById('rev-to')?.value || '';
+  return REVENUE.filter(r => {
+    const d = r.occurTime.slice(0, 10);
+    if(venue && r.venue !== venue) return false;
+    if(biz && r.bizType !== biz) return false;
+    if(st && r.status !== st) return false;
+    if(from && d < from) return false;
+    if(to && d > to) return false;
+    return true;
+  });
+}
+function resetAndRender(){ curPage = 1; renderLedger(); }
+function gotoPage(p){ curPage = p; renderLedger(); }
+
+function buildPager(total){
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(curPage > pages) curPage = pages;
+  if(curPage < 1) curPage = 1;
+  let btns = '';
+  for(let i = 1; i <= pages; i++){
+    btns += `<button class="page-btn ${i === curPage ? 'active' : ''}" onclick="gotoPage(${i})">${i}</button>`;
+  }
+  const el = document.getElementById('rev-pager');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="pagination-info">共 ${total} 条 · 第 ${curPage}/${pages} 页</div>
+    <div class="pagination-pages">
+      <button class="page-btn" ${curPage <= 1 ? 'disabled' : ''} onclick="gotoPage(${curPage - 1})"><i data-lucide="chevron-left" style="width:14px"></i></button>
+      ${btns}
+      <button class="page-btn" ${curPage >= pages ? 'disabled' : ''} onclick="gotoPage(${curPage + 1})"><i data-lucide="chevron-right" style="width:14px"></i></button>
+    </div>`;
+  refreshIcons();
+}
+
+function renderLedger(){
+  const list = filteredRevenue();
+  const start = (curPage - 1) * PAGE_SIZE;
+  const rows = list.slice(start, start + PAGE_SIZE).map(r => {
+    const act = r.status === '递延中'
+      ? `<button class="btn btn-primary btn-sm" onclick="openConfirmRev('${r.id}')">确认收入</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="toast('该笔收入已确认，无需重复确认','info')">已处理</button>`;
+    return `<tr>
+      <td class="mono" style="font-size:13px">${r.order}</td>
+      <td>${r.venue}</td>
+      <td><span class="tag ${BIZ_TAG[r.bizType] || 'tag-gray'}">${r.bizType}</span></td>
+      <td style="font-size:13px;white-space:nowrap">${r.occurTime}</td>
+      <td class="text-right font-medium">¥${money(r.amount)}</td>
+      <td class="text-right ${r.preReceived ? 'text-warning' : 'text-muted'}">${r.preReceived ? '¥' + money(r.preReceived) : '—'}</td>
+      <td class="text-right">${r.receivable ? '¥' + money(r.receivable) : '—'}</td>
+      <td class="text-right ${r.received ? 'text-success' : 'text-muted'}">${r.received ? '¥' + money(r.received) : '—'}</td>
+      <td style="font-size:13px">${r.project}</td>
+      <td><span class="tag ${STATUS_TAG[r.status] || 'tag-gray'}">${r.status}</span></td>
+      <td>${act}</td>
+    </tr>`;
+  }).join('');
+  const tb = document.getElementById('rev-rows');
+  if(tb){
+    tb.innerHTML = rows || `<tr><td colspan="11"><div class="empty"><div class="empty-icon"><i data-lucide="file-search"></i></div><div class="empty-text">当前筛选条件下暂无收入记录</div></div></td></tr>`;
+  }
+  const cnt = document.getElementById('rev-count');
+  if(cnt) cnt.textContent = `当前筛选 ${list.length} 条`;
+  buildPager(list.length);
+  refreshIcons();
+}
+
+/* ========== 收入确认 ========== */
+function openConfirmRev(id){
+  const r = REVENUE.find(x => x.id === id);
+  if(!r) return;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">确认收入 · ${r.order}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">业务单号</div><div class="v mono">${r.order}</div></div>
+        <div class="kv-item"><div class="k">场馆</div><div class="v">${r.venue}</div></div>
+        <div class="kv-item"><div class="k">业务类型</div><div class="v">${r.bizType}</div></div>
+        <div class="kv-item"><div class="k">发生时间</div><div class="v">${r.occurTime}</div></div>
+        <div class="kv-item"><div class="k">金额</div><div class="v font-bold">¥${money(r.amount)}</div></div>
+        <div class="kv-item"><div class="k">收支项目</div><div class="v">${r.project}</div></div>
+      </div>
+      <div class="card" style="background:var(--warning-bg);border-color:var(--warning);margin-bottom:16px">
+        <div class="card-body" style="padding:12px 16px;font-size:13px;color:var(--text-2)">
+          <i data-lucide="info" style="width:15px;vertical-align:middle;color:var(--warning)"></i>
+          确认后该笔预收将结转至收入，确认依据为服务实际发生，不以到账时间为准。
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">确认日期 <span class="required">*</span></label>
+          <input class="form-input" type="date" id="cf-date" value="${TODAY}" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">确认金额</label>
+          <input class="form-input" value="¥${money(r.amount)}" disabled />
+        </div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">确认说明 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="cf-note" placeholder="请填写收入确认依据，如：服务已于 10-30 18:00 提供完毕，符合确认条件"></textarea>
+      </div>
+      <div class="form-hint">确认说明不少于 4 个字，将记录到收入台账与操作日志。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmRevenue('${r.id}')">确认入账</button>
+    </div>
+  </div>`);
+}
+
+function confirmRevenue(id){
+  const r = REVENUE.find(x => x.id === id);
+  if(!r) return;
+  const date = document.getElementById('cf-date')?.value || '';
+  const note = (document.getElementById('cf-note')?.value || '').trim();
+  if(!date){ toast('请选择确认日期', 'error'); return; }
+  if(note.length < 4){ toast('请填写不少于 4 个字的确认说明', 'error'); return; }
+  r.status = '已确认';
+  r.confirmDate = date;
+  r.confirmNote = note;
+  closeActiveModal();
+  renderAll();
+  toast(`收入 ${r.order} 已确认，确认日期 ${date}`, 'success');
+}
+
+/* ========== 预收与递延 ========== */
+function renderDeferred(){
+  const totalDeferred = DEFERRED.reduce((s, d) => s + d.deferred, 0);
+  const totalConfirmed = DEFERRED.reduce((s, d) => s + d.confirmed, 0);
+  const totalGift = DEFERRED.reduce((s, d) => s + d.gift, 0);
+  const stats = document.getElementById('def-stats');
+  if(stats){
+    stats.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-label">递延余额合计 <span class="stat-icon orange"><i data-lucide="hourglass"></i></span></div>
+        <div class="stat-value">¥${money(totalDeferred)}</div>
+        <div class="stat-trend"><i data-lucide="info" style="width:14px;color:var(--text-3)"></i>尚未提供服务，不得确认收入</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">已确认递延金额 <span class="stat-icon green"><i data-lucide="check-check"></i></span></div>
+        <div class="stat-value">¥${money(totalConfirmed)}</div>
+        <div class="stat-trend up"><i data-lucide="trending-up" style="width:14px"></i>按实际消费进度结转</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">赠送金额合计 <span class="stat-icon purple"><i data-lucide="gift"></i></span></div>
+        <div class="stat-value">¥${money(totalGift)}</div>
+        <div class="stat-trend"><i data-lucide="info" style="width:14px;color:var(--text-3)"></i>随本金按消费比例同步确认</div>
+      </div>`;
+  }
+  const rows = DEFERRED.map(d => {
+    const total = d.principal + d.gift;
+    const pct = total ? Math.round(d.confirmed / total * 100) : 0;
+    return `<tr>
+      <td class="mono" style="font-size:13px">${d.order}</td>
+      <td>${d.customer}</td>
+      <td>${d.venue}</td>
+      <td class="text-right">¥${money(d.principal)}</td>
+      <td class="text-right text-warning">¥${money(d.gift)}</td>
+      <td class="text-right">¥${money(total)}</td>
+      <td class="text-right text-success">¥${money(d.confirmed)}</td>
+      <td class="text-right font-medium">¥${money(d.deferred)}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="progress" style="width:100px"><div class="progress-bar" style="width:${pct}%"></div></div>
+          <span style="font-size:12px;color:var(--text-3)">${pct}%</span>
+        </div>
+      </td>
+      <td style="font-size:13px;white-space:nowrap">${d.lastConfirm}</td>
+      <td>${d.deferred > 0
+        ? `<button class="btn btn-primary btn-sm" onclick="openConfirmDefer('${d.order}')">确认递延收入</button>`
+        : `<span class="tag tag-green">已全额确认</span>`}</td>
+    </tr>`;
+  }).join('');
+  const tb = document.getElementById('def-rows');
+  if(tb) tb.innerHTML = rows;
+  refreshIcons();
+}
+
+function openConfirmDefer(order){
+  const d = DEFERRED.find(x => x.order === order);
+  if(!d) return;
+  activeModal = openModal(`<div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">确认递延收入 · ${d.order}</div>
+      <div class="modal-close" onclick="closeActiveModal()">×</div>
+    </div>
+    <div class="modal-body">
+      <div class="kv-grid mb-16">
+        <div class="kv-item"><div class="k">客户</div><div class="v">${d.customer}</div></div>
+        <div class="kv-item"><div class="k">场馆</div><div class="v">${d.venue}</div></div>
+        <div class="kv-item"><div class="k">充值本金</div><div class="v">¥${money(d.principal)}</div></div>
+        <div class="kv-item"><div class="k">赠送金额</div><div class="v text-warning">¥${money(d.gift)}</div></div>
+        <div class="kv-item"><div class="k">当前递延余额</div><div class="v font-bold">¥${money(d.deferred)}</div></div>
+        <div class="kv-item"><div class="k">已确认金额</div><div class="v text-success">¥${money(d.confirmed)}</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-item">
+          <label class="form-label">本期确认金额 <span class="required">*</span></label>
+          <input class="form-input" type="number" id="df-amount" min="0" step="0.01" placeholder="不超过递延余额 ¥${money(d.deferred)}" />
+        </div>
+        <div class="form-item">
+          <label class="form-label">确认日期 <span class="required">*</span></label>
+          <input class="form-input" type="date" id="df-date" value="${TODAY}" />
+        </div>
+      </div>
+      <div class="form-item">
+        <label class="form-label">确认依据 <span class="required">*</span></label>
+        <textarea class="form-textarea" id="df-note" placeholder="请说明本期实际消费/服务发生情况"></textarea>
+      </div>
+      <div class="form-hint">确认金额不得超过递延余额，赠送金额按消费比例同步结转，不单独确认收入。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="closeActiveModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmDefer('${d.order}')">确认结转</button>
+    </div>
+  </div>`);
+}
+
+function confirmDefer(order){
+  const d = DEFERRED.find(x => x.order === order);
+  if(!d) return;
+  const amount = Number(document.getElementById('df-amount')?.value || 0);
+  const date = document.getElementById('df-date')?.value || '';
+  const note = (document.getElementById('df-note')?.value || '').trim();
+  if(!(amount > 0)){ toast('请填写大于 0 的确认金额', 'error'); return; }
+  if(amount > d.deferred){ toast(`确认金额不能超过递延余额 ¥${money(d.deferred)}`, 'error'); return; }
+  if(!date){ toast('请选择确认日期', 'error'); return; }
+  if(note.length < 4){ toast('请填写不少于 4 个字的确认依据', 'error'); return; }
+  d.confirmed = +(d.confirmed + amount).toFixed(2);
+  d.deferred = +(d.deferred - amount).toFixed(2);
+  d.lastConfirm = date;
+  closeActiveModal();
+  renderDeferred();
+  toast(`已确认递延收入 ¥${money(amount)}，剩余递延 ¥${money(d.deferred)}`, 'success');
+}
+
+/* ========== 跨期处理 ========== */
+function runPeriod(key){
+  const map = {
+    defer: '递延收入结转任务已提交：系统按本期实际服务记录，将对应预收金额结转至「体育服务收入」，结转明细可在收入台账查看。',
+    cross: '跨月收入调整已开启：跨月订单按服务发生月份拆分确认，本期仅确认属于本期部分，剩余部分转入下期递延。',
+    close: '月末结账已发起：执行 2026-10 期间关账检查（应收 / 实收 / 预收平衡校验），结账完成后该期间数据锁定，不可再修改。'
+  };
+  toast(map[key] || '操作已完成', key === 'close' ? 'warning' : 'success');
+}
+
+/* ========== 退款冲销 ========== */
+function renderReversals(){
+  const el = document.getElementById('rev-reversal');
+  if(!el) return;
+  el.innerHTML = REVERSALS.map(rc => `
+    <div class="card mb-16">
+      <div class="card-header">
+        <div>
+          <div class="card-title">${rc.order} · ${rc.customer}</div>
+          <div class="text-muted" style="font-size:12px;margin-top:4px">${rc.bizType} · 冲销金额 ¥${money(rc.amount)} · 原因：${rc.reason}</div>
+        </div>
+        <div class="flex gap-8">
+          <span class="tag tag-gray">退款单 ${rc.refundNo}</span>
+          <span class="tag tag-red">红字业务 ${rc.redNo}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="timeline" style="margin-bottom:0">
+          ${rc.steps.map(s => `
+            <div class="timeline-item ${s.type}">
+              <div class="timeline-time">${s.time}</div>
+              <div class="timeline-title">${s.title}</div>
+              <div class="timeline-desc">${s.desc}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>`).join('');
+  refreshIcons();
+}
+
+/* ========== 页签 / 导出 ========== */
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.style.display = p.dataset.panel === name ? 'block' : 'none');
+  refreshIcons();
+}
+
+function exportLedger(){
+  toast('收入台账已导出为 Excel（含预收/应收/实收及确认状态）', 'success');
+}
+
+function renderAll(){
+  renderStats();
+  renderLedger();
+  renderDeferred();
+  renderReversals();
+  refreshIcons();
+}
+
+/* ========== 页面骨架 ========== */
+document.getElementById('page-content').innerHTML = `
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
+      <div>
+        <div class="page-title">收入确认</div>
+        <div class="page-desc">按权责发生制确认收入，严格区分预收、应收、实收，支持递延结转与退款冲销</div>
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-default" onclick="renderAll();toast('收入台账已刷新','info')"><i data-lucide="refresh-cw"></i>刷新</button>
+        <button class="btn btn-primary" onclick="exportLedger()"><i data-lucide="download"></i>导出台账</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="rev-stats"></div>
+
+  <div class="card" style="border-left:3px solid var(--primary);margin-bottom:20px">
+    <div class="card-body" style="display:flex;gap:16px;align-items:flex-start">
+      <span class="stat-icon blue" style="flex-shrink:0"><i data-lucide="book-open-check"></i></span>
+      <div style="flex:1">
+        <div class="font-medium mb-8">权责发生制确认说明</div>
+        <div class="text-muted" style="font-size:13px">
+          收入在服务实际发生时确认，<b style="color:var(--text-1)">不以到账时间为准</b>；严格区分预收 / 应收 / 实收：
+          预收为尚未提供服务的款项，计入递延；应收为服务已发生但尚未收款；实收为银行或渠道实际到账金额。
+        </div>
+        <div class="flex gap-8" style="margin-top:10px;flex-wrap:wrap">
+          <span class="tag tag-purple">预收 → 递延收入</span>
+          <span class="tag tag-cyan">服务发生 → 确认收入</span>
+          <span class="tag tag-green">实际到账 → 实收</span>
+          <span class="tag tag-gray">退款 → 红字冲销</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="ledger" onclick="switchTab('ledger')"><i data-lucide="list" style="width:16px;vertical-align:middle"></i> 收入台账</div>
+    <div class="tab" data-tab="deferred" onclick="switchTab('deferred')"><i data-lucide="hourglass" style="width:16px;vertical-align:middle"></i> 预收与递延</div>
+    <div class="tab" data-tab="period" onclick="switchTab('period')"><i data-lucide="calendar-range" style="width:16px;vertical-align:middle"></i> 跨期处理</div>
+    <div class="tab" data-tab="reversal" onclick="switchTab('reversal')"><i data-lucide="rotate-ccw" style="width:16px;vertical-align:middle"></i> 退款冲销</div>
+  </div>
+
+  <div class="tab-panel" data-panel="ledger">
+    <div class="card">
+      <div class="card-body">
+        <div class="toolbar">
+          <select class="form-select" id="rev-venue" onchange="resetAndRender()">
+            <option value="">全部场馆</option>
+            ${VENUES.map(v => `<option value="${v}">${v}</option>`).join('')}
+          </select>
+          <select class="form-select" id="rev-biz" onchange="resetAndRender()">
+            <option value="">全部业务类型</option>
+            <option value="场地预约">场地预约</option>
+            <option value="会员充值">会员充值</option>
+            <option value="渠道订单">渠道订单</option>
+            <option value="赛事收入">赛事收入</option>
+          </select>
+          <select class="form-select" id="rev-status" onchange="resetAndRender()">
+            <option value="">全部确认状态</option>
+            <option value="已确认">已确认</option>
+            <option value="递延中">递延中</option>
+            <option value="已冲销">已冲销</option>
+          </select>
+          <div class="filter-group">
+            <span class="text-muted" style="font-size:13px">时间</span>
+            <input class="form-input" type="date" id="rev-from" onchange="resetAndRender()" style="min-width:150px" />
+            <span class="text-muted">~</span>
+            <input class="form-input" type="date" id="rev-to" onchange="resetAndRender()" style="min-width:150px" />
+          </div>
+          <div class="spacer"></div>
+          <span class="text-muted" id="rev-count" style="font-size:13px"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>业务单号</th>
+                <th>场馆</th>
+                <th>业务类型</th>
+                <th>发生时间</th>
+                <th class="text-right">金额</th>
+                <th class="text-right">预收</th>
+                <th class="text-right">应收</th>
+                <th class="text-right">实收</th>
+                <th>收支项目</th>
+                <th>确认状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="rev-rows"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="rev-pager"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="deferred" style="display:none">
+    <div class="stats-grid" id="def-stats"></div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">会员充值本金与赠送拆分</div>
+        <span class="tag tag-purple">预收账款 · 递延确认</span>
+      </div>
+      <div class="card-body no-pad">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>充值单号</th>
+                <th>客户</th>
+                <th>场馆</th>
+                <th class="text-right">本金</th>
+                <th class="text-right">赠送</th>
+                <th class="text-right">合计</th>
+                <th class="text-right">已确认</th>
+                <th class="text-right">递延金额</th>
+                <th>确认进度</th>
+                <th>最近确认</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="def-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card mt-16">
+      <div class="card-body" style="display:flex;gap:16px;align-items:flex-start">
+        <span class="stat-icon purple" style="flex-shrink:0"><i data-lucide="split"></i></span>
+        <div>
+          <div class="font-medium mb-8">预收与递延处理规则</div>
+          <div class="text-muted" style="font-size:13px">
+            会员充值收款时全额计入预收账款；本金与赠送金额分开记录，赠送金额不做收入，随本金按实际消费比例同步结转。
+            客户消费后按实际使用金额确认体育服务收入，未消费部分保留在递延余额中。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="period" style="display:none">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+      <div class="card">
+        <div class="card-body">
+          <span class="stat-icon orange"><i data-lucide="arrow-right-left"></i></span>
+          <div class="font-medium mt-12">递延收入结转</div>
+          <div class="text-muted" style="font-size:13px;margin-top:6px">将本期已提供服务对应的预收金额，从预收账款结转至体育服务收入，按场馆与业务类型生成结转凭证。</div>
+          <button class="btn btn-default btn-sm mt-12" onclick="runPeriod('defer')">执行结转</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <span class="stat-icon purple"><i data-lucide="calendar-range"></i></span>
+          <div class="font-medium mt-12">跨月收入调整</div>
+          <div class="text-muted" style="font-size:13px;margin-top:6px">跨月订单按服务实际发生日期拆分，本期只确认属于本期的部分，剩余金额顺延至下期，避免跨期收入错配。</div>
+          <button class="btn btn-default btn-sm mt-12" onclick="runPeriod('cross')">执行调整</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <span class="stat-icon blue"><i data-lucide="lock"></i></span>
+          <div class="font-medium mt-12">月末结账</div>
+          <div class="text-muted" style="font-size:13px;margin-top:6px">关账前校验应收、实收、预收三方平衡，生成期间收入汇总；结账后当期数据锁定，禁止反向修改。</div>
+          <button class="btn btn-default btn-sm mt-12" onclick="runPeriod('close')">发起结账</button>
+        </div>
+      </div>
+    </div>
+    <div class="card mt-16">
+      <div class="card-header">
+        <div class="card-title">期间状态</div>
+        <span class="tag tag-gray">按自然月</span>
+      </div>
+      <div class="card-body">
+        <div class="list-row">
+          <span class="stat-icon green" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="check-circle-2"></i></span>
+          <div style="flex:1">
+            <div class="font-medium">2026-09 期间</div>
+            <div class="text-muted" style="font-size:13px">已结账 · 收入汇总已生成 · 数据锁定</div>
+          </div>
+          <span class="tag tag-green">已结账</span>
+        </div>
+        <div class="list-row">
+          <span class="stat-icon orange" style="width:32px;height:32px;flex-shrink:0"><i data-lucide="unlock"></i></span>
+          <div style="flex:1">
+            <div class="font-medium">2026-10 期间</div>
+            <div class="text-muted" style="font-size:13px">当前期间 · 可进行递延结转与跨期调整 · 尚未关账</div>
+          </div>
+          <span class="tag tag-orange">进行中</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="reversal" style="display:none">
+    <div id="rev-reversal"></div>
+    <div class="card">
+      <div class="card-body" style="display:flex;gap:16px;align-items:flex-start">
+        <span class="stat-icon red" style="flex-shrink:0"><i data-lucide="rotate-ccw"></i></span>
+        <div>
+          <div class="font-medium mb-8">冲销链路说明</div>
+          <div class="text-muted" style="font-size:13px">
+            退款发生时，原收入不直接删除，而是通过「红字业务」反向冲减，形成 原收入 → 退款 → 红字业务 的完整链路。
+            冲销后原收入状态置为已冲销，冲销金额与退款金额必须一致，禁止只冲金额不冲单据。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
+renderAll();
+</script>
+</body>
+</html>
